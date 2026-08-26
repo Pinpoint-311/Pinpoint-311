@@ -76,10 +76,26 @@ def _auth0_domain(v: str) -> Optional[str]:
 
 
 def _arcgis_key(v: str) -> Optional[str]:
+    """Positively wrong only.
+
+    This required a JWT, and ArcGIS issues more than one shape: the developer
+    dashboard's API keys are opaque tokens beginning AAPK or AAPT with no dots
+    in them at all. A working trial key was reported as "does not look like one"
+    while the map it had just drawn sat on the screen beside the message --
+    which teaches an operator to disregard these checks, including the ones that
+    are right.
+
+    So this only speaks when the value is positively something else. That is the
+    rule this file already states for itself: refusing a credential that would
+    have worked is a worse failure than accepting one that will not, because the
+    second is discoverable and the first is a dead end.
+    """
     if v.startswith("AIza"):
         return "This is a Google Maps key, not an ArcGIS one."
-    if not _JWT.match(v):
-        return "ArcGIS keys are long tokens in three dot-separated parts. This does not look like one."
+    if _URLISH.match(v):
+        return "This is a web address. Paste the API key itself."
+    if len(v) < 20:
+        return f"ArcGIS keys are long tokens; this is {len(v)} characters."
     return None
 
 

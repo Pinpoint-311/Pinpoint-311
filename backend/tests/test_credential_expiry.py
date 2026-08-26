@@ -72,3 +72,24 @@ def test_a_saved_expiry_reaches_the_operator():
         {"AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES": "2020-01-01"})
     assert any(f.key == "AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES"
                and f.severity == checks.SEVERITY_ERROR for f in findings)
+
+
+def test_a_working_arcgis_key_is_not_called_a_bad_one():
+    """Reported from a live setup: the map drew, and the check beside it said
+    the key did not look like an ArcGIS key.
+
+    ArcGIS issues more than one shape. The developer dashboard's API keys begin
+    AAPK or AAPT and contain no dots; the older tokens are JWTs. Requiring a JWT
+    rejected a key that was working, and a check that contradicts the screen
+    teaches an operator to ignore every check.
+    """
+    checks = pytest.importorskip("app.services.credential_checks")
+    for key in ("AAPK" + "x" * 60, "AAPT" + "y" * 60,
+                "eyJhbGciOi.eyJzdWIiOi.QssW3ZE7Xk"):
+        assert checks.inspect_value("ARCGIS_API_KEY", key) is None, key
+
+
+def test_it_still_catches_a_key_from_the_wrong_provider():
+    checks = pytest.importorskip("app.services.credential_checks")
+    finding = checks.inspect_value("ARCGIS_API_KEY", "AIza" + "z" * 35)
+    assert finding is not None and "Google" in finding.message

@@ -231,12 +231,23 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
     const aiProvider = at('ai');
     return {
         /* The cloud is not stored as such: it is whichever one the credentials
-         * are in. The secret store answers that most directly, with key
-         * management as the fallback and the AI provider after that;
-         * "database" means no cloud has been chosen yet, so the default
-         * stands. */
-        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS)
-            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null),
+         * are in. Key management answers it first, then AI, and the secret
+         * store last.
+         *
+         * That order matters and used to be the other way round. The secret
+         * store is the ONE selection a card refuses to change -- every
+         * credential the town has is in the current one and repointing the
+         * setting does not move them -- so it lags behind every other signal by
+         * design. Asking it first meant a town that had moved key management,
+         * AI and translation to Azure, and was receiving Azure alerts, still
+         * opened the guide on Google Cloud: the only provider that had not
+         * moved was the only one being consulted.
+         *
+         * "database" is in neither list, so a town that has chosen no cloud
+         * still falls through to the default. */
+        cloud: pick(at('kms'), CLOUDS)
+            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null)
+            ?? pick(at('secrets'), CLOUDS),
         idp: pick(at('identity'), ['auth0', 'entra', 'okta', 'oidc'] as const),
         maps: pick(at('maps'), ['google', 'esri', 'azure', 'apple'] as const),
         email: pick(at('email'), ['smtp', 'ses', 'acs'] as const),
