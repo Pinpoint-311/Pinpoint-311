@@ -1256,9 +1256,20 @@ async def save_provider(
             pass
         if allowed_models and body.model not in allowed_models:
             raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
+    previous_provider = await effective_provider_for(capability)
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
-    if capability == "ai" and body.model:
-        await _persist_secret(db, "AI_MODEL", body.model)
+    if capability == "ai":
+        if body.model:
+            await _persist_secret(db, "AI_MODEL", body.model)
+        elif previous_provider != provider_id:
+            # A model id belongs to the provider it was chosen from, and AI_MODEL
+            # is one shared key across all of them. Switching provider without
+            # naming a new model used to leave the old one in place, so an Azure
+            # town went on asking Azure for `gemini-3.6-flash` -- a Google model
+            # id -- and got DeploymentNotFound, an error that says nothing about
+            # where the name came from. Cleared, so the new provider's own
+            # default applies until somebody picks deliberately.
+            await _persist_secret(db, "AI_MODEL", "")
     # Track where each credential actually landed. A False here is not an
     # error -- the encrypted database is a supported store -- but it is
     # something the town has to be told, because the usual cause is saving
