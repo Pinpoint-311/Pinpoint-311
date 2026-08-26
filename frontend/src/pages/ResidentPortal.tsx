@@ -1739,7 +1739,30 @@ export default function ResidentPortal() {
                                                     {errorSummary.map(({ fieldId, message }) => (
                                                         <li key={message}>
                                                             {fieldId ? (
-                                                                <a href={`#${fieldId}`} className="underline">{message}</a>
+                                                                <a
+                                                                    href={`#${fieldId}`}
+                                                                    className="underline"
+                                                                    onClick={(e) => {
+                                                                        /* Focus the field, rather than
+                                                                           letting the fragment do it.
+                                                                           A `#id` jump sets only the
+                                                                           sequential focus STARTING
+                                                                           POINT: focus stays on the
+                                                                           document, and the next Tab
+                                                                           lands on whatever follows
+                                                                           the field -- so an error
+                                                                           about Email put the keyboard
+                                                                           on Phone, past the box it
+                                                                           was complaining about.
+                                                                           Recovering meant shift-
+                                                                           tabbing back. */
+                                                                        const el = document.getElementById(fieldId);
+                                                                        if (!el) return;
+                                                                        e.preventDefault();
+                                                                        el.focus();
+                                                                        el.scrollIntoView({ block: 'center' });
+                                                                    }}
+                                                                >{message}</a>
                                                             ) : message}
                                                         </li>
                                                     ))}

@@ -617,6 +617,30 @@ a:focus-visible {
     box-shadow: 0 0 0 6px rgba(251, 191, 36, 0.25);
 }
 
+/* Focus on top of a map.
+ *
+ * The amber outline above is sized for this product's dark chrome. Map tiles
+ * are not dark -- roads and labels are near-white -- so the same indicator that
+ * reads clearly on a panel washes out over the map, which is what a keyboard
+ * audit reported: visible, but hard to distinguish against the background.
+ *
+ * The outline is unchanged; what is added is a dark halo behind it, so the pair
+ * carries contrast against whatever the tile happens to be. Two rings rather
+ * than a brighter colour, because no single colour is high-contrast against
+ * both a motorway and a park.
+ *
+ * `.gm-style` is Google's own wrapper and `.leaflet-container` Leaflet's;
+ * `[data-map-surface]` is for a map that is neither.
+ */
+.gm-style :focus-visible,
+.leaflet-container :focus-visible,
+[data-map-surface] :focus-visible {
+    outline: 3px solid #fbbf24;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 6px rgba(17, 24, 39, 0.9);
+    border-radius: 2px;
+}
+
 /* Input focus - already has styling, enhance for accessibility */
 .glass-input:focus-visible {
     outline: 3px solid #fbbf24;
