@@ -16,6 +16,9 @@ import secrets as pysecrets
 from app.core.auth import create_access_token, decode_token, get_current_user
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
+# Login state tokens live in Redis (app/services/login_state.py) so that a
+# backend restart mid-login does not invalidate the round-trip already in flight.
+from app.services import login_state
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -41,8 +44,6 @@ def _sanitize_redirect_uri(redirect_uri: str) -> str:
             return parsed_uri.path or "/"
     return redirect_uri
 
-# Store state tokens temporarily (in production, use Redis)
-_pending_states: dict = {}
 
 # One-time bootstrap tokens (only work until Auth0 is configured)
 _bootstrap_tokens: dict = {}
@@ -79,10 +80,10 @@ _bootstrap_tokens: dict = {}
 #   it exists to protect. Making a distributed attack expensive is worth having;
 #   making first-run setup blockable by strangers is not.
 #
-# In-memory, like `_bootstrap_tokens` and `_pending_states` above, and for the
-# same reason: a town runs one backend process, and bootstrap is a minutes-long
-# window at install time. A restart clears the counters, which costs an attacker
-# far more than it costs an admin (they would have to be watching for it).
+# In-memory, like `_bootstrap_tokens` above, and for the same reason: a town
+# runs one backend process, and bootstrap is a minutes-long window at install
+# time. A restart clears the counters, which costs an attacker far more than it
+# costs an admin (they would have to be watching for it).
 
 _BOOTSTRAP_FREE_ATTEMPTS = 3       # guesses before the hard tier starts locking
 _BOOTSTRAP_BASE_LOCKOUT = 5.0      # seconds, doubling per failure past the free ones
@@ -492,12 +493,12 @@ async def initiate_login(
     if status_info["status"] != "configured":
         raise HTTPException(
             status_code=503,
-            detail="Authentication not configured. Please configure Auth0 in Admin Console."
+            detail="Authentication not configured. Please configure your identity provider in the Admin Console."
         )
     
     # Generate state token for CSRF protection
     state = secrets.token_urlsafe(32)
-    _pending_states[state] = redirect_uri
+    await login_state.remember(state, redirect_uri)
     
     # Build callback URL (backend receives the code)
     callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
@@ -527,9 +528,12 @@ async def auth0_callback(
     Logs all authentication events for audit trail.
     """
     # Verify state token
-    redirect_uri = _pending_states.pop(state, None)
+    redirect_uri = await login_state.consume(state)
     if not redirect_uri:
-        raise HTTPException(status_code=400, detail="Invalid or expired state token")
+        raise HTTPException(
+            status_code=400,
+            detail="This sign-in link is no longer valid. Please start signing in again."
+        )
         
     # Handle Auth0 errors (user cancellation, access denied, etc.)
     if error or not code:
@@ -764,13 +768,22 @@ async def auth_status(db: AsyncSession = Depends(get_db)):
     """
     Get authentication configuration status.
     """
+    from app.services.identity import IDENTITY_CATALOG
+
     status_info = await Auth0Service.check_status(db)
     configured = status_info["status"] == "configured"
-    
+
+    # `provider` was the literal "auth0" regardless of what was configured, so
+    # a town on Entra was still told -- and still showed staff -- Auth0.
+    provider = status_info.get("provider") or "auth0"
+    label = IDENTITY_CATALOG.get(provider, {}).get("name", provider)
+
     return {
+        # Kept under its original name: the login page and older clients read it.
         "auth0_configured": configured,
-        "provider": "auth0" if configured else None,
-        "message": "Ready" if configured else "Auth0 not configured"
+        "provider": provider if configured else None,
+        "provider_name": label if configured else None,
+        "message": "Ready" if configured else f"{label} not configured"
     }
 
 
