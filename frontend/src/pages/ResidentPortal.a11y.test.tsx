@@ -80,6 +80,7 @@ vi.mock('../context/TranslationContext', () => ({
 import { MemoryRouter } from 'react-router-dom';
 import { AccessibilityProvider } from '../context/AccessibilityContext';
 import ResidentPortal from './ResidentPortal';
+import PORTAL_SOURCE from './ResidentPortal.tsx?raw';
 
 const render = (ui: React.ReactElement) =>
     rtlRender(ui, {
@@ -316,5 +317,32 @@ describe('the questions a municipality adds to a category', () => {
         expect(screen.getByLabelText('Last Name').getAttribute('autocomplete')).toBe('family-name');
         expect(screen.getByLabelText(/^Email/).getAttribute('autocomplete')).toBe('email');
         expect(screen.getByLabelText(/Phone/).getAttribute('autocomplete')).toBe('tel');
+    });
+});
+
+describe('the error summary links', () => {
+    /* An audit found that activating one put focus at the top of the page, and
+     * the next Tab landed on the field AFTER the one in error -- an email error
+     * left the keyboard on Phone. A `#id` jump sets only the sequential focus
+     * STARTING POINT; it does not focus anything. */
+    it('focuses the field rather than relying on the fragment', () => {
+        const i = PORTAL_SOURCE.indexOf('errorSummary.map');
+        expect(i).toBeGreaterThan(-1);
+        // To the end of the link, not a fixed window. A 2,200-character slice
+        // ended two characters before `.focus()` -- the same mistake made
+        // earlier today in setupPathChoice.test, where the window stopped
+        // inside the comment explaining the code it was meant to check.
+        const block = PORTAL_SOURCE.slice(i, PORTAL_SOURCE.indexOf('</a>', i));
+        expect(block).toContain('getElementById(fieldId)');
+        expect(block).toContain('.focus()');
+        expect(block).toContain('preventDefault');
+    });
+
+    it('keeps the href, so the link is still a link', () => {
+        // Middle-click, copy-link and the status bar all depend on it; only the
+        // default action is replaced.
+        const i = PORTAL_SOURCE.indexOf('errorSummary.map');
+        expect(PORTAL_SOURCE.slice(i, PORTAL_SOURCE.indexOf('</a>', i)))
+            .toContain('href={`#${fieldId}`}');
     });
 });
