@@ -78,12 +78,28 @@ Description: >-
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
+      - Label: { default: Data residency }
+        Parameters: [AllowedRegions]
       - Label: { default: Encryption key }
         Parameters: [KeyAlias, PreventAccidentalKeyDeletion]
       - Label: { default: The identity Pinpoint signs in as }
         Parameters: [RoleName, AllowBedrock, AllowRekognition, AllowTranslate, AllowSecretsManager, SecretsPrefix]
 
 Parameters:
+  AllowedRegions:
+    Type: CommaDelimitedList
+    Default: 'us-east-1,us-east-2,us-west-1,us-west-2'
+    Description: >-
+      DATA RESIDENCY. Every AWS API call this role is allowed to make is
+      confined to these regions, whatever region the stack itself is deployed
+      into. Resident 311 reports carry names, addresses and photographs of
+      people's homes, and a state or county records policy is usually written in
+      terms of where that data is processed. Enforced continuously by an IAM
+      condition rather than checked once at deploy time, so a later
+      misconfiguration in Pinpoint cannot quietly send a photograph to a
+      different continent for face detection -- the call is refused. Add
+      us-gov-west-1 / us-gov-east-1 for GovCloud. Widening this list is the
+      residency decision; there is no other switch.
   KeyAlias:
     Type: String
     Default: alias/pinpoint-311-pii
@@ -348,10 +364,17 @@ Resources:
               # where a wrong address hurts most -- Pinpoint cannot read its own
               # secrets and the site stops -- which is why the parameter is
               # optional and says so.
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
               Condition: !If
                 - RestrictBySourceIp
-                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
-                - !Ref AWS::NoValue
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
           # ListSecrets takes no resource - AWS rejects a policy that scopes it -
           # so it is granted separately and on its own. It returns names and
@@ -369,10 +392,17 @@ Resources:
               Effect: Allow
               Action: [translate:TranslateText]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
               Condition: !If
                 - RestrictBySourceIp
-                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
-                - !Ref AWS::NoValue
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
           - !If
             - UseRekognition
@@ -383,10 +413,17 @@ Resources:
               Effect: Allow
               Action: [rekognition:DetectFaces, rekognition:DetectText]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
               Condition: !If
                 - RestrictBySourceIp
-                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
-                - !Ref AWS::NoValue
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
           - !If
             - UseBedrock
@@ -394,10 +431,17 @@ Resources:
               Effect: Allow
               Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
               Condition: !If
                 - RestrictBySourceIp
-                - IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
-                - !Ref AWS::NoValue
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
 
   # A budget is not a cap -- nothing in AWS caps spend -- but it is the

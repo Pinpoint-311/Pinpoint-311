@@ -1697,7 +1697,26 @@ def _referrer_restricted(text: str) -> bool:
     return "referer" in lowered or "referrer" in lowered
 
 
-async def _test_maps(db=None) -> dict:
+def _request_site_origin(request: Request) -> Optional[str]:
+    """The town's own origin, as the browser making this request reports it.
+
+    Origin first: it is exactly a scheme-host-port and nothing else. A Referer
+    carries a path, which is fine for the header we send it back out as but is
+    more than is wanted. Returns None rather than a guess when neither is
+    present, and callers treat that as "cannot classify".
+    """
+    origin = (request.headers.get("origin") or "").strip()
+    if origin.startswith(("http://", "https://")):
+        return origin
+    referer = (request.headers.get("referer") or "").strip()
+    if referer.startswith(("http://", "https://")):
+        from urllib.parse import urlsplit
+        parts = urlsplit(referer)
+        return f"{parts.scheme}://{parts.netloc}"
+    return None
+
+
+async def _test_maps(db=None, site_origin: Optional[str] = None) -> dict:
     """Geocode a known address. Reads only, costs a fraction of a cent."""
     import httpx
 
@@ -1826,7 +1845,43 @@ async def _test_maps(db=None) -> dict:
                                  params={"SingleLine": sample, "f": "json", "token": key})
             body = r.json() if r.status_code == 200 else {}
             if "error" in body:
-                return {"ok": False, "detail": f"ArcGIS: {body['error'].get('message', 'rejected the key')}"}
+                message = body["error"].get("message", "rejected the key")
+
+                # Esri says "Invalid Token" (code 498) for a key that is
+                # perfectly valid but restricted to a website, because a server
+                # sends no Referer. Relaying that verbatim put "ArcGIS: Invalid
+                # Token" directly beside the browser check's "the map drew in
+                # this browser" -- two true sentences that read as a
+                # contradiction, about a key that is not broken.
+                #
+                # So classify it rather than parrot it: repeat the one request
+                # with the town's own origin as the Referer. This is a
+                # diagnostic and nothing else -- it tells the two cases apart
+                # and is never used to make a real request succeed, because a
+                # server borrowing a browser's referrer to reach a browser-only
+                # key would be working around the restriction the town chose.
+                if body["error"].get("code") == 498 and site_origin:
+                    try:
+                        retry = await client.get(
+                            f"{locator.rstrip('/')}/findAddressCandidates",
+                            params={"SingleLine": sample, "f": "json", "token": key},
+                            headers={"Referer": site_origin},
+                        )
+                        if retry.status_code == 200 and "error" not in retry.json():
+                            return _unverifiable(
+                                "This key is restricted to your website, so the server cannot "
+                                "use it — which is the right way to restrict a key a browser "
+                                "loads. The map and the address box run in the browser and are "
+                                "checked there, on this page. What needs the server is placing "
+                                "a submitted address on the map, so the Server API key box wants "
+                                "a second key with no website restriction; with the same key in "
+                                "both, reports entered by address arrive with no location on "
+                                "them.")
+                    except Exception:
+                        # The diagnostic failing tells us nothing about the key.
+                        pass
+
+                return {"ok": False, "detail": f"ArcGIS: {message}"}
             if r.status_code == 200:
                 first = (body.get("candidates") or [{}])[0]
                 found = first.get("address")
@@ -2252,7 +2307,7 @@ _CAPABILITY_TESTS = {
     "ai": _test_ai,
     "translation": _test_translation,
     "identity": _test_identity,
-    "maps": lambda db=None: _test_maps(db),
+    "maps": _test_maps,
     "email": _test_email,
     "sms": _test_sms,
     "kms": _test_kms,
@@ -2364,7 +2419,14 @@ async def test_provider(
         raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
 
     try:
-        outcome = await check(db)
+        # Maps is the one check that needs to know the town's own origin: it
+        # is how an Esri key restricted to the website is told apart from one
+        # that is simply wrong. The admin pressing this button is on that site,
+        # so the request carries it -- no new setting, and nothing hardcoded.
+        if capability == "maps":
+            outcome = await check(db, _request_site_origin(request))
+        else:
+            outcome = await check(db)
         # An outcome we could not verify is shown but not written to connector
         # health: "we cannot check this from here" is not "this is broken", and
         # a red badge that can never go green teaches people to ignore badges.
