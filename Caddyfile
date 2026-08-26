@@ -81,6 +81,33 @@
 		# and such a town still geocodes correctly server-side through
 		# geocode_dispatch, which no browser policy applies to.
 		#
+		# connect-src also allows `blob:` and `data:`, which are not hosts and
+		# are the two things that stopped an Esri town's markers and overlays
+		# from drawing at all. The ArcGIS SDK does not hand either kind of URL
+		# to an <img> or a Worker the way one would assume from img-src and
+		# worker-src already permitting them -- it *fetches* both:
+		#
+		#   data:   a PictureMarkerSymbol's image is fetched and decoded before
+		#           being uploaded as a WebGL texture. Every glyph in
+		#           src/maps/markerIcons.ts is an SVG data URI (deliberately --
+		#           that is what makes the same pin identical across providers),
+		#           so refusing data: meant no request pin, no asset markers and
+		#           no cluster bubbles on any Esri map.
+		#   blob:   a GeoJSONLayer built from in-memory GeoJSON is serialised to
+		#           a Blob and re-read through its blob: URL. Refusing it failed
+		#           every addGeoJsonLayer call -- the township boundary when it
+		#           is a multi-ring FeatureCollection, and every matched-asset
+		#           and custom map layer.
+		#
+		# Both failures look exactly like a broken renderer: the basemap draws
+		# fine because its tiles come from allowed https hosts. Google is
+		# unaffected because it renders icons in <img> elements and its data
+		# layer parses GeoJSON in-process, so this only ever bit the providers
+		# that were added later.
+		#
+		# Neither scheme widens the origins reachable from the page: a blob: or
+		# data: URL is same-origin content the page already holds.
+		#
 		# frame-src also carries Microsoft Forms, for the deployment
 		# registration form an operator may host there (CONTACT_FORM_URL). The
 		# console shows that form in a frame so a clerk can answer it without
@@ -89,7 +116,7 @@
 		# policy decision. A form hosted anywhere else needs its own host added
 		# here; setting CONTACT_FORM_EMBED=false is the alternative, and sends
 		# people to a new tab instead.
-		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://cdn.jsdelivr.net https://js.arcgis.com https://atlas.microsoft.com https://cdn.apple-mapkit.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://js.arcgis.com https://atlas.microsoft.com; font-src 'self' https://fonts.gstatic.com https://js.arcgis.com https://atlas.microsoft.com data:; img-src 'self' data: blob: https: http:; connect-src 'self' https://maps.googleapis.com https://places.googleapis.com https://*.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com https://js.arcgis.com https://*.arcgis.com https://*.arcgisonline.com https://atlas.microsoft.com https://cdn.apple-mapkit.com https://*.apple-mapkit.com wss:; frame-src 'self' https://www.google.com https://*.auth0.com https://forms.office.com https://forms.microsoft.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob: https://js.arcgis.com https://atlas.microsoft.com;"
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://maps.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://cdn.jsdelivr.net https://js.arcgis.com https://atlas.microsoft.com https://cdn.apple-mapkit.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://js.arcgis.com https://atlas.microsoft.com; font-src 'self' https://fonts.gstatic.com https://js.arcgis.com https://atlas.microsoft.com data:; img-src 'self' data: blob: https: http:; connect-src 'self' https://maps.googleapis.com https://places.googleapis.com https://*.googleapis.com https://*.gstatic.com https://translate.googleapis.com https://api.open-meteo.com https://archive-api.open-meteo.com https://*.auth0.com https://fonts.googleapis.com https://js.arcgis.com https://*.arcgis.com https://*.arcgisonline.com https://atlas.microsoft.com https://cdn.apple-mapkit.com https://*.apple-mapkit.com blob: data: wss:; frame-src 'self' https://www.google.com https://*.auth0.com https://forms.office.com https://forms.microsoft.com; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self' blob: https://js.arcgis.com https://atlas.microsoft.com;"
 	}
 }
 
