@@ -827,3 +827,205 @@ def test_without_a_known_origin_the_key_is_not_excused(monkeypatch):
     result = _run(system._test_maps(None, None))
 
     assert result["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# A model id belongs to the provider it was chosen from
+# ---------------------------------------------------------------------------
+
+def test_azure_names_the_deployment_it_could_not_find():
+    """Azure's own DeploymentNotFound body never contains the name asked for.
+
+    Live, that name was `gemini-3.6-flash` -- a Google model id left behind when
+    the town switched provider. Reading Azure's raw error, an operator sees
+    Azure losing a deployment they are sure they created, rather than Pinpoint
+    asking for one that was never theirs."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import AzureOpenAIProvider
+
+    provider = AzureOpenAIProvider(
+        endpoint="https://example.openai.azure.com",
+        api_key="k",
+        deployment="gemini-3.6-flash",
+        api_version="2024-06-01",
+    )
+
+    class Resp:
+        status_code = 404
+        text = '{"error": {"code": "DeploymentNotFound", "message": "..."}}'
+
+    detail = provider._explain(Resp())
+
+    assert "gemini-3.6-flash" in detail
+    assert "Deployment name" in detail
+
+
+def test_a_non_404_azure_error_is_still_reported_verbatim():
+    """The explanation must not swallow every other failure into one guess."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import AzureOpenAIProvider
+
+    provider = AzureOpenAIProvider(
+        endpoint="https://example.openai.azure.com", api_key="k",
+        deployment="triage", api_version="2024-06-01")
+
+    class Resp:
+        status_code = 429
+        text = '{"error": {"code": "429", "message": "rate limited"}}'
+
+    detail = provider._explain(Resp())
+
+    assert "429" in detail
+    assert "rate limited" in detail
+
+
+def test_a_pasted_azure_target_uri_is_reduced_to_the_endpoint():
+    """The portal shows a complete sample request beside the key, and that is
+    what gets copied. Appending our own path to it produced a bare 404
+    "Resource not found" that said nothing about the URL."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+
+    pasted = ("https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com"
+              "/openai/responses?api-version=2025-04-01-preview")
+
+    assert normalise_azure_endpoint(pasted) == (
+        "https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com")
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("https://x.openai.azure.com", "https://x.openai.azure.com"),
+    ("https://x.openai.azure.com/", "https://x.openai.azure.com"),
+    # Government cloud.
+    ("https://x.openai.azure.us/openai/deployments/foo/chat/completions",
+     "https://x.openai.azure.us"),
+    # A query string on a base URL is never right.
+    ("https://x.openai.azure.com/?api-version=2024-06-01", "https://x.openai.azure.com"),
+    ("", ""),
+])
+def test_endpoint_normalisation_cases(value, expected):
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+    assert normalise_azure_endpoint(value) == expected
+
+
+def test_a_proxy_path_prefix_is_left_alone():
+    """Unusual, but not wrong. Rewriting it would break a working deployment to
+    fix somebody else's typo."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+    assert normalise_azure_endpoint("https://gateway.town.gov/ai-proxy") == (
+        "https://gateway.town.gov/ai-proxy")
+
+
+def test_the_explicit_deployment_field_beats_the_shared_model_key():
+    """AI_MODEL is one key across every provider, so a stale id from another one
+    used to override the box labelled Deployment name on the Azure card --
+    with the right answer already typed into the form."""
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.routing")
+    from app.services.ai.registry import build_ai_provider
+
+    provider = build_ai_provider("azure", "gemini-3.6-flash", {
+        "AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com",
+        "AZURE_OPENAI_API_KEY": "k",
+        "AZURE_OPENAI_DEPLOYMENT": "gpt-5.4-mini",
+    })
+
+    assert provider.model == "gpt-5.4-mini"
+
+
+def test_the_shared_model_key_still_applies_when_no_deployment_is_typed():
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.routing")
+    from app.services.ai.registry import build_ai_provider
+
+    provider = build_ai_provider("azure", "my-deployment", {
+        "AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com",
+        "AZURE_OPENAI_API_KEY": "k",
+    })
+
+    assert provider.model == "my-deployment"
+
+
+class TestAzureTokenParameter:
+    """Newer Azure models reject `max_tokens` and want `max_completion_tokens`.
+
+    Which models is not knowable from here and moves over time. This codebase
+    has already been bitten by a hardcoded model list going stale, so the switch
+    is driven by Azure's own rejection rather than a list we maintain.
+    """
+
+    def _provider(self, deployment="gpt-5.4-mini"):
+        pytest.importorskip("httpx")
+        from app.services.ai import azure_openai as mod
+        mod._TOKEN_PARAM.clear()
+        return mod, mod.AzureOpenAIProvider(
+            endpoint="https://x.openai.azure.com", api_key="k",
+            deployment=deployment, api_version="2024-06-01")
+
+    def _client(self, mod, calls, reject_max_tokens):
+        class Resp:
+            def __init__(self, status, payload_text, data=None):
+                self.status_code = status
+                self.text = payload_text
+                self._data = data or {}
+
+            def json(self):
+                return self._data
+
+        class Client:
+            async def __aenter__(self_inner):
+                return self_inner
+
+            async def __aexit__(self_inner, *a):
+                return False
+
+            async def post(self_inner, url, headers=None, json=None):
+                calls.append(json)
+                if reject_max_tokens and "max_tokens" in json:
+                    return Resp(400, '{"error": {"message": "Unsupported parameter: '
+                                     "'max_tokens' is not supported with this model. "
+                                     'Use \'max_completion_tokens\' instead."}}')
+                return Resp(200, "", {"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+        mod.httpx.AsyncClient = lambda *a, **k: Client()
+        return Client
+
+    def test_it_retries_with_the_parameter_azure_asked_for(self, monkeypatch):
+        mod, provider = self._provider()
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, True)())
+
+        result = _run(provider.complete_json("hello"))
+
+        assert len(calls) == 2, "did not retry"
+        assert "max_tokens" in calls[0]
+        assert "max_completion_tokens" in calls[1]
+        assert result.get("ok") is True
+
+    def test_the_second_report_does_not_pay_for_the_first_one_s_rejection(self, monkeypatch):
+        """Remembered per deployment, or every report costs a wasted round trip."""
+        mod, provider = self._provider()
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, True)())
+
+        _run(provider.complete_json("one"))
+        calls.clear()
+        _run(provider.complete_json("two"))
+
+        assert len(calls) == 1
+        assert "max_completion_tokens" in calls[0]
+
+    def test_a_model_that_accepts_max_tokens_is_left_alone(self, monkeypatch):
+        mod, provider = self._provider(deployment="gpt-4.1-mini")
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, False)())
+
+        _run(provider.complete_json("hello"))
+
+        assert len(calls) == 1
+        assert "max_tokens" in calls[0]
