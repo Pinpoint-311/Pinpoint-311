@@ -1034,10 +1034,15 @@ def test_aws_locks_the_same_things_azure_does():
     assert "AllowedIpAddress" in cfn and "RestrictBySourceIp" in cfn
 
     import re
+    # Each part already ends where the next Sid begins, so it is exactly one
+    # statement. It used to be truncated to the first 900 characters on top of
+    # that, which is a guess at how long a statement is: adding six lines of
+    # comment to one of them pushed its condition past the cut and the test
+    # reported a protection that was still there as missing.
     parts = re.split(r"- Sid: (\w+)", cfn)
     covered = {}
     for i in range(1, len(parts), 2):
-        covered[parts[i]] = "RestrictBySourceIp" in parts[i + 1][:900]
+        covered[parts[i]] = "RestrictBySourceIp" in parts[i + 1]
 
     for sid in ("TranslateResidentReports", "BlurFacesAndPlates",
                 "InvokeBedrockModels", "KeepTownCredentialsInSecretsManager"):
@@ -1157,3 +1162,74 @@ def test_the_infrastructure_does_not_depend_on_the_model_choice():
             assert "openAiModelName" not in json.dumps(r.get("condition", "")), (
                 f"{r['type']} is gated on the model name"
             )
+
+
+# ---------------------------------------------------------------------------
+# Data residency
+# ---------------------------------------------------------------------------
+#
+# Resident 311 reports carry names, addresses and photographs of people's homes.
+# Where that data is processed is usually written into a state or county records
+# policy, and neither template used to say anything about it: the ARM location
+# defaulted to whatever region the resource group happened to sit in, and the
+# AWS role could call any region in the partition.
+
+US_ONLY = ("us", "eastus", "westus", "centralus")
+
+
+def test_the_arm_template_will_not_deploy_outside_the_united_states():
+    """An allowed-values list, not a default. A default is a suggestion, and the
+    old one -- the resource group's own region -- silently exported the whole
+    deployment when the group happened to be elsewhere."""
+    location = _arm()["parameters"]["location"]
+
+    allowed = location.get("allowedValues")
+    assert allowed, "location has no allowedValues, so any region deploys"
+    assert all(r.startswith("us") or "us" in r for r in allowed), allowed
+    # The specific failure this replaces.
+    assert "resourceGroup().location" not in location.get("defaultValue", "")
+    assert location["defaultValue"] in allowed
+
+
+def test_the_openai_deployment_is_not_on_a_global_sku():
+    """GlobalStandard routes each inference request to whichever region has
+    capacity, anywhere in the world, which is the one thing a US residency
+    requirement forbids. It is also cheaper, so it is a tempting edit."""
+    for res in _arm()["resources"]:
+        if res.get("type") == "Microsoft.CognitiveServices/accounts/deployments":
+            name = res["sku"]["name"]
+            assert "Global" not in name, f"deployment sku is {name}"
+
+
+def test_the_aws_role_cannot_call_outside_the_allowed_regions():
+    """Enforced by IAM on every call, not checked once at deploy time: a later
+    misconfiguration in Pinpoint must not be able to send a photograph to
+    another continent for face detection."""
+    _skip_without(CFN)
+    text = CFN.read_text()
+
+    assert "AllowedRegions" in text, "no residency parameter"
+    assert "aws:RequestedRegion" in text, "nothing enforces the region"
+
+    # Every paid, regional API the role is granted has to carry it -- one
+    # statement without it is the hole.
+    for action in ("translate:TranslateText", "rekognition:DetectFaces",
+                   "bedrock:InvokeModel", "secretsmanager:GetSecretValue"):
+        assert action in text, f"{action} no longer in the template"
+
+    # The region limit must not be optional the way the address limit is: it
+    # appears in BOTH branches of every RestrictBySourceIp choice.
+    branches = text.count("- StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }")
+    conditional = text.count("- RestrictBySourceIp")
+    assert branches >= conditional, (
+        f"{conditional} statements guard on the source address but only "
+        f"{branches} pin the region unconditionally")
+
+
+def test_the_aws_residency_default_lists_only_united_states_regions():
+    _skip_without(CFN)
+    text = CFN.read_text()
+    default = re.search(r"AllowedRegions:.*?Default: '([^']+)'", text, re.S)
+    assert default, "AllowedRegions has no default"
+    regions = default.group(1).split(",")
+    assert regions and all(r.strip().startswith("us-") for r in regions), regions
