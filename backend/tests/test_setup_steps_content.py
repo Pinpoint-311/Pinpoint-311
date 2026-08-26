@@ -329,3 +329,30 @@ def test_redaction_says_how_to_prove_it_works():
     source = CONTENT.read_text()
     assert "VERIFY_WITH_A_PHOTO" in source
     assert "UNCONFIGURED_DETECTOR" in source
+
+
+def test_the_vault_registration_says_which_kind_of_app():
+    """"Register an app" is not an instruction: Entra's New registration form
+    asks for supported account types and a redirect URI before it will proceed.
+
+    The two registrations in this product need OPPOSITE answers, which is why
+    leaving it unsaid is worse than it looks. Staff sign-in is an interactive
+    app and needs a Web redirect URI; the vault credential signs no one in and
+    needs none. A reader who has just done the sign-in walk will paste the
+    callback URL into both.
+    """
+    source = (ROOT / "frontend/src/components/setupStepsContent.tsx").read_text()
+
+    # Wherever the vault credential is registered -- the by-hand walk and the
+    # template walk both do it -- the account type and the redirect URI are named.
+    for marker in ("Now the identity Pinpoint signs in as",
+                   "How this server opens the vault"):
+        assert marker in source, f"the vault registration step moved: {marker}"
+        block = source[source.index(marker):][:900]
+        assert "organizational directory only" in block, (
+            f"{marker}: the step does not say which account type to choose"
+        )
+        assert "redirect" in block.lower(), (
+            f"{marker}: the step does not say what to do about the redirect URI, "
+            f"which the sign-in walk tells the same reader to fill in"
+        )
