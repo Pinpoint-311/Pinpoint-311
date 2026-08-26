@@ -14,7 +14,7 @@ export default function Login() {
 
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [authStatus, setAuthStatus] = useState<{ auth0_configured: boolean; message?: string } | null>(null);
+    const [authStatus, setAuthStatus] = useState<{ auth0_configured: boolean; provider?: string | null; provider_name?: string | null; message?: string } | null>(null);
 
     /* Page title — WCAG 2.4.2.
      *
@@ -184,7 +184,7 @@ export default function Login() {
 
                                     <div className="flex items-center justify-center gap-2 text-white/40 text-sm">
                                         <Shield className="w-4 h-4" />
-                                        <span>Secured by Auth0 SSO with MFA</span>
+                                        <span>Secured by {authStatus?.provider_name || 'SSO'} with MFA</span>
                                     </div>
                                 </div>
                             </>

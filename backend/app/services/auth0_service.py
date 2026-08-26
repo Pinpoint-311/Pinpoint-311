@@ -314,11 +314,52 @@ class Auth0Service:
         Returns:
             Dict with status, domain, client_id (masked), and connectivity
         """
+        from app.services.identity import (
+            IDENTITY_CATALOG,
+            get_oidc_metadata,
+            resolve_identity_config,
+        )
+
+        # Which provider is actually selected. This used to read the Auth0
+        # secrets unconditionally, so a deployment switched to Entra was
+        # reported against a stale (or absent) Auth0 tenant -- and a fresh
+        # Entra-only install, which has no AUTH0_* secrets at all, was told
+        # authentication was "not configured" and could never sign in.
+        provider = await Auth0Service._active_provider()
+        label = IDENTITY_CATALOG.get(provider, {}).get("name", provider)
+
+        if provider != "auth0":
+            idc = await resolve_identity_config(db)
+            if not idc:
+                return {
+                    "status": "not_configured",
+                    "provider": provider,
+                    "message": f"{label} is not configured",
+                }
+            try:
+                meta = await get_oidc_metadata(idc)
+                reachable = bool(meta.get("authorization_endpoint"))
+            except Exception:
+                reachable = False
+            client_id = idc["client_id"]
+            return {
+                "status": "configured" if reachable else "error",
+                "provider": provider,
+                "message": (
+                    f"{label} is configured and reachable" if reachable
+                    else f"{label} configured but unreachable"
+                ),
+                "domain": idc["issuer_base"],
+                "client_id": f"{client_id[:10]}...",
+                "oidc_discovery": "reachable" if reachable else "unreachable",
+            }
+
         config = await Auth0Service.get_config(db)
         
         if not config:
             return {
                 "status": "not_configured",
+                "provider": "auth0",
                 "message": "Auth0 is not configured"
             }
         
@@ -337,6 +378,7 @@ class Auth0Service:
         
         return {
             "status": "configured" if oidc_reachable else "error",
+            "provider": "auth0",
             "message": "Auth0 is configured and reachable" if oidc_reachable else "Auth0 configured but unreachable",
             "domain": domain,
             "client_id": f"{client_id[:10]}...",  # Mask for security
