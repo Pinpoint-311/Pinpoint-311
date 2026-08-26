@@ -195,14 +195,20 @@ describe('seedAnswersFrom', () => {
         expect(seedAnswersFrom({ ...azureTown, sms: cap(null, false) }).sms).toBeNull();
     });
 
-    it('reads the cloud from the secret store, falling back to key management', async () => {
-        // Neither is "the cloud" as such -- the cloud is wherever the
-        // credentials are, and the secret store answers that most directly.
+    it('reads the cloud from key management, falling back to the secret store', async () => {
+        /* This asserted the opposite, and the opposite was wrong in production:
+         * a town whose key management, AI and translation had all moved to Azure
+         * -- and which was receiving Azure alerts -- opened the guide on Google,
+         * because the secret store had not moved and the secret store was asked
+         * first. It is the one selection a card refuses to change, since every
+         * credential the town has is in the current one, so it lags behind every
+         * other signal by design. */
         const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
-        expect(seedAnswersFrom({ secrets: cap('aws', true), kms: cap('azure', true) } as any).cloud)
-            .toBe('aws');
-        expect(seedAnswersFrom({ secrets: cap('database', true), kms: cap('azure', true) } as any).cloud)
+        expect(seedAnswersFrom({ secrets: cap('google', true), kms: cap('azure', true) } as any).cloud)
             .toBe('azure');
+        // And it is still consulted when it is the only cloud in evidence.
+        expect(seedAnswersFrom({ secrets: cap('aws', true), kms: cap('database', true) } as any).cloud)
+            .toBe('aws');
     });
 
     it('ignores a provider the questionnaire has no option for', async () => {
@@ -215,5 +221,50 @@ describe('seedAnswersFrom', () => {
     it('ignores a value the server invented', async () => {
         const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
         expect(seedAnswersFrom({ identity: cap('something-new', true) } as any).idp).toBeNull();
+    });
+});
+
+describe('which cloud the guide opens on', () => {
+    /* A real deployment: key management, AI and translation all moved to Azure
+     * by pasting the deployment's outputs, alerts arriving from Azure -- and the
+     * guide still showing Google Cloud, because the secret store had not moved
+     * and the secret store was asked first. It is the one selection a card
+     * refuses to change, so it lags behind every other signal by design. */
+    it('follows key management, not the secret store', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        const seeded = seedAnswersFrom({
+            secrets: { current_provider: 'google' },
+            kms: { current_provider: 'azure' },
+            ai: { current_provider: 'azure' },
+        } as never);
+        expect(seeded.cloud).toBe('azure');
+    });
+
+    it('falls back to AI when key management has not moved', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        const seeded = seedAnswersFrom({
+            secrets: { current_provider: 'database' },
+            kms: { current_provider: 'database' },
+            ai: { current_provider: 'bedrock' },
+        } as never);
+        expect(seeded.cloud).toBe('aws');
+    });
+
+    it('still uses the secret store when it is the only cloud in evidence', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        const seeded = seedAnswersFrom({
+            secrets: { current_provider: 'azure' },
+            kms: { current_provider: 'database' },
+        } as never);
+        expect(seeded.cloud).toBe('azure');
+    });
+
+    it('leaves the default alone for a town that has chosen no cloud', async () => {
+        const { seedAnswersFrom } = await import('./SetupIntegrationsPage');
+        const seeded = seedAnswersFrom({
+            secrets: { current_provider: 'database' },
+            kms: { current_provider: 'database' },
+        } as never);
+        expect(seeded.cloud).toBeNull();
     });
 });
