@@ -174,6 +174,32 @@ def clear_discovery_cache():
     _discovery_cache.clear()
 
 
+def _with_email(claims: Dict[str, Any]) -> Dict[str, Any]:
+    """Fill in `email` from the provider's equivalent claim when it is absent.
+
+    The caller matches the signed-in person to a staff account by email and
+    refuses the login without one. Auth0 always sends `email`; Entra ID
+    frequently does not -- a work account only gets the claim if the directory
+    has a `mail` attribute set or an admin added the optional claim, so a
+    perfectly valid sign-in arrived with no email and was turned away with
+    "Email not provided by identity provider".
+
+    `preferred_username` (and `upn`) carry the user principal name, which for
+    these accounts is the address staff know themselves by. Only accept it when
+    it is actually address-shaped: a UPN can be a bare username on some
+    directories, and matching that against the staff table would be wrong.
+    """
+    if claims.get("email"):
+        return claims
+    for fallback in ("preferred_username", "upn", "unique_name"):
+        value = claims.get(fallback)
+        if isinstance(value, str) and "@" in value.strip("@"):
+            claims = dict(claims)
+            claims["email"] = value
+            return claims
+    return claims
+
+
 async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any]:
     """Standards-based OIDC token verification: RS256 via the provider's JWKS,
     audience = client_id, issuer from discovery."""
@@ -199,7 +225,7 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
         raise HTTPException(status_code=401, detail="Unable to find appropriate signing key")
 
     try:
-        return jwt.decode(
+        claims = jwt.decode(
             token, key, algorithms=["RS256"],
             audience=config["client_id"],
             issuer=meta.get("issuer"),
@@ -212,3 +238,7 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
         raise HTTPException(status_code=401, detail="Invalid token issuer")
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
+
+    # Outside the try: a normalisation bug here must not be reported as a
+    # failed signature check.
+    return _with_email(claims)
