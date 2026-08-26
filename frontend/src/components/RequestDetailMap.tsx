@@ -11,6 +11,7 @@ import {
     locationPinIcon,
     el,
     MapProviderConfig,
+    firstPolygonRings,
     hasMapCredential,
     popupRoot,
     propertyRows,
@@ -35,6 +36,14 @@ interface RequestDetailMapProps {
      * assemble their own, which is how every map silently defaulted to Google.
      */
     config: MapProviderConfig;
+    /**
+     * The town's outline, drawn as context under the request pin. Same GeoJSON
+     * LocationPicker takes, from the same `township_boundary` field of
+     * /gis/config -- residents saw it while dropping the pin and then lost it
+     * the moment they looked the request up again, because this component never
+     * had a way to be told about it.
+     */
+    townshipBoundary?: object | null;
 }
 
 export default function RequestDetailMap({
@@ -43,6 +52,7 @@ export default function RequestDetailMap({
     matchedAsset,
     mapLayers,
     config,
+    townshipBoundary,
 }: RequestDetailMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<MapRenderer | null>(null);
@@ -50,6 +60,7 @@ export default function RequestDetailMap({
     const assetLayerRef = useRef<GeoJsonLayerHandle | null>(null);
     const assetMarkerRef = useRef<MarkerHandle | null>(null);
     const popupRef = useRef<PopupHandle | null>(null);
+    const boundaryRef = useRef<{ remove(): void } | null>(null);
 
     const [isLoading, setIsLoading] = useState(true);
     const [mapReady, setMapReady] = useState(false);
@@ -113,11 +124,52 @@ export default function RequestDetailMap({
             markerRef.current = null;
             assetMarkerRef.current = null;
             assetLayerRef.current = null;
+            boundaryRef.current = null;
             popupRef.current = null;
             mapInstanceRef.current?.destroy();
             mapInstanceRef.current = null;
         };
     }, [config.provider, config.apiKey, config.styleId]);
+
+    /**
+     * The town outline, drawn exactly the way LocationPicker draws it: ring 0 is
+     * the outer boundary and the rest are holes, so one polygon renders the
+     * holes, and anything that is not a simple polygon falls back to a GeoJSON
+     * layer.
+     *
+     * No fitBounds, and that is the difference from LocationPicker rather than
+     * an omission. That component is choosing a location anywhere in the town,
+     * so the town is the right frame. This one is showing a resident where their
+     * one request is, at street level -- fitting the whole municipality would
+     * shrink the pin they came to look at to a dot. The outline is context for
+     * a request near a border; the camera stays on the request.
+     */
+    useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (!map) return;
+
+        boundaryRef.current?.remove();
+        boundaryRef.current = null;
+
+        if (!townshipBoundary) return;
+
+        try {
+            const rings = firstPolygonRings(townshipBoundary);
+            const style = {
+                fillColor: '#6366f1',
+                fillOpacity: 0.12,
+                strokeColor: '#6366f1',
+                strokeWidth: 3,
+                strokeOpacity: 1,
+                clickable: false,
+            };
+            boundaryRef.current = rings.length > 0
+                ? map.addPolygon({ paths: rings, style })
+                : map.addGeoJsonLayer({ data: townshipBoundary, style });
+        } catch (e) {
+            console.warn('Failed to add township boundary:', e);
+        }
+    }, [townshipBoundary, mapReady]);
 
     // Update map when coordinates change
     useEffect(() => {
