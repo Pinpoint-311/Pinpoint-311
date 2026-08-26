@@ -49,16 +49,33 @@ function normaliseUrl(url: string): string {
 }
 
 /**
- * `searchExtent` on the world service accepts a JSON envelope. wkid 4326 is
- * stated explicitly because a locator's own default SR is frequently State
- * Plane, and an unlabelled envelope would be read in that SR's units.
+ * SuggestOptions.biasBounds, as a *bias*.
+ *
+ * This used to become ArcGIS's `searchExtent`, which reads like the equivalent
+ * of Google's `locationBias` and is not: `searchExtent` is a hard filter,
+ * discarding every candidate outside the envelope. The caller passes the map's
+ * current viewport, so as soon as a resident zoomed in -- or simply dropped a
+ * pin, which pans and zooms to it -- the envelope was a couple of hundred
+ * metres across and *every* query returned zero suggestions. Verified against
+ * the World locator: "main st" with the town's extent returns 3 suggestions and
+ * with a street-level extent returns 0. That is the whole of "address
+ * autocomplete does not work on Esri" -- the requests were going out and coming
+ * back 200 with an empty list.
+ *
+ * `location` is the parameter that means what the interface means: a point that
+ * ranks nearby candidates first without excluding anything. Same principle the
+ * server-side dispatcher already states in geocode_dispatch.py -- a resident can
+ * legitimately report something just over the border, on a shared road or in a
+ * county park, so the town's own box must not be a restriction.
+ *
+ * wkid 4326 is stated explicitly because a locator's own default SR is
+ * frequently State Plane, and an unlabelled point would be read in that SR's
+ * units. Country codes stay a real filter; those the caller does mean.
  */
-function searchExtent(bounds: LatLngBounds): string {
+function biasLocation(bounds: LatLngBounds): string {
     return JSON.stringify({
-        xmin: bounds.west,
-        ymin: bounds.south,
-        xmax: bounds.east,
-        ymax: bounds.north,
+        x: (bounds.west + bounds.east) / 2,
+        y: (bounds.south + bounds.north) / 2,
         spatialReference: { wkid: 4326 },
     });
 }
@@ -152,7 +169,7 @@ export function createEsriGeocoder(options: EsriGeocoderOptions = {}): Geocoding
                 text: query,
                 maxSuggestions: String(options.maxSuggestions ?? 8),
                 countryCode: countries?.join(',') || undefined,
-                searchExtent: suggestOptions?.biasBounds ? searchExtent(suggestOptions.biasBounds) : undefined,
+                location: suggestOptions?.biasBounds ? biasLocation(suggestOptions.biasBounds) : undefined,
                 category: suggestOptions?.addressesOnly
                     ? 'Address,Postal'
                     : (options.category || undefined),
