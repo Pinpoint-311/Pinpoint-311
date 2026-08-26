@@ -1169,9 +1169,12 @@ const azureManualSteps: StepBuilder = () => [
     {
         body: (
             <>
-                Now the identity Pinpoint signs in as. {ATTACHED_IDENTITY} Otherwise register an app
-                under <B>Microsoft Entra ID → App registrations</B>, open its{' '}
-                <B>Certificates &amp; secrets</B> and add a client secret. Copy its <B>Value</B> now.
+                Now the identity Pinpoint signs in as. {ATTACHED_IDENTITY} Otherwise open{' '}
+                <B>Microsoft Entra ID → App registrations → New registration</B>. Choose{' '}
+                <B>Accounts in this organizational directory only</B> and leave{' '}
+                <B>Redirect URI</B> empty — this app never signs a person in, so it needs none. Then
+                open its <B>Certificates &amp; secrets</B> and add a client secret. Copy its{' '}
+                <B>Value</B> now.
             </>
         ),
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
@@ -1245,9 +1248,10 @@ const azureTemplateSteps: StepBuilder = () => [
             <>
                 <B>How this server opens the vault.</B> Not staff sign-in — that is its own card.
                 If Pinpoint runs on Azure, grant the vault role to the machine's own identity and
-                leave these three empty. Otherwise register an app under <B>Microsoft Entra ID → App
-                registrations</B>, add a client secret under <B>Certificates &amp; secrets</B>, and
-                copy its <B>Value</B> now.
+                leave these three empty. Otherwise open <B>Microsoft Entra ID → App registrations →
+                New registration</B>: <B>this organizational directory only</B>, and no redirect URI,
+                since this app never signs a person in. Add a client secret under{' '}
+                <B>Certificates &amp; secrets</B> and copy its <B>Value</B> now.
             </>
         ),
         fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET', 'AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES'],
