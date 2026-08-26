@@ -50,11 +50,14 @@ def _client():
     try:
         import redis.asyncio as redis
 
-        from app.core.config import settings
+        from app.core.config import get_settings
 
-        _client_singleton = redis.from_url(settings.redis_url, decode_responses=True)
-    except Exception as exc:  # pragma: no cover - import/config edge
-        logger.debug("login state: redis unavailable (%s)", exc)
+        _client_singleton = redis.from_url(
+            get_settings().redis_url, decode_responses=True)
+    except Exception as exc:
+        # Warning, not debug: this fell back silently once already, and the
+        # fallback works well enough that nothing else reports the difference.
+        logger.warning("login state: redis unavailable, using in-memory store (%s)", exc)
         _client_failed = True
     return _client_singleton
 
