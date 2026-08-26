@@ -115,7 +115,21 @@ def build_ai_provider(provider: str, model: Optional[str], creds: Dict[str, str]
         return AzureOpenAIProvider(
             endpoint=endpoint,
             api_key=api_key,
-            deployment=model or creds.get("AZURE_OPENAI_DEPLOYMENT"),
+            # The provider's own field wins over the shared AI_MODEL key.
+            #
+            # AI_MODEL is one key across every provider, so a model id chosen
+            # for a different one survives a switch and used to override the
+            # box labelled "Deployment name" on this very card. Live: an Azure
+            # town with AZURE_OPENAI_DEPLOYMENT correctly set to its deployment
+            # went on asking Azure for `gemini-3.6-flash` and got
+            # DeploymentNotFound -- with the right answer already typed into
+            # the form, and no way to see why it was being ignored.
+            #
+            # On Azure these two mean the same thing anyway: a deployment name
+            # is what identifies a model, and discovery lists deployments as
+            # models. So preferring the explicit field costs a town nothing and
+            # makes the field on screen the one that decides.
+            deployment=creds.get("AZURE_OPENAI_DEPLOYMENT") or model,
             api_version=creds.get("AZURE_OPENAI_API_VERSION") or "2024-06-01",
         )
     if provider == "bedrock":
