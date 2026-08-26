@@ -697,3 +697,133 @@ def test_the_email_check_never_reaches_DATA():
     src = _source(system._test_delivery)
     assert "server.data(" not in src and ".sendmail(" not in src
     assert "server.rset()" in src, "the envelope is abandoned explicitly"
+
+
+# ---------------------------------------------------------------------------
+# Esri: a key restricted to the website is not a broken key
+# ---------------------------------------------------------------------------
+#
+# Esri answers "Invalid Token" (code 498) for a perfectly good key when the
+# caller sends no Referer, which a server never does. Relaying that verbatim put
+# "ArcGIS: Invalid Token" directly beside the browser check's "the map drew in
+# this browser, so it will draw for residents" -- two true sentences that read
+# as a contradiction, about a key that was working.
+
+
+class _FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class _EsriClient:
+    """Answers the way ArcGIS answers a website-restricted key: 498 with no
+    Referer, the real candidates with one."""
+
+    seen_headers = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None, headers=None):
+        _EsriClient.seen_headers.append(headers or {})
+        if headers and headers.get("Referer"):
+            return _FakeResponse({"candidates": [{"address": "1600 Pennsylvania Ave NW"}]})
+        return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
+
+
+class _DeadKeyClient(_EsriClient):
+    """A key that is genuinely wrong fails with the Referer too."""
+
+    async def get(self, url, params=None, headers=None):
+        return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
+
+
+def _esri_secrets():
+    return _secrets(MAP_PROVIDER="esri", ARCGIS_API_KEY="AAPTxxxxxxxxxxxxxxxx")
+
+
+def test_a_website_restricted_arcgis_key_is_not_reported_as_invalid(monkeypatch):
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    _EsriClient.seen_headers = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    result = _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    # Not a failure, and not a green tick either: it cannot be checked here.
+    assert result.get("recorded") is False
+    assert "Invalid Token" not in result["detail"]
+    assert "restricted to your website" in result["detail"]
+
+
+def test_the_website_restricted_verdict_names_the_second_key_needed(monkeypatch):
+    """Placing a submitted address on the map runs on the server, so the same
+    key in both boxes leaves reports arriving with no location. Saying only
+    "the map is fine" would hide that."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    detail = _run(system._test_maps(None, "https://demo.pinpoint311.org"))["detail"]
+
+    assert "Server API key" in detail
+
+
+def test_a_genuinely_bad_arcgis_key_still_fails(monkeypatch):
+    """The classification must not turn every rejection into "cannot check"."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _DeadKeyClient)
+
+    result = _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    assert result["ok"] is False
+    assert "Invalid Token" in result["detail"]
+
+
+def test_the_diagnostic_referer_is_never_used_for_the_real_request(monkeypatch):
+    """The retry exists to tell two cases apart. A server borrowing a browser's
+    referrer to actually reach a browser-only key would be working around the
+    restriction the town deliberately chose."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    _EsriClient.seen_headers = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    # First request goes out as a server: no borrowed referrer.
+    assert not (_EsriClient.seen_headers[0] or {}).get("Referer")
+
+
+def test_without_a_known_origin_the_key_is_not_excused(monkeypatch):
+    """No origin means no way to tell the two cases apart, and guessing in the
+    forgiving direction would excuse a key that really is wrong."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    result = _run(system._test_maps(None, None))
+
+    assert result["ok"] is False
