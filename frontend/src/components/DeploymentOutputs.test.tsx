@@ -156,3 +156,85 @@ describe('AWS, where the stack creates no key', () => {
         expect(container.textContent).not.toContain('Keys are not in the outputs');
     });
 });
+
+describe('a paste that has already landed', () => {
+    /* The values live in the vault, but the textarea and the "Saved" line were
+     * component state. A reload put the first-run face back up -- empty box,
+     * disabled button, nothing to say the deployment had ever been pasted --
+     * and the operator's only reasonable reading was that it had not worked. */
+
+    const AZURE_LANDED = ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY'];
+
+    function mountWithConfigured(keys: string[]) {
+        mount(
+            <DeploymentOutputs
+                cloud="azure" values={{}}
+                onChange={() => {}}
+                onSave={(async () => {}) as any} saving={false}
+                isConfigured={(k) => keys.includes(k)}
+            />,
+        );
+    }
+
+    it('does not ask again for outputs that are already stored', () => {
+        mountWithConfigured(AZURE_LANDED);
+
+        expect(container.querySelector('textarea')).toBeNull();
+        expect(container.querySelector('[data-testid="deployment-outputs-landed"]')).not.toBeNull();
+    });
+
+    it('names which outputs are in place', () => {
+        mountWithConfigured(AZURE_LANDED);
+
+        const landed = [...container.querySelectorAll('[data-output-status="landed"]')]
+            .map(el => el.getAttribute('data-output'));
+        expect(landed).toContain('keyVaultUrl');
+        expect(landed).toContain('keyName');
+        // Not pasted, so not claimed.
+        expect(landed).not.toContain('azureOpenAiEndpoint');
+    });
+
+    it('does not print the stored values back onto the page', () => {
+        mountWithConfigured(AZURE_LANDED);
+        expect(container.textContent).not.toContain('vault.azure.net');
+    });
+
+    it('still offers the box to whoever wants to paste a new deployment', () => {
+        mountWithConfigured(AZURE_LANDED);
+
+        const again = [...container.querySelectorAll('button')]
+            .find(b => /Paste again/.test(b.textContent || ''))!;
+        expect(again).toBeTruthy();
+        act(() => { again.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+        expect(container.querySelector('textarea')).not.toBeNull();
+    });
+
+    it('shows the first-run box when nothing has landed yet', () => {
+        mountWithConfigured([]);
+        expect(container.querySelector('textarea')).not.toBeNull();
+        expect(container.querySelector('[data-testid="deployment-outputs-landed"]')).toBeNull();
+    });
+
+    it('accepts the paste immediately, without waiting for the parent to refetch', async () => {
+        /* The parent refresh is a round trip. Leaving the first-run face up
+         * until it lands is the same bug, only briefer. */
+        let onSave: any;
+        onSave = vi.fn().mockResolvedValue(undefined);
+        mount(
+            <DeploymentOutputs
+                cloud="azure" values={{}}
+                onChange={() => {}}
+                onSave={onSave} saving={false}
+                isConfigured={() => false}
+            />,
+        );
+
+        type(OUTPUTS);
+        await act(async () => {
+            saveButton().dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+
+        expect(container.querySelector('[data-testid="deployment-outputs-landed"]')).not.toBeNull();
+    });
+});

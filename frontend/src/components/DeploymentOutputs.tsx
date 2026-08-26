@@ -22,6 +22,13 @@ import type { MatchedOutput } from './deployOutputs';
  *   * Saving goes through the page's own save, the same one a typed value uses.
  *     A second write path would be a second place for the secret store, the
  *     encryption and the read-back to be got wrong.
+ *   * A paste that has already landed stays landed. The textarea and the
+ *     "Saved" line were component state, so a reload put the card back to its
+ *     first-run face -- empty box, dead button, no sign anything had happened --
+ *     in front of an operator whose values were sitting in the vault the whole
+ *     time. There is no new flag for this: the card asks which of its outputs
+ *     are configured, which is the same question the cards below it answer, and
+ *     it cannot drift from the truth or survive the secret being cleared.
  */
 export default function DeploymentOutputs({
     cloud, values, onChange, onSave, saving, isConfigured,
@@ -40,10 +47,27 @@ export default function DeploymentOutputs({
     const spec = DEPLOY_OUTPUTS[cloud];
     const [text, setText] = useState('');
     const [saved, setSaved] = useState<string[] | null>(null);
+    /* Set only by the operator asking for the box back. Deriving "show the
+     * textarea" from the textarea being non-empty would mean the card could
+     * never be reopened, because reopening it is what makes it empty. */
+    const [reopened, setReopened] = useState(false);
     const uid = useId();
 
     const parsed = useMemo(() => parseDeployOutputs(cloud, text), [cloud, text]);
     const ready = parsed.matched.length > 0;
+
+    /* Which outputs are already in place.
+     *
+     * `saved` is consulted alongside the server's answer so the card accepts
+     * the paste on the same tick it is made: the parent's refresh is a round
+     * trip, and leaving the first-run face up until it returns is the thing
+     * being fixed, only briefer. On any later load `saved` is null and the
+     * server's answer is the whole answer.
+     */
+    const landed = spec
+        ? spec.mappings.filter(m => m.keys.every(k => isConfigured(k) || saved?.includes(k)))
+        : [];
+    const alreadyApplied = landed.length > 0 && !reopened;
 
     if (!spec) return null;
 
@@ -63,9 +87,48 @@ export default function DeploymentOutputs({
 
     return (
         <div className="rounded-xl border border-white/15 bg-white/[0.04] p-4" data-testid="deployment-outputs">
-            <h4 className="text-sm font-semibold text-white/85">Paste what the deployment gave back</h4>
-            <p className="mt-1 text-xs text-white/55 leading-relaxed">{spec.sourceHint}</p>
+            <div className="flex items-center gap-2">
+                {alreadyApplied && (
+                    <CheckCircle className="w-4 h-4 shrink-0 text-emerald-300" aria-hidden="true" />
+                )}
+                <h4 className="text-sm font-semibold text-white/85">
+                    {alreadyApplied ? 'Deployment outputs are in' : 'Paste what the deployment gave back'}
+                </h4>
+                {alreadyApplied && (
+                    <span className="ml-auto shrink-0 rounded-full bg-emerald-400/15 px-2 py-0.5 text-[11px] font-semibold text-emerald-200/90">
+                        {landed.length}/{spec.mappings.length}
+                    </span>
+                )}
+            </div>
+            {!alreadyApplied && (
+                <p className="mt-1 text-xs text-white/55 leading-relaxed">{spec.sourceHint}</p>
+            )}
 
+            {alreadyApplied ? (
+                /* What landed, by name. The values themselves are not shown
+                 * back: they are in the vault, and a card that reprints an
+                 * endpoint on every load is one more place it can be read
+                 * over a shoulder. */
+                <>
+                    <dl className="mt-2.5 space-y-1" data-testid="deployment-outputs-landed">
+                        {landed.map(m => (
+                            <div key={m.output} className="flex items-center gap-2 text-xs" data-output-status="landed" data-output={m.output}>
+                                <CheckCircle className="w-3.5 h-3.5 shrink-0 text-emerald-300/80" aria-hidden="true" />
+                                <dt className="text-white/70">{m.label}</dt>
+                                <dd className="sr-only">in place</dd>
+                            </div>
+                        ))}
+                    </dl>
+                    <button
+                        type="button"
+                        onClick={() => { setReopened(true); setSaved(null); }}
+                        className="mt-3 inline-flex items-center rounded-lg border border-white/15 px-3 py-1.5 text-xs font-medium text-white/70 hover:text-white hover:border-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 transition-colors"
+                    >
+                        Paste again
+                    </button>
+                </>
+            ) : (
+            <>
             <label htmlFor={`${uid}-blob`} className="sr-only">{spec.sourceLabel}, as JSON</label>
             <textarea
                 id={`${uid}-blob`}
@@ -121,6 +184,8 @@ export default function DeploymentOutputs({
             >
                 {saving ? 'Saving…' : ready ? `Fill in ${countKeys(parsed.matched)} boxes` : 'Fill in the boxes'}
             </button>
+            </>
+            )}
 
             {saved && (
                 <p className="mt-2 text-xs text-emerald-300/80">
