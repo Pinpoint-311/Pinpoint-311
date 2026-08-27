@@ -265,6 +265,12 @@ class ServiceRequestResponse(BaseModel):
     # Whether staff took it off the public tracker and map. Distinct from
     # is_public, which is the resident's own choice — see models.ServiceRequest.
     public_archived: bool = False
+    # How many photos on this report are held out of media_urls waiting for a
+    # staff decision. The photos themselves are unredacted and appear only on
+    # the staff-only detail schema; this is the count, so a list can show a
+    # badge and filter without carrying megabytes of base64 -- and so a held
+    # photo stops depending on somebody happening to open the report.
+    photos_pending_review: int = 0
 
     @field_validator('is_public', mode='before')
     @classmethod
@@ -330,11 +336,20 @@ class Open311CreatedRequestResponse(BaseModel):
     console cannot silently appear here as well.
 
     The field set is the GeoReport v2 acknowledgement -- what a submitter needs
-    to know their report landed and to look it up again -- and nothing else.
-    The resident portal reads exactly one of them
-    (`result.service_request_id`, ResidentPortal.tsx:484); the rest are kept
+    to know their report landed and to look it up again -- plus
+    `photos_pending_review`, and nothing else. The resident portal reads two of
+    them (`result.service_request_id` and that count); the rest are kept
     because an Open311 client that is not our portal reasonably expects the
     echo.
+
+    `photos_pending_review` is the one deliberate addition to "the
+    acknowledgement and nothing else", and it earns the exception by being
+    about THIS submission rather than about the report as staff see it: a
+    photo the submitter just attached is not on their report, and this
+    response is the only place they can be told so while they are still
+    looking. It is a count, so it discloses nothing the submitter did not
+    themselves upload -- unlike every field the docstring above is warning
+    about, which were facts about the town's internal handling.
 
     Deliberately absent though the spec would allow it: `media_urls`. On this
     deployment those are base64 data URIs of several megabytes each and the
@@ -351,6 +366,14 @@ class Open311CreatedRequestResponse(BaseModel):
     lat: Optional[float] = None
     long: Optional[float] = None
     requested_datetime: Optional[datetime] = None
+    # How many of the photos just submitted are held back for a staff check.
+    # A count, not the photos -- the same reasoning as media_urls above, and
+    # the held ones are unredacted besides. It is here because this response is
+    # the resident's only chance to be told at the moment it happens: the
+    # thumbnail's status was a guess made at pick time, and the submit is where
+    # the real answer is decided. Without it the success screen congratulates
+    # someone whose photo has just been withheld.
+    photos_pending_review: int = 0
 
     class Config:
         from_attributes = True

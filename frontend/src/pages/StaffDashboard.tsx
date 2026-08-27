@@ -256,6 +256,22 @@ export default function StaffDashboard() {
     const [filterService, setFilterService] = useState<string | null>(null);
     // Default to the signed-in user's own assigned requests ("My Requests").
     const [filterAssignment, setFilterAssignment] = useState<'all' | 'me' | 'department'>('me');
+    /**
+     * Show only reports carrying a photo the blur could not clear.
+     *
+     * Those photos are held out of media_urls and appear in exactly one place:
+     * the amber panel inside a report's detail view. There was no badge, count
+     * or filter anywhere, so finding one meant opening reports at random --
+     * which on a town whose cloud detector has no credentials is the default
+     * outcome for every submission, not a rare case. The resident is told the
+     * photo is waiting to be checked; this is the thing that lets someone
+     * check it.
+     *
+     * Deliberately ignores the status view (Active / In Progress / Resolved).
+     * A held photo is a privacy decision about bytes the town is storing, and
+     * it does not stop being one because the pothole got filled.
+     */
+    const [filterPhotoReview, setFilterPhotoReview] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [sortOrder, setSortOrder] = useState<'newest' | 'oldest' | 'priority_high' | 'priority_low' | 'alpha'>('newest');
 
@@ -371,8 +387,51 @@ export default function StaffDashboard() {
         now: Date.now(),
     }), [allRequests, userDepartmentIds, activityTick, showActivityFeed]);
 
+    /**
+     * Publish or discard one held photo, and keep the list in step.
+     *
+     * The endpoint answers with the updated report, so the open detail panel
+     * was already correct. `allRequests` was not, and that is what the queue
+     * banner and the row badges are counted from -- so clearing the last held
+     * photo left a banner advertising work that no longer existed until the
+     * 30-second poll happened to come round. Patching the one row here is the
+     * difference between a queue that empties and one that appears not to.
+     */
+    const resolveWithheldPhoto = async (index: number, release: boolean) => {
+        if (!selectedRequest) return;
+        const updated = await api.reviewWithheldPhoto(
+            selectedRequest.service_request_id, index, release);
+        setSelectedRequest(updated);
+        setAllRequests(prev => prev.map(r =>
+            r.service_request_id === updated.service_request_id
+                ? { ...r, photos_pending_review: updated.media_pending_review?.length ?? 0 }
+                : r));
+    };
+
     // Filtered and sorted requests based on current view and filters
     const filteredSortedRequests = useMemo(() => {
+        // The photo queue is a view of its own, and it deliberately overrides
+        // every other filter rather than composing with them.
+        //
+        // Composing looked tidier and was unusable: the assignment scope
+        // defaults to "My Requests", so a held photo on a report assigned to
+        // nobody -- which is what a report an hour old looks like -- was
+        // filtered straight back out of the queue that exists to find it. The
+        // banner counts every held photo the dashboard can see, and the whole
+        // value of the number is that it matches the list it opens. A queue
+        // that says 3 and shows 0 teaches people to ignore the banner.
+        //
+        // It spans every status too. A held photo is a privacy decision about
+        // bytes the town is storing; it does not stop being one because the
+        // pothole got filled.
+        if (filterPhotoReview) {
+            return allRequests
+                .filter(r => (r.photos_pending_review || 0) > 0)
+                .sort((a, b) =>
+                    new Date(b.requested_datetime).getTime()
+                    - new Date(a.requested_datetime).getTime());
+        }
+
         // First, filter by status based on current view
         let filtered = allRequests.filter(r => {
             if (currentView === 'active') return r.status === 'open';
@@ -437,7 +496,7 @@ export default function StaffDashboard() {
         });
 
         return filtered;
-    }, [allRequests, currentView, searchQuery, filterDepartment, filterService, filterAssignment, user, userDepartmentIds, sortOrder]);
+    }, [allRequests, currentView, searchQuery, filterDepartment, filterService, filterAssignment, filterPhotoReview, user, userDepartmentIds, sortOrder]);
 
     // Quick stats for the current view
     const quickStats = useMemo(() => {
@@ -489,9 +548,25 @@ export default function StaffDashboard() {
         setFilterService(null);
         setFilterAssignment("all");
         setMapPriorityFilter('all');
+        setFilterPhotoReview(false);
     };
 
-    const hasActiveFilters = searchQuery.trim() || filterDepartment !== null || filterService !== null || filterAssignment !== 'all' || mapPriorityFilter !== 'all';
+    const hasActiveFilters = searchQuery.trim() || filterDepartment !== null || filterService !== null || filterAssignment !== 'all' || mapPriorityFilter !== 'all' || filterPhotoReview;
+
+    /* How many reports are holding a photo nobody has decided about yet.
+     *
+     * Counted over every report the dashboard knows about rather than the
+     * current view or the current filters, because this is a backlog, not a
+     * property of what is on screen: the point of the number is to be seen by
+     * someone who is not looking for it. */
+    const photosAwaitingReview = useMemo(
+        () => allRequests.filter(r => (r.photos_pending_review || 0) > 0),
+        [allRequests],
+    );
+    const photosAwaitingReviewCount = useMemo(
+        () => photosAwaitingReview.reduce((sum, r) => sum + (r.photos_pending_review || 0), 0),
+        [photosAwaitingReview],
+    );
 
     /* Say how many incidents survived the filters — WCAG 4.1.3 Status Messages.
      *
@@ -508,7 +583,7 @@ export default function StaffDashboard() {
      * length change would interrupt whatever the user was reading twice a
      * minute over a change they did not make. Skipped on first render — the
      * initial count is not news. */
-    const filterSignature = `${searchQuery.trim()}|${filterDepartment}|${filterService}|${filterAssignment}|${mapPriorityFilter}|${currentView}`;
+    const filterSignature = `${searchQuery.trim()}|${filterDepartment}|${filterService}|${filterAssignment}|${mapPriorityFilter}|${currentView}|${filterPhotoReview}`;
     const lastAnnouncedFilters = useRef<string | null>(null);
     useEffect(() => {
         if (isLoading) return;
@@ -2309,6 +2384,38 @@ export default function StaffDashboard() {
                                     </div>
                                 </div>
 
+                                {/* The photo-review backlog.
+                                    Held photos were reachable only by opening the one
+                                    report that had one, so they were reviewed only by
+                                    accident. This is the entry point: it appears only
+                                    when there is something to do, says how much, and
+                                    is a real toggle rather than a notice, because
+                                    being told about a queue you cannot open is worse
+                                    than not being told. */}
+                                {photosAwaitingReview.length > 0 && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterPhotoReview(v => !v)}
+                                        aria-pressed={filterPhotoReview}
+                                        className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${filterPhotoReview
+                                            ? 'bg-amber-500/25 border-amber-400/70 text-amber-100'
+                                            : 'bg-amber-500/10 border-amber-500/30 text-amber-200 hover:bg-amber-500/15'
+                                            }`}
+                                    >
+                                        <AlertTriangle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                                        <span className="text-sm font-medium">
+                                            {photosAwaitingReviewCount === 1
+                                                ? '1 photo is waiting for your review'
+                                                : `${photosAwaitingReviewCount} photos are waiting for your review`}
+                                            {photosAwaitingReview.length > 1
+                                                && ` on ${photosAwaitingReview.length} reports`}
+                                        </span>
+                                        <span className="ml-auto text-xs text-amber-200/70 shrink-0">
+                                            {filterPhotoReview ? 'Showing all' : 'Show'}
+                                        </span>
+                                    </button>
+                                )}
+
                                 {/* Assignment Filter Buttons - Premium Styling.
                                     Three mutually exclusive scopes whose selection was
                                     signalled only by a gradient fill and a ring (WCAG
@@ -2522,6 +2629,18 @@ export default function StaffDashboard() {
                                                     {Date.now() - new Date(request.requested_datetime).getTime() < 24 * 60 * 60 * 1000 && (
                                                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold animate-pulse">
                                                             NEW
+                                                        </span>
+                                                    )}
+                                                    {/* Carries the word as well as the colour: this
+                                                        is the only thing that distinguishes a report
+                                                        needing a person from one that does not, and
+                                                        an amber pill on its own says nothing to
+                                                        anyone not looking at it (WCAG 1.4.1). */}
+                                                    {(request.photos_pending_review || 0) > 0 && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold">
+                                                            {request.photos_pending_review === 1
+                                                                ? '1 PHOTO TO REVIEW'
+                                                                : `${request.photos_pending_review} PHOTOS TO REVIEW`}
                                                         </span>
                                                     )}
                                                 </div>
@@ -2999,18 +3118,14 @@ export default function StaffDashboard() {
                                                                     <button
                                                                         type="button"
                                                                         className="px-2 py-1 text-xs rounded bg-emerald-600/80 hover:bg-emerald-600 text-white"
-                                                                        onClick={async () => setSelectedRequest(
-                                                                            await api.reviewWithheldPhoto(
-                                                                                selectedRequest.service_request_id, i, true))}
+                                                                        onClick={() => resolveWithheldPhoto(i, true)}
                                                                     >
                                                                         Publish
                                                                     </button>
                                                                     <button
                                                                         type="button"
                                                                         className="px-2 py-1 text-xs rounded bg-white/10 hover:bg-white/20 text-white/80"
-                                                                        onClick={async () => setSelectedRequest(
-                                                                            await api.reviewWithheldPhoto(
-                                                                                selectedRequest.service_request_id, i, false))}
+                                                                        onClick={() => resolveWithheldPhoto(i, false)}
                                                                     >
                                                                         Discard
                                                                     </button>
