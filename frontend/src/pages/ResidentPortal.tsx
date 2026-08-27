@@ -90,6 +90,19 @@ export default function ResidentPortal() {
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [submittedId, setSubmittedId] = useState<string | null>(null);
+    /**
+     * How many of the photos just submitted the server held back for a person
+     * to look at, straight from the create response.
+     *
+     * The thumbnail statuses on the form were a guess made at pick time and
+     * the submit is where the answer is actually decided -- a photo the
+     * pick-time screen could not clear is often cleared by the submit-time
+     * pass, and one that looked fine can still be withheld there. Until this
+     * existed the success screen said "received and will be reviewed shortly"
+     * to a resident whose photo had just been withheld, with no mention of it
+     * here or anywhere on the tracker afterwards.
+     */
+    const [submittedPhotosHeld, setSubmittedPhotosHeld] = useState(0);
     const contentRef = useRef<HTMLDivElement>(null);
 
     // Non-emergency disclaimer modal state
@@ -630,6 +643,7 @@ export default function ResidentPortal() {
                 custom_fields: customAnswers,
             }, inlineFallback);
             setSubmittedId(result.service_request_id);
+            setSubmittedPhotosHeld(result.photos_pending_review ?? 0);
             pendingStepFocus.current = 'success';
             // Save to localStorage so Track Requests can identify "your" submissions
             try {
@@ -666,6 +680,7 @@ export default function ResidentPortal() {
         setFormErrors({});
         setErrorSummary([]);
         setSubmittedId(null);
+        setSubmittedPhotosHeld(0);
         setAttachedPhotos([]);
         setLocation({ address: '', lat: null, lng: null });
         // Clear blocking state
@@ -754,9 +769,13 @@ export default function ResidentPortal() {
                     }
                     if (result.status === 'needs_review') {
                         // The handle holds no bytes -- nothing was screened --
-                        // so this photo is submitted inline and the server
-                        // parks it for staff. Say so plainly: it is attached,
-                        // it is just not going public unlooked-at.
+                        // so this photo is submitted inline and screened again
+                        // at submit. That second pass usually succeeds, in
+                        // which case no person is ever involved; only if it
+                        // fails too does the photo land in the staff queue.
+                        // The message therefore promises the guarantee (it is
+                        // attached, and nothing publishes it unchecked) rather
+                        // than a human, which this state cannot promise.
                         updatePhoto(id, { state: 'review', message: result.message });
                         return;
                     }
@@ -771,9 +790,17 @@ export default function ResidentPortal() {
                     });
                 })
                 .catch(() => {
-                    // The screen call itself failed (offline, rate limited).
-                    // The photo is still attachable; it goes inline with the
-                    // report and the server decides what to do with it.
+                    // The screen call itself never got an answer -- offline,
+                    // rate limited, or the backend restarting under us. We did
+                    // not ask, so we know nothing about this photo: not whether
+                    // it is publishable, not whether anyone will look at it. It
+                    // still goes inline with the report and is screened at
+                    // submit like every non-portal client's photo.
+                    //
+                    // No `message`, deliberately: LABELS.error is the only
+                    // wording for this state and it is written to be true of
+                    // it. Passing the *review* message here is what made a
+                    // failed call announce a staff review nobody had queued.
                     updatePhoto(id, { state: 'error' });
                 });
         });
@@ -1871,6 +1898,31 @@ export default function ResidentPortal() {
                                         <div className="inline-block px-4 py-2 rounded-lg bg-white/10 border border-white/20">
                                             <span className="text-white/50 text-sm">Request ID: </span>
                                             <span className="font-mono text-white font-medium">{submittedId}</span>
+                                        </div>
+                                    )}
+                                    {/* The one moment the resident can be told, and the
+                                        only one they will notice: their report is filed
+                                        and the photo they attached is not on it. Said
+                                        plainly, because "where did my photo go" is
+                                        otherwise unanswerable from the tracker. */}
+                                    {submittedPhotosHeld > 0 && (
+                                        <div
+                                            role="status"
+                                            className="text-left mx-auto max-w-md px-4 py-3 rounded-lg bg-amber-500/10 border border-amber-500/30"
+                                        >
+                                            <p className="text-sm text-amber-200 font-medium">
+                                                {submittedPhotosHeld === 1
+                                                    ? 'Your photo is waiting to be checked'
+                                                    : `${submittedPhotosHeld} of your photos are waiting to be checked`}
+                                            </p>
+                                            <p className="text-xs text-amber-200/70 mt-1">
+                                                We could not blur faces and licence plates automatically, so
+                                                {submittedPhotosHeld === 1 ? ' it is ' : ' they are '}
+                                                not on the public tracker yet. Your report has been filed and
+                                                is being handled either way. A staff member will look and
+                                                either publish or delete
+                                                {submittedPhotosHeld === 1 ? ' it' : ' them'}.
+                                            </p>
                                         </div>
                                     )}
                                 </div>

@@ -447,3 +447,41 @@ async def _resolve_with(table, media):
         return await ph.resolve(None, media)
     finally:
         ph._take = original
+
+
+# ------------------------------------------------- what the resident is promised
+
+@pytest.mark.asyncio
+async def test_an_unscreenable_photo_is_not_promised_a_human_reviewer():
+    """This endpoint's answer is rendered verbatim on the resident's thumbnail,
+    and it used to read "It will be attached for a staff member to review
+    before it appears publicly."
+
+    Nothing here queues a person. A `needs_review` handle holds no bytes, so
+    the photo travels inline with the report and is screened AGAIN at submit;
+    only if that second pass also fails to clear it does it land in
+    media_pending_review for staff. On a town whose cloud detector has no
+    credentials but whose on-server one works -- the ordinary case -- the
+    submit-time pass clears the photo and publishes it, under a message that
+    had promised a review nobody had queued. That is measurable on a live
+    deployment: the photo appears on the public tracker and
+    media_pending_review is empty.
+
+    The message may promise the part that is actually guaranteed -- the photo
+    is attached, and nothing publishes it unchecked -- and must not promise the
+    part that is not.
+    """
+    result, _ = await _call_screen_photo(AVIF_SHAPED)
+
+    assert result["status"] == "needs_review"
+    message = result["message"]
+
+    # The guarantee is stated: it is attached, and it does not go public
+    # unchecked. Without this the assertion below would pass on an empty
+    # string, which tells the resident nothing at all.
+    assert "attached" in message.lower()
+    assert "publicly" in message.lower() or "public" in message.lower()
+
+    # The promise that was not kept.
+    assert "staff member will review" not in message.lower()
+    assert "staff" not in message.lower()
