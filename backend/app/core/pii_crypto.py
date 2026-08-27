@@ -293,12 +293,46 @@ def probe_wrap() -> dict:
         backend = {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure",
                    _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(blob[:1], "unknown")
         return {"backend": backend, "wrapped_len": len(blob), "peek": blob[1:9].hex()}
-    except Exception:
+    except Exception as exc:
         # REQUIRE_KMS raises here rather than falling back, which is the point
         # of that setting. Either way the honest answer is that the configured
         # key is not usable.
+        #
+        # The reason travels with the answer now. It used to be logged at debug
+        # and dropped, so the card said a test key "was wrapped with unknown" --
+        # which reads as a mystery backend rather than as a wrap that failed,
+        # and named nothing to go and fix. Live, the cause was a flat 403 from
+        # Key Vault: the app registration had never been granted crypto rights
+        # on the key, and no part of that was on screen.
         logger.debug("KMS probe failed", exc_info=True)
-        return {"backend": "unknown", "wrapped_len": 0, "peek": ""}
+        return {"backend": "unknown", "wrapped_len": 0, "peek": "",
+                "error": _probe_reason(exc)}
+
+
+def _probe_reason(exc: Exception) -> str:
+    """One line an administrator can act on, without the vendor's whole body.
+
+    Key Vault's 403 body carries the subscription id, the object id and the full
+    resource path. This is an admin-only screen, but none of that says what to
+    do, and the status alone does: 403 from a key service is authorisation
+    nine times in ten, and the remedy is a role assignment.
+    """
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 403:
+        return ("the key service refused the request (HTTP 403). The credentials "
+                "are valid — they were accepted — but the identity they belong to "
+                "has not been given permission to use this key. On Azure that is "
+                "the Key Vault Crypto User role on the vault; on Google, "
+                "Cloud KMS CryptoKey Encrypter/Decrypter on the key.")
+    if status == 404:
+        return ("the key service could not find the key (HTTP 404). Check the key "
+                "name, and that it has not been deleted or soft-deleted.")
+    if status == 401:
+        return ("the key service rejected the credentials (HTTP 401). Check the "
+                "client id and secret, and that the secret has not expired.")
+    if status is not None:
+        return f"the key service answered HTTP {status}."
+    return f"{type(exc).__name__} while wrapping the test key."
 
 
 def clear_caches() -> None:

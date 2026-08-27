@@ -997,7 +997,10 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     const isStale = staleOverride !== null
                         ? staleOverride
                         : (selected === catalog.current_provider && catalog.current_model_available === false);
-                    if (!models || models.length === 0) return null;
+                    /* No early return on an empty catalogue any more: a provider
+                       with nothing to list is exactly the case where the operator
+                       has to type the name, so hiding the control removed the only
+                       way to set it. */
                     return (
                         <div>
                             <Step n={1} aside={
@@ -1020,7 +1023,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 Vertex Model Garden legitimately returns a couple of
                                 hundred entries, and scanning those as tiles is worse
                                 than the dropdown this replaced. */}
-                            {models.length > 8 && (
+                            {/* Always shown, not only for long lists. A provider's
+                                catalogue is a snapshot and Azure's ids are not
+                                catalogue entries at all -- a deployment name is
+                                invented by the operator, so on that provider the
+                                only correct value is one nobody can offer in a
+                                list. Typing is a first-class path, not a filter. */}
+                            {true && (
                                 <div className="relative mb-2">
                                     <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-white/50 pointer-events-none" aria-hidden="true" />
                                     <input
@@ -1031,24 +1040,50 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                         /* A real label, not just a placeholder: the
                                            placeholder disappears the moment somebody
                                            types, and this console is audited for AA. */
-                                        aria-label={`Search the ${models.length} models ${active.name} offers`}
-                                        placeholder={`Search ${models.length} models — try "flash", "claude", "mini"`}
+                                        aria-label={`Search the ${models.length} models ${active.name} offers, or type a model or deployment name`}
+                                        placeholder={`Search ${models.length} models, or type an exact name`}
                                         className="w-full bg-white/[0.04] border border-white/10 rounded-xl pl-9 pr-3 py-1.5 text-xs text-white placeholder-white/50 focus:outline-none focus:border-primary-400/60 transition-colors"
                                     />
                                 </div>
                             )}
                             {(() => {
-                                const chosen = model || active.default_model || models[0].id;
+                                const chosen = model || active.default_model || models[0]?.id || '';
                                 const q = modelSearch.trim().toLowerCase();
-                                const filtered = q
+                                const matching = q
                                     ? models.filter(m => m.id.toLowerCase().includes(q)
                                         || m.label.toLowerCase().includes(q))
                                     : models;
+                                /* A model that is set but not in the list still has to
+                                   appear, and appear selected. Otherwise the only trace
+                                   of it was the amber warning underneath -- the card
+                                   showed nothing chosen while something was very much
+                                   chosen, which is how a town ends up saving over a
+                                   deployment name it meant to keep. */
+                                const listed = models.some(m => m.id === chosen);
+                                const filtered = (!listed && chosen
+                                    && (!q || chosen.toLowerCase().includes(q)))
+                                    ? [{ id: chosen, label: chosen, typed: true } as typeof models[number] & { typed?: boolean },
+                                       ...matching]
+                                    : matching;
                                 if (filtered.length === 0) {
+                                    /* Was a dead end. On Azure the correct value
+                                       is a deployment name the operator chose, so
+                                       "no model matches" was the expected state
+                                       and the card offered nothing to do about
+                                       it. */
                                     return (
-                                        <p className="py-4 text-center text-xs text-white/60 bg-white/[0.02] border border-white/10 rounded-xl">
-                                            No model matches “{modelSearch}”.
-                                        </p>
+                                        <div className="py-4 px-3 text-center bg-white/[0.02] border border-white/10 rounded-xl">
+                                            <p className="text-xs text-white/60">
+                                                Nothing in {active.name}&rsquo;s list matches &ldquo;{modelSearch}&rdquo;.
+                                            </p>
+                                            <button
+                                                type="button"
+                                                onClick={() => setModel(modelSearch.trim())}
+                                                className="mt-2 inline-flex items-center rounded-lg bg-primary-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 transition-colors"
+                                            >
+                                                Use &ldquo;{modelSearch.trim()}&rdquo;
+                                            </button>
+                                        </div>
                                     );
                                 }
                                 return (
@@ -1083,6 +1118,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                                     </div>
                                                     {m.discovered && (
                                                         <span className="text-[10px] font-semibold uppercase tracking-wide text-primary-300/90 mt-1 inline-block">New</span>
+                                                    )}
+                                                    {(m as { typed?: boolean }).typed && (
+                                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-white/45 mt-1 inline-block">Typed in</span>
                                                     )}
                                                 </button>
                                             );

@@ -163,7 +163,22 @@ def _field_required(field: Dict[str, Any]) -> bool:
     """
     if "required" in field:
         return bool(field["required"])
-    return not str(field.get("label", "")).rstrip().endswith("(optional)")
+    # "(optional" anywhere, not a label ending in exactly "(optional)".
+    #
+    # The exact-suffix test read as equivalent and was not, because an optional
+    # field is exactly the one that tends to need a qualifier after the word:
+    #
+    #   "Authority host (optional; Gov = login.microsoftonline.us)"
+    #   "Endpoint (optional; .us for Gov)"
+    #   "Access Key ID (optional with instance role)"
+    #
+    # All three were read as required, so Entra ID, Azure Translator and AWS
+    # Translate on an instance role each reported "Not set up" while working --
+    # and the advice attached to that badge is to go and enter credentials that
+    # were already correct. The AWS pair is the sharper case: leaving those
+    # boxes empty is the recommended setup, so following the recommendation was
+    # what made the card call itself unconfigured.
+    return "(optional" not in str(field.get("label", "")).lower()
 
 
 def _borrowed_requirements(provider: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1239,10 +1254,22 @@ async def save_provider(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
     if capability == "ai" and body.model:
-        # Validate against curated ∪ live-discovered models. A model the provider
-        # actually offers (from the discovery cache) is accepted even if it isn't
-        # in the curated list — that's the whole point of live discovery. Only
-        # reject when we can positively prove the id is offered nowhere.
+        # A model id we do not recognise is worth saying, and is not worth
+        # refusing.
+        #
+        # This used to reject anything absent from the curated list unioned with
+        # the discovery cache. Two things make that the wrong call. On Azure the
+        # id is a *deployment name* the operator invented -- it is not in any
+        # catalogue, and cannot be, so the one provider whose id must be typed
+        # was the one the check refused. And a curated list is a snapshot:
+        # providers ship models faster than this file is edited, so the check
+        # blocked ids that had become correct while claiming they did not exist.
+        # Discovery does not save it either, since a town whose provider has no
+        # listing endpoint (this one answers 404) never populates a cache.
+        #
+        # The signal is kept where it is useful -- the card already reads
+        # `current_model_available` to warn about a model no longer offered --
+        # and the operator decides.
         allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
         try:
             from app.services.ai import model_discovery as md
@@ -1250,12 +1277,11 @@ async def save_provider(
             entry = cache.get(provider_id) or {}
             allowed_models |= {m["id"] for m in entry.get("models", []) if m.get("id")}
         except Exception:
-            # Discovery is an *additional* source of valid model ids. If the
-            # cache can't be read, fall back to validating against the curated
-            # list alone rather than rejecting the save.
             pass
         if allowed_models and body.model not in allowed_models:
-            raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
+            logger.info(
+                "[AI] %s saved with a model not in the known list: %s",
+                provider_id, sanitize_for_log(body.model))
     previous_provider = await effective_provider_for(capability)
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
     if capability == "ai":
@@ -1602,6 +1628,14 @@ async def _test_kms(db=None) -> dict:
             f"so resident data is being encrypted with the key you chose.",
             "Discarded the test key. Nothing was stored.",
         )}
+    if actual == "unknown":
+        # The wrap failed rather than being done by some other service. Saying
+        # it "was wrapped with unknown" described a mystery backend and named
+        # nothing to fix; the reason now comes back with the probe.
+        reason = probe.get("error") or "the wrap did not complete."
+        return {"ok": False, "detail": (
+            f"Resident data is not being encrypted with the {selected} key you "
+            f"selected: {reason}")}
     return {"ok": False, "detail": (
         f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
         f"data is not being encrypted with the key you chose — check the "
@@ -1858,36 +1892,44 @@ async def _test_maps(db=None, site_origin: Optional[str] = None) -> dict:
             if "error" in body:
                 message = body["error"].get("message", "rejected the key")
 
-                # Esri says "Invalid Token" (code 498) for a key that is
+                # Esri answers "Invalid Token" (code 498) for a key that is
                 # perfectly valid but restricted to a website, because a server
-                # sends no Referer. Relaying that verbatim put "ArcGIS: Invalid
-                # Token" directly beside the browser check's "the map drew in
-                # this browser" -- two true sentences that read as a
-                # contradiction, about a key that is not broken.
+                # sends no browser referrer. Relaying that verbatim put
+                # "ArcGIS: Invalid Token" directly beside the browser check's
+                # "the map drew in this browser" -- two true sentences reading
+                # as a contradiction, about a key that is not broken.
                 #
-                # So classify it rather than parrot it: repeat the one request
-                # with the town's own origin as the Referer. This is a
-                # diagnostic and nothing else -- it tells the two cases apart
-                # and is never used to make a real request succeed, because a
-                # server borrowing a browser's referrer to reach a browser-only
-                # key would be working around the restriction the town chose.
-                if body["error"].get("code") == 498 and site_origin:
+                # Repeating the geocode request with a Referer header does NOT
+                # tell the two apart: measured against the live key, the
+                # geocoding, basemap and places services all still answer 498
+                # with the town's own origin set, while
+                # /sharing/rest/portals/self accepts the same token and names
+                # the portal. So the portal is the discriminator -- it answers
+                # "is this token real" without the service-side referrer
+                # enforcement in the way.
+                #
+                # Diagnostic only, and never used to make a real request
+                # succeed: a server borrowing a browser's referrer to reach a
+                # browser-only key would be working around the restriction the
+                # town chose.
+                if (body["error"].get("code") == 498 and site_origin
+                        and "arcgis.com" in locator):
                     try:
-                        retry = await client.get(
-                            f"{locator.rstrip('/')}/findAddressCandidates",
-                            params={"SingleLine": sample, "f": "json", "token": key},
+                        probe = await client.get(
+                            "https://www.arcgis.com/sharing/rest/portals/self",
+                            params={"f": "json", "token": key},
                             headers={"Referer": site_origin},
                         )
-                        if retry.status_code == 200 and "error" not in retry.json():
+                        if probe.status_code == 200 and "error" not in probe.json():
                             return _unverifiable(
-                                "This key is restricted to your website, so the server cannot "
-                                "use it — which is the right way to restrict a key a browser "
-                                "loads. The map and the address box run in the browser and are "
-                                "checked there, on this page. What needs the server is placing "
-                                "a submitted address on the map, so the Server API key box wants "
-                                "a second key with no website restriction; with the same key in "
-                                "both, reports entered by address arrive with no location on "
-                                "them.")
+                                "This key is real and is restricted to your website, so the "
+                                "server cannot use it — which is the right way to restrict a "
+                                "key a browser loads. The map and the address box run in the "
+                                "browser and are checked there, on this page. What needs the "
+                                "server is placing a submitted address on the map, so the "
+                                "Server API key box wants a second key with no website "
+                                "restriction; with the same key in both, reports entered by "
+                                "address arrive with no location on them.")
                     except Exception:
                         # The diagnostic failing tells us nothing about the key.
                         pass

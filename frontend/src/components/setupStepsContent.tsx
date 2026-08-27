@@ -741,7 +741,50 @@ defineSteps('translation', 'google', () => [
     },
 ]);
 
-defineSteps('translation', 'azure', () => [
+/* Forked, because the template already made the account.
+ *
+ * These steps used to open with "press Create a resource and create a
+ * Translator resource" for everybody. An operator who had just run the
+ * deployment template therefore created a second, redundant Translator resource
+ * -- billed separately, in whatever region they happened to pick, and not the
+ * one the template's own `translatorRegion` output names. The template creates
+ * one multi-service AI Services account precisely so that translation, vision
+ * and face share a key; there is nothing left to create.
+ *
+ * Named StepBuilder consts rather than inline arrays: the fields each path
+ * claims are read out of this file's source by
+ * backend/tests/test_setup_steps_content.py, and it resolves a fork through the
+ * builder names. An inline array is invisible to it, which silently drops both
+ * paths out of every check that file makes.
+ */
+const azureTranslatorTemplateSteps: StepBuilder = () => [
+    {
+        body: (
+            <>
+                <B>Nothing to create.</B> The deployment already made the AI Services account
+                that serves Translator — the same one behind photo redaction. Its region came
+                back as the <C>translatorRegion</C> output, so if you pasted the outputs the
+                region box below is already filled.
+            </>
+        ),
+        check: <>a region already in the box below, matching the deployment's output.</>,
+    },
+    {
+        body: (
+            <>
+                Open your <B>AI Services</B> account (the one the deployment created, not a new Translator resource) → <B>Resource Management → Keys and Endpoint</B> and copy{' '}
+                <B>KEY 1</B> and the <B>Location/Region</B> value. Leave the endpoint box empty
+                unless you were given a custom one — the default global endpoint is correct for
+                almost everyone.
+            </>
+        ),
+        fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
+        check: <>a key pasted in and a region like <C>eastus</C> beside it.</>,
+        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
+    },
+];
+
+const azureTranslatorManualSteps: StepBuilder = () => [
     {
         body: (
             <>
@@ -751,19 +794,27 @@ defineSteps('translation', 'azure', () => [
                 credentials.
             </>
         ),
+        check: <>the Translator resource listed in your resource group.</>,
     },
     {
         body: (
             <>
-                Open <B>Resource Management → Keys and Endpoint</B> and copy <B>KEY 1</B> and the{' '}
-                <B>Location/Region</B> value. Leave the endpoint box empty unless you were given a
-                custom one — the default global endpoint is correct for almost everyone.
+                Open that resource → <B>Resource Management → Keys and Endpoint</B> and copy{' '}
+                <B>KEY 1</B> and the <B>Location/Region</B> value. Leave the endpoint box empty
+                unless you were given a custom one — the default global endpoint is correct for
+                almost everyone.
             </>
         ),
         fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
+        check: <>a key pasted in and a region like <C>eastus</C> beside it.</>,
         note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
     },
-]);
+];
+
+defineFork('translation', 'azure', (ctx) => ({
+    template: azureTranslatorTemplateSteps(ctx),
+    manual: azureTranslatorManualSteps(ctx),
+}));
 
 defineSteps('translation', 'aws', () => [
     {
@@ -1260,9 +1311,45 @@ const azureTemplateSteps: StepBuilder = () => [
         note: (
             <>
                 Entra caps a client secret at 24 months. Put its expiry date in the box and
-                Pinpoint warns a month ahead; on a managed identity there is none. If you left{' '}
-                <B>Pinpoint principal object id</B> blank on the form, also give this identity{' '}
-                <B>Key Vault Crypto User</B> under the vault's <B>Access control (IAM)</B>.
+                Pinpoint warns a month ahead; on a managed identity there is none.
+            </>
+        ),
+    },
+    {
+        /* Its own step, because it is not an edge case: the template runs
+           before this app registration exists, so there is no object id to put
+           on the form and the template grants nothing. Every operator who
+           follows these steps in order needs this one. It used to be the last
+           clause of the note above, conditional on a form field the reader had
+           filled in days earlier -- and skipping it produces a vault, a key,
+           credentials that all authenticate, and a flat 403 on every wrap, with
+           resident data quietly falling back to the application key. */
+        body: (
+            <>
+                <B>Let that identity use the key.</B> Creating the app registration grants it
+                nothing. Open the vault → <B>Access control (IAM)</B> → <B>Add role assignment</B>,
+                choose <B>Key Vault Crypto User</B>, then on <B>Members</B> pick{' '}
+                <B>User, group, or service principal</B> — <em>not</em> Managed identity — and
+                search for the app registration <B>by the name you gave it</B>. An app
+                registration is a service principal; the Managed identity list holds the
+                identities Azure attaches to its own resources and will never contain it. Pick{' '}
+                <B>Managed identity</B> only if you left the three boxes above empty because
+                Pinpoint runs on Azure. If this same vault is also Pinpoint's secret store, add{' '}
+                <B>Key Vault Secrets Officer</B> the same way.
+            </>
+        ),
+        check: <>that identity on the vault's <B>Role assignments</B> tab as Key Vault Crypto User.</>,
+        trouble: (
+            <>
+                That search box matches on <em>name</em>, not on the Application (client) ID —
+                pasting the client id returns "No results" even though the app exists. If you do not
+                remember the name, <B>Entra ID → App registrations</B> lists it beside that id.
+                <br /><br />
+                Skip this step and everything still looks right: the vault exists, the key exists,
+                the credentials are accepted. Key Vault answers <C>403 Forbidden</C> on the first
+                wrap and Pinpoint falls back to its own key, so resident data is encrypted — just
+                not with yours. Press <B>Save &amp; Test</B> on this card; it names this exact
+                failure. Role assignments can take a minute to take effect.
             </>
         ),
     },

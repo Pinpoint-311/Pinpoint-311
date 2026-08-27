@@ -737,13 +737,17 @@ class _EsriClient:
 
     async def get(self, url, params=None, headers=None):
         _EsriClient.seen_headers.append(headers or {})
-        if headers and headers.get("Referer"):
-            return _FakeResponse({"candidates": [{"address": "1600 Pennsylvania Ave NW"}]})
+        # Measured against the live key: the geocoding service answers 498
+        # whether or not a Referer is sent. Only the portal accepts the token.
+        if "portals/self" in url:
+            if headers and headers.get("Referer"):
+                return _FakeResponse({"name": "Pinpoint 311"})
+            return _FakeResponse({"error": {"code": 498, "message": "Invalid token."}})
         return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
 
 
 class _DeadKeyClient(_EsriClient):
-    """A key that is genuinely wrong fails with the Referer too."""
+    """A key that is genuinely wrong is refused by the portal as well."""
 
     async def get(self, url, params=None, headers=None):
         return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
@@ -811,8 +815,11 @@ def test_the_diagnostic_referer_is_never_used_for_the_real_request(monkeypatch):
 
     _run(system._test_maps(None, "https://demo.pinpoint311.org"))
 
-    # First request goes out as a server: no borrowed referrer.
+    # First request goes out as a server: no borrowed referrer. The borrowed one
+    # only ever reaches the portal, which is a question, not a geocode.
     assert not (_EsriClient.seen_headers[0] or {}).get("Referer")
+    borrowed = [h for h in _EsriClient.seen_headers if (h or {}).get("Referer")]
+    assert borrowed, "the diagnostic never ran"
 
 
 def test_without_a_known_origin_the_key_is_not_excused(monkeypatch):
@@ -1029,3 +1036,151 @@ class TestAzureTokenParameter:
 
         assert len(calls) == 1
         assert "max_tokens" in calls[0]
+
+
+# ---------------------------------------------------------------------------
+# "(optional" is not a suffix
+# ---------------------------------------------------------------------------
+
+class TestOptionalFieldsAreNotRequired:
+    """Whether a credential is required falls back to reading its label when the
+    catalog carries no `required` flag. That test was `endswith("(optional)")`,
+    which misses every optional field that qualifies the word -- and an optional
+    field is exactly the one that tends to. Three providers reported "Not set
+    up" while working, and the advice on that badge is to go and re-enter
+    credentials that were already correct."""
+
+    def _f(self):
+        pytest.importorskip("fastapi.routing")
+        from app.api.system import _field_required
+        return _field_required
+
+    @pytest.mark.parametrize("label", [
+        "Authority host (optional; Gov = login.microsoftonline.us)",
+        "Endpoint (optional; .us for Gov)",
+        "Access Key ID (optional with instance role)",
+        "API version (optional)",
+        "Port (optional, defaults to 587)",
+    ])
+    def test_a_qualified_optional_is_still_optional(self, label):
+        assert self._f()({"key": "X", "label": label}) is False
+
+    @pytest.mark.parametrize("label", [
+        "Client Secret",
+        "Directory (tenant) ID",
+        "Azure OpenAI Endpoint",
+    ])
+    def test_a_required_field_stays_required(self, label):
+        assert self._f()({"key": "X", "label": label}) is True
+
+    def test_an_explicit_flag_still_wins_over_the_label(self):
+        assert self._f()({"key": "X", "label": "Thing (optional)", "required": True}) is True
+        assert self._f()({"key": "X", "label": "Thing", "required": False}) is False
+
+
+def test_entra_with_no_authority_host_counts_as_configured():
+    """ENTRA_AUTHORITY defaults to the commercial cloud and is left blank by
+    every town not on Azure Government. Live, that single blank field was why
+    a working Entra sign-in reported "Not set up"."""
+    pytest.importorskip("fastapi.routing")
+    from app.api.system import _field_required
+    from app.services.identity import IDENTITY_CATALOG
+
+    fields = IDENTITY_CATALOG["entra"]["credential_fields"]
+    required = [f["key"] for f in fields if _field_required(f)]
+
+    assert "ENTRA_AUTHORITY" not in required
+    # The three that genuinely are needed stay needed.
+    for key in ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET"):
+        assert key in required
+
+
+def test_aws_translate_on_an_instance_role_counts_as_configured():
+    """Leaving the key boxes empty is the recommended setup on AWS compute, so
+    following the recommendation was what made the card call itself
+    unconfigured."""
+    pytest.importorskip("fastapi.routing")
+    from app.api.system import _field_required
+    from app.services.translation_providers import TRANSLATION_CATALOG
+
+    fields = TRANSLATION_CATALOG["aws"]["credential_fields"]
+    required = [f["key"] for f in fields if _field_required(f)]
+
+    assert "AWS_ACCESS_KEY_ID" not in required
+    assert "AWS_SECRET_ACCESS_KEY" not in required
+
+
+# ---------------------------------------------------------------------------
+# A wrap that failed is not a wrap done by somebody else
+# ---------------------------------------------------------------------------
+
+class TestKmsFailureIsExplained:
+    """"A test key was wrapped with unknown" described a mystery backend, when
+    what had happened was that the wrap failed outright. Live, the cause was a
+    flat 403 from Key Vault -- the app registration had never been granted
+    crypto rights on the key -- and none of that reached the screen."""
+
+    def _reason(self, status):
+        pytest.importorskip("httpx")
+        from app.core.pii_crypto import _probe_reason
+
+        class Resp:
+            status_code = status
+
+        class Err(Exception):
+            response = Resp()
+
+        return _probe_reason(Err("boom"))
+
+    def test_a_403_names_the_role_that_is_missing(self):
+        reason = self._reason(403)
+        assert "403" in reason
+        assert "Key Vault Crypto User" in reason
+        # The credentials being fine is the confusing part; say it.
+        assert "valid" in reason
+
+    def test_a_401_points_at_the_credentials_instead(self):
+        reason = self._reason(401)
+        assert "client id" in reason or "secret" in reason
+        assert "Crypto User" not in reason
+
+    def test_a_404_points_at_the_key_name(self):
+        assert "key name" in self._reason(404)
+
+    def test_a_failure_with_no_status_still_says_something(self):
+        pytest.importorskip("httpx")
+        from app.core.pii_crypto import _probe_reason
+        assert "TimeoutError" in _probe_reason(TimeoutError("slow"))
+
+    def test_the_card_reports_the_reason_rather_than_unknown(self, monkeypatch):
+        pytest.importorskip("fastapi.routing")
+        from app.core import pii_crypto
+        from app.core import encryption
+
+        monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
+        monkeypatch.setattr(pii_crypto, "probe_wrap", lambda: {
+            "backend": "unknown", "wrapped_len": 0, "peek": "",
+            "error": "the key service refused the request (HTTP 403).",
+        })
+
+        result = _run(system._test_kms())
+
+        assert result["ok"] is False
+        assert "403" in result["detail"]
+        assert "wrapped with unknown" not in result["detail"]
+
+    def test_a_genuine_backend_mismatch_still_says_which_one(self, monkeypatch):
+        """The other failure is real and must not be folded into the new one:
+        a wrap that succeeded on the wrong service."""
+        pytest.importorskip("fastapi.routing")
+        from app.core import pii_crypto
+        from app.core import encryption
+
+        monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
+        monkeypatch.setattr(pii_crypto, "probe_wrap", lambda: {
+            "backend": "local", "wrapped_len": 60, "peek": "aabb",
+        })
+
+        detail = _run(system._test_kms())["detail"]
+
+        assert "local" in detail

@@ -160,38 +160,51 @@ def _api_version() -> str:
 
 # ---- Key crypto (KMS-equivalent) ----
 
-def encrypt(plaintext: str) -> str:
-    """Encrypt with the configured Key Vault key (RSA-OAEP-256). Returns the
-    base64url ciphertext. Suitable for small values (PII fields)."""
+# wrapKey/unwrapKey, not encrypt/decrypt.
+#
+# A Key Vault key carries a `keyOps` list, and wrapKey/unwrapKey are separate
+# entries from encrypt/decrypt even though RSA-OAEP performs the identical
+# operation for both. Our own ARM template creates the key with
+# ["wrapKey", "unwrapKey"] -- the tighter and more accurate choice, since what
+# this module does is wrap a data encryption key -- while the code called
+# /encrypt and /decrypt. So a vault built by our own template refused every call
+# with
+#
+#     403 "Operation encrypt is not permitted on this key." (KeyOperationForbidden)
+#
+# and resident data fell back to the application key with nothing said. The
+# template was right and the client was wrong, so the client changed: widening
+# the key's permissions to match a mistake would have made every future
+# deployment's key more capable than it needs to be.
+
+
+def _key_op(operation: str, value: str) -> str:
     token = _get_token()
     key_name = _cfg("AZURE_KEYVAULT_KEY")
     if not token or not key_name:
         raise RuntimeError("Azure Key Vault key crypto not configured")
-    url = f"{_vault_url()}/keys/{key_name}/encrypt?api-version={_api_version()}"
     resp = httpx.post(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"alg": "RSA-OAEP-256", "value": _b64url_nopad(plaintext.encode("utf-8"))},
+        f"{_vault_url()}/keys/{key_name}/{operation}?api-version={_api_version()}",
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/json"},
+        json={"alg": "RSA-OAEP-256", "value": value},
         timeout=15.0,
     )
     resp.raise_for_status()
     return resp.json()["value"]
 
 
+def encrypt(plaintext: str) -> str:
+    """Wrap a small value with the configured Key Vault key (RSA-OAEP-256).
+
+    Named `encrypt` for its callers; the request it makes is `wrapkey`. Returns
+    the base64url ciphertext.
+    """
+    return _key_op("wrapkey", _b64url_nopad(plaintext.encode("utf-8")))
+
+
 def decrypt(ciphertext_b64url: str) -> str:
-    token = _get_token()
-    key_name = _cfg("AZURE_KEYVAULT_KEY")
-    if not token or not key_name:
-        raise RuntimeError("Azure Key Vault key crypto not configured")
-    url = f"{_vault_url()}/keys/{key_name}/decrypt?api-version={_api_version()}"
-    resp = httpx.post(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"alg": "RSA-OAEP-256", "value": ciphertext_b64url},
-        timeout=15.0,
-    )
-    resp.raise_for_status()
-    return _b64url_decode(resp.json()["value"]).decode("utf-8")
+    return _b64url_decode(_key_op("unwrapkey", ciphertext_b64url)).decode("utf-8")
 
 
 # ---- Secret store ----

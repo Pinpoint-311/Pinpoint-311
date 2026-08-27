@@ -47,7 +47,7 @@ IDENTITY_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "ENTRA_TENANT_ID", "label": "Directory (tenant) ID", "secret": False},
             {"key": "ENTRA_CLIENT_ID", "label": "Application (client) ID", "secret": False},
             {"key": "ENTRA_CLIENT_SECRET", "label": "Client Secret", "secret": True},
-            {"key": "ENTRA_AUTHORITY", "label": "Authority host (optional; Gov = login.microsoftonline.us)", "secret": False},
+            {"key": "ENTRA_AUTHORITY", "label": "Authority host (optional; Gov = login.microsoftonline.us)", "secret": False, "required": False},
         ],
         "field_help": {
             "ENTRA_TENANT_ID": "Directory (tenant) ID from the Entra admin center.",

@@ -177,7 +177,7 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
         "credential_fields": [
             {"key": "AZURE_TRANSLATOR_KEY", "label": "Translator Key", "secret": True},
             {"key": "AZURE_TRANSLATOR_REGION", "label": "Region", "secret": False},
-            {"key": "AZURE_TRANSLATOR_ENDPOINT", "label": "Endpoint (optional; .us for Gov)", "secret": False},
+            {"key": "AZURE_TRANSLATOR_ENDPOINT", "label": "Endpoint (optional; .us for Gov)", "secret": False, "required": False},
         ],
         "field_help": {
             "AZURE_TRANSLATOR_KEY": "Key from your Azure Translator resource.",
@@ -190,8 +190,8 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "AWS Translate — for AWS GovCloud stacks; uses your AWS credentials.",
         "credential_fields": [
             {"key": "AWS_REGION", "label": "AWS Region", "secret": False},
-            {"key": "AWS_ACCESS_KEY_ID", "label": "Access Key ID (optional with instance role)", "secret": False},
-            {"key": "AWS_SECRET_ACCESS_KEY", "label": "Secret Access Key (optional with instance role)", "secret": True},
+            {"key": "AWS_ACCESS_KEY_ID", "label": "Access Key ID (optional with instance role)", "secret": False, "required": False},
+            {"key": "AWS_SECRET_ACCESS_KEY", "label": "Secret Access Key (optional with instance role)", "secret": True, "required": False},
         ],
         "field_help": {
             "AWS_REGION": "e.g. us-gov-west-1.",
