@@ -266,11 +266,46 @@ describe('PhotoUpload screening status', () => {
     });
 
     it('says a photo that could not be checked is still attached', () => {
-        // The failure case must not read as "lost". It is attached; it is
-        // waiting on a person.
+        // The failure case must not read as "lost". It is attached, and
+        // nothing publishes it until something has checked it.
         withStatus([{ state: 'review' }]);
-        expect(screen.getByRole('status').textContent)
-            .toMatch(/Photo 1: A staff member will review this photo/);
+        const said = screen.getByRole('status').textContent!;
+        expect(said).toMatch(/Photo 1: Attached/);
+        expect(said).toMatch(/check/i);
+    });
+
+    it('does not tell either failure state that a staff member will review it', () => {
+        // Both states shared the string "A staff member will review this
+        // photo" and it was true of neither. Neither state decides anything:
+        // the photo travels inline with the report and is screened AGAIN at
+        // submit, and a person is involved only if that second pass also fails
+        // to clear it. On a town whose cloud detector has no credentials but
+        // whose on-server one works -- the ordinary case -- the submit-time
+        // pass clears the photo and publishes it, having promised a review
+        // that was never queued. Measured on the live demo: the photo was on
+        // the public tracker and media_pending_review was empty.
+        withStatus([{ state: 'review' }, { state: 'error' }]);
+        const said = screen.getByRole('status').textContent!;
+        expect(said).not.toMatch(/staff/i);
+        expect(said).not.toMatch(/will review/i);
+    });
+
+    it('gives review and error different wording', () => {
+        // The difference is real at the point the resident can act on it.
+        // `review` means we asked and got no answer, so re-picking the same
+        // photo will not help; `error` means we could not ask at all, and
+        // trying again may well work. One shared string could say neither.
+        withStatus([{ state: 'review' }]);
+        const forReview = screen.getByRole('status').textContent!;
+        cleanup();
+        withStatus([{ state: 'error' }]);
+        const forError = screen.getByRole('status').textContent!;
+
+        // Both have to actually say something -- an empty label would satisfy
+        // "different" and tell the resident nothing.
+        expect(forReview).toMatch(/Photo 1: \S/);
+        expect(forError).toMatch(/Photo 1: \S/);
+        expect(forReview).not.toBe(forError);
     });
 
     it('carries the state on the image name too', () => {

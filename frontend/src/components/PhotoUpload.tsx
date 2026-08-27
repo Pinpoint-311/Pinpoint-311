@@ -30,14 +30,30 @@ interface PhotoUploadProps {
  * unblocked by waiting, and a photo held for review is attached, not lost --
  * because an ambiguous status on a form people are trying to leave gets read as
  * "still working" and they wait for nothing.
+ *
+ * `review` and `error` used to share the string "A staff member will review
+ * this photo", and it was not true of either of them. Neither state decides
+ * anything: the photo travels inline with the report and is screened again at
+ * submit, and only if THAT screening also fails to clear it does a person ever
+ * see it. On a town whose cloud detector is unreachable but whose on-server
+ * one works -- the ordinary case when a cloud credential is missing -- the
+ * submit-time pass clears the photo and publishes it, having promised a human
+ * review that was never queued. What both states can honestly say is the part
+ * that is guaranteed: the photo is attached, and nothing publishes it until
+ * something has checked it.
+ *
+ * They are still two strings, because the difference is real at the point the
+ * resident can act on it. `review` means we asked and got no answer, so
+ * re-picking the same photo will not help. `error` means we could not ask at
+ * all -- often a dropped connection -- and trying again may well work.
  */
 const LABELS: Record<PhotoState, string> = {
     uploading: 'Uploading…',
     checking: 'Checking your photo…',
     ready: 'Ready to send',
-    review: 'A staff member will review this photo',
+    review: 'Attached — we’ll check it before publishing',
     blocked: "This photo can't be used",
-    error: 'A staff member will review this photo',
+    error: 'Attached — couldn’t check it yet, we’ll check it at submit',
 };
 
 const BUSY: PhotoState[] = ['uploading', 'checking'];

@@ -267,6 +267,19 @@ class ServiceRequest(Base):
     # resident their pothole report.
     media_pending_review = Column(JSON, default=[])
 
+    @property
+    def photos_pending_review(self) -> int:
+        """How many held photos this report is carrying, as a plain number.
+
+        The held photos themselves are unredacted and stay on the staff-only
+        detail schema. The *count* is not sensitive and is the only thing the
+        surfaces that need to act on it require: a staff queue needs to know
+        which reports to open, and a resident needs to know their photo is
+        waiting rather than lost. Both used to have no way to ask, so a held
+        photo sat on a report nobody opened until the retention job removed it.
+        """
+        return len(self.media_pending_review or [])
+
     # Public-feed visibility, chosen by the resident at submission.
     #   True  (default) - appears in the public feed/map and public list APIs
     #   False ("unlisted") - excluded from every public listing, but still fully
