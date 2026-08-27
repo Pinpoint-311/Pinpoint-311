@@ -15,6 +15,7 @@ import {
     MapProviderId,
     MapRenderer,
 } from './types';
+import { withSharedClustering } from './clustering';
 
 type FactoryLoader = () => Promise<MapProviderFactory>;
 
@@ -60,7 +61,11 @@ export async function createMap(
 ): Promise<MapRenderer> {
     const factory = await loadMapProvider(config.provider);
     await factory.load(config);
-    return factory.createRenderer(container, config, options);
+    // Clustering is applied here, once, rather than by each adapter. Four
+    // vendors clustering four ways is what made the same reports group
+    // differently, size differently and count differently depending on which
+    // provider a town had chosen. See maps/clustering.ts.
+    return withSharedClustering(factory.createRenderer(container, config, options));
 }
 
 /**
