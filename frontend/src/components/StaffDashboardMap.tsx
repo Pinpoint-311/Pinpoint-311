@@ -91,7 +91,9 @@ const statusLabel = (status: string) => STATUS_LABELS[status] ?? status.replace(
  *   closed        hollow puck             "done; a reference point now"
  *
  * The closed donut is deliberately the request size (22) while the asset donut
- * is 18, and the legend names both, so the two hollow glyphs stay separable.
+ * is 18, so the two hollow glyphs stay separable by size. They used to be named
+ * side by side in a map legend; that legend has gone, because it restated the
+ * filters panel next to it.
  */
 function statusMarkerIcon(status: string): MarkerIcon {
     const fill = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
@@ -101,9 +103,10 @@ function statusMarkerIcon(status: string): MarkerIcon {
 }
 
 /**
- * The panel and legend echo of those pin shapes, so the three glyphs are taught
- * where they are filtered. Decorative: every swatch sits beside the status
- * word, which is what a screen reader reads.
+ * The filter panel's echo of those pin shapes, so the three glyphs are taught
+ * exactly where they are filtered -- which is the reason the separate legend
+ * could go. Decorative: every swatch sits beside the status word, which is what
+ * a screen reader reads.
  */
 function StatusSwatch({ status }: { status: string }) {
     const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
@@ -1173,38 +1176,19 @@ export default function StaffDashboardMap({
                 </button>
             )}
 
-            {/* Legend */}
-            <div className="absolute bottom-4 left-4 z-10 bg-[#0f0f1a]/95 backdrop-blur-md rounded-xl border border-white/10 px-4 py-3 shadow-xl">
-                {/* How many pins are actually out there. Toggling a filter used
-                    to change the marker set with nothing on the page moving,
-                    so "did that filter do anything?" was unanswerable without
-                    counting dots; this is the visible half of the same status
-                    message announce() speaks (WCAG 4.1.3). */}
-                <p className="text-xs text-white/80 font-medium mb-2">
-                    {`${filteredRequests.length} of ${requests.length} requests plotted`}
-                </p>
-                <div className="flex items-center gap-5 text-xs">
-                    {Object.keys(STATUS_COLORS).map((status) => (
-                        <div key={status} className="flex items-center gap-2">
-                            <StatusSwatch status={status} />
-                            <span className="text-white/70 font-medium">{statusLabel(status)}</span>
-                        </div>
-                    ))}
-                    {/* The shape, not the colour. An asset layer's colour is
-                        chosen by whoever uploaded it and can be any of the
-                        three above, so a colour swatch here would explain
-                        nothing. */}
-                    {mapLayers.length > 0 && (
-                        <div className="flex items-center gap-2 pl-4 border-l border-white/15">
-                            <span
-                                className="w-3 h-3 rounded-full border-2 border-white/70"
-                                aria-hidden="true"
-                            />
-                            <span className="text-white/70 font-medium">Town asset</span>
-                        </div>
-                    )}
-                </div>
-            </div>
+            {/* No legend.
+                It repeated the filters panel, which already shows the same
+                StatusSwatch beside every status it can filter on -- the same
+                component, so the colours cannot drift apart -- and lists each
+                map layer with its own colour. A key that restates the control
+                next to it is furniture.
+
+                One thing did go with it and is worth knowing: the hollow ring
+                that marks a town asset, as opposed to a filled request pin, is
+                now unexplained anywhere. The Map Layers filter section only
+                renders when `operationalFilters` is set, and it defaults to
+                false. If that convention needs a key again, it is one item and
+                belongs beside the layer list rather than floating over the map. */}
         </div>
     );
 }

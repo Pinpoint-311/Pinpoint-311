@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import func, select
+from sqlalchemy import func, select, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -125,6 +125,21 @@ async def submit_platform_feedback(
     return {"status": "recorded"}
 
 
+def month_bucket():
+    """The "YYYY-MM" grouping expression, built once so SELECT and GROUP BY
+    cannot disagree.
+
+    `literal_column` rather than a plain string: given a string, SQLAlchemy binds
+    the format as a parameter, and writing the call twice bound it twice. The
+    statement then selected `to_char(submitted_at, $1)` and grouped by
+    `to_char(submitted_at, $3)`; Postgres cannot know two placeholders carry the
+    same value, so the grouped expression did not match the selected one and the
+    whole request failed. The value is a constant in this file, never anything a
+    caller supplies, so inlining it introduces nothing to inject.
+    """
+    return func.to_char(PlatformFeedback.submitted_at, literal_column("'YYYY-MM'"))
+
+
 @router.get("/platform/statistics", response_model=PlatformFeedbackStatisticsResponse)
 async def get_platform_feedback_statistics(
     db: AsyncSession = Depends(get_db),
@@ -161,14 +176,23 @@ async def get_platform_feedback_statistics(
     # "YYYY-MM", matching AdvancedStatistics.requests_by_month. Twelve months,
     # which is as far back as the other trends on that page look.
     cutoff = datetime.now(timezone.utc) - timedelta(days=365)
+    # One expression object, reused in SELECT and GROUP BY, with the format as a
+    # literal rather than a bound parameter.
+    #
+    # Written out twice as `func.to_char(col, "YYYY-MM")`, SQLAlchemy bound the
+    # format string separately each time, so Postgres saw
+    # `to_char(submitted_at, $1)` selected and `to_char(submitted_at, $3)`
+    # grouped. It cannot know two different placeholders hold the same value, so
+    # the grouped expression did not match the selected one and every call died
+    # with "column platform_feedback.submitted_at must appear in the GROUP BY
+    # clause". The whole statistics section then reported "Platform feedback:
+    # Request failed" for any town with the module switched on.
+    month = month_bucket()
     monthly = (
         await db.execute(
-            select(
-                func.to_char(PlatformFeedback.submitted_at, "YYYY-MM"),
-                func.count(PlatformFeedback.id),
-            )
+            select(month, func.count(PlatformFeedback.id))
             .where(PlatformFeedback.submitted_at >= cutoff)
-            .group_by(func.to_char(PlatformFeedback.submitted_at, "YYYY-MM"))
+            .group_by(month)
         )
     ).all()
     responses_by_month = {period: int(count) for period, count in sorted(monthly)}

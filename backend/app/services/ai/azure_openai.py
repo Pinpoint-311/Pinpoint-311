@@ -23,10 +23,11 @@ from urllib.parse import urlsplit, urlunsplit
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_VERSION = "2024-06-01"
-# Kept in step with the catalog's default_model in registry.py; a test fails
-# if they drift. Two defaults for the same thing is how a town ends up on a
-# deployment the picker never offered.
-DEFAULT_DEPLOYMENT = "gpt-4.1-mini"
+# No default deployment. A deployment name is invented by whoever created it,
+# so any value guessed here is wrong except by coincidence -- and guessing sent
+# the town a 404 from Azure instead of "you have not filled this in", which is
+# the thing that was actually true.
+DEFAULT_DEPLOYMENT = None
 
 # deployment name -> the token-limit parameter it accepts. Learned at
 # runtime from Azure's own rejection; see complete_json.
@@ -69,7 +70,7 @@ class AzureOpenAIProvider(AIProvider):
 
     def __init__(self, endpoint: str, api_key: str, deployment: Optional[str] = None,
                  api_version: str = DEFAULT_API_VERSION):
-        super().__init__(deployment or DEFAULT_DEPLOYMENT)
+        super().__init__(deployment or DEFAULT_DEPLOYMENT)  # may be None; registry refuses to build without one
         self.endpoint = normalise_azure_endpoint(endpoint)
         self.api_key = api_key
         self.api_version = api_version or DEFAULT_API_VERSION

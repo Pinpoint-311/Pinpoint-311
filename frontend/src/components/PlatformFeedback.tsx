@@ -76,9 +76,24 @@ interface Props {
     enabled?: boolean;
     /** Address for "tell us more". Blank/undefined omits that line. */
     feedbackEmail?: string | null;
+    /** How much room this is given.
+     *
+     *  `footer` is the original: one quiet line, easy to walk past, because
+     *  anywhere a resident might still be working it must not compete with the
+     *  job. `card` is for the confirmation screen, where the job is finished and
+     *  there is nothing left to interrupt — so the question can be asked
+     *  properly rather than hidden in the smallest type on the page. */
+    variant?: 'footer' | 'card';
 }
 
-const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail }) => {
+/* The confirmation-screen shell. A soft gradient, a hairline top edge and a
+ * blur, so the question reads as part of the page rather than as a banner
+ * bolted onto the end of it. */
+const CARD = 'w-full rounded-2xl border border-white/12 bg-gradient-to-b '
+    + 'from-white/[0.09] to-white/[0.03] backdrop-blur-sm px-5 py-4 '
+    + 'shadow-[0_8px_30px_rgba(0,0,0,0.18)]';
+
+const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail, variant = 'footer' }) => {
     const [done, setDone] = useState(() => alreadyAnswered());
     const [open, setOpen] = useState(false);
     const [sending, setSending] = useState(false);
@@ -114,18 +129,36 @@ const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail }) => {
     ) : null;
 
     if (done) {
+        /* "Thanks — that helps." read as a receipt rather than a reply.
+         * Somebody here has done two things for the town -- filed a report and
+         * then answered an optional question on top of it -- and the
+         * acknowledgement names both. */
+        const thanks = (
+            <p className="flex items-center gap-2 font-medium text-white/90">
+                <span className="w-6 h-6 rounded-full bg-emerald-400/15 flex items-center justify-center shrink-0">
+                    <Check className="w-3.5 h-3.5 text-emerald-300" aria-hidden="true" />
+                </span>
+                Thank you for your feedback and for your report!
+            </p>
+        );
+
+        if (variant === 'card') {
+            return (
+                <div className={CARD} data-testid="platform-feedback-thanks">
+                    <div className="space-y-1.5 text-sm text-left">{thanks}</div>
+                    {tellUsMore && <div className="mt-3 text-sm">{tellUsMore}</div>}
+                </div>
+            );
+        }
         return (
             <div className="flex flex-col items-center gap-1.5 text-sm" data-testid="platform-feedback-thanks">
-                <p className="flex items-center gap-1.5 text-white/50">
-                    <Check className="w-4 h-4 text-emerald-400" aria-hidden="true" />
-                    Thanks — that helps.
-                </p>
+                <div className="flex flex-col items-center gap-1 text-center">{thanks}</div>
                 {tellUsMore}
             </div>
         );
     }
 
-    if (!open) {
+    if (!open && variant !== 'card') {
         return (
             <button
                 type="button"
@@ -136,6 +169,45 @@ const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail }) => {
                 <MessageSquareHeart className="w-4 h-4" aria-hidden="true" />
                 How is this site working for you?
             </button>
+        );
+    }
+
+    if (variant === 'card') {
+        return (
+            <div className={CARD} data-testid="platform-feedback-card">
+                <p className="flex items-center gap-2 text-sm font-medium text-white/90">
+                    <MessageSquareHeart className="w-4 h-4 text-primary-300 shrink-0" aria-hidden="true" />
+                    One quick question
+                </p>
+                <p className="mt-1.5 text-sm text-white/65 text-left" id="platform-feedback-question">
+                    {PLATFORM_FEEDBACK_QUESTION}
+                </p>
+                <div
+                    className="mt-3 flex flex-wrap gap-2"
+                    role="group"
+                    aria-labelledby="platform-feedback-question"
+                >
+                    {PLATFORM_FEEDBACK_OPTIONS.map((opt) => (
+                        <button
+                            key={opt.value}
+                            type="button"
+                            disabled={sending}
+                            onClick={() => submit(opt.value)}
+                            className="px-3.5 py-2 rounded-xl border border-white/12 bg-white/[0.06] hover:bg-white/[0.13] hover:border-white/25 disabled:opacity-50 text-white/85 text-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                        >
+                            {opt.label}
+                        </button>
+                    ))}
+                </div>
+                <p className="mt-3 text-[11px] text-white/35">
+                    Anonymous. We store your answer and nothing else — no name, no email, no comment.
+                </p>
+                {failed && (
+                    <p className="mt-2 text-xs text-amber-300/80" role="status">
+                        That did not go through. No harm done.
+                    </p>
+                )}
+            </div>
         );
     }
 
