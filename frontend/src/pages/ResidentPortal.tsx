@@ -25,6 +25,7 @@ import {
     Twitter,
     Linkedin,
     AlertTriangle,
+    Search,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
@@ -1875,9 +1876,44 @@ export default function ResidentPortal() {
                                     )}
                                 </div>
 
-                                <Button onClick={handleReset} size="lg">
-                                    Submit Another Request
-                                </Button>
+                                <div className="space-y-3">
+                                    {/* Tracking is the thing a resident actually
+                                        wants next, and until now the only way to
+                                        reach it was to notice a link elsewhere on
+                                        the page and retype the reference. The id
+                                        is already in hand here, so the button goes
+                                        straight to that one request. */}
+                                    {submittedId && (
+                                        <button
+                                            type="button"
+                                            onClick={() => updateHash(`track/${submittedId}`)}
+                                            className="w-full inline-flex items-center justify-center gap-2.5 rounded-2xl px-6 py-4 font-semibold text-white
+                                                       bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500
+                                                       border border-white/15 shadow-[0_10px_35px_rgba(59,130,246,0.35)]
+                                                       transition-all hover:shadow-[0_14px_45px_rgba(59,130,246,0.45)] hover:-translate-y-0.5
+                                                       focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+                                        >
+                                            <Search className="w-5 h-5" aria-hidden="true" />
+                                            Track this request
+                                        </button>
+                                    )}
+                                    <Button onClick={handleReset} size="lg" variant="secondary" className="w-full">
+                                        Submit Another Request
+                                    </Button>
+                                </div>
+
+                                {/* Moved here from the footer. It used to sit in
+                                    the smallest type on the page, deliberately, so
+                                    that it could not compete with somebody still
+                                    filing a report. On this screen the report is
+                                    filed and there is nothing left to interrupt,
+                                    so the question is asked properly instead of
+                                    hidden. */}
+                                <PlatformFeedback
+                                    enabled={settings?.modules?.platform_feedback}
+                                    feedbackEmail={settings?.platform_feedback_email}
+                                    variant="card"
+                                />
                             </motion.div>
                         )}
                     </AnimatePresence>
@@ -1929,18 +1965,6 @@ export default function ResidentPortal() {
                             })}
                         </div>
                     )}
-
-                    {/* Optional platform-feedback question.
-                        In the footer, collapsed to one line, and deliberately
-                        NOT a modal: a prompt that interrupts somebody filing a
-                        report competes with the job they came to do. Renders
-                        nothing at all unless the town enabled the module — the
-                        component returns null, and the endpoint behind it 404s
-                        regardless. */}
-                    <PlatformFeedback
-                        enabled={settings?.modules?.platform_feedback}
-                        feedbackEmail={settings?.platform_feedback_email}
-                    />
 
                     {/* Legal Links */}
                     <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-2 text-sm">

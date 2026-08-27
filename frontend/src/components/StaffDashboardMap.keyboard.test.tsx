@@ -219,9 +219,14 @@ describe('StaffDashboardMap keyboard access to the plotted requests', () => {
 });
 
 describe('StaffDashboardMap filter status messages', () => {
-    it('shows a visible count of what is plotted', () => {
+    it('keeps a visible plotted count now that the legend is gone', () => {
+        /* The legend held a second copy of this and has been removed wholesale,
+         * since it restated the filters panel beside it. What must not go with
+         * it is the count itself: it is the only visible answer to "did that
+         * filter do anything?" for somebody who cannot hear the live region. */
         renderMap();
-        expect(screen.getByText('2 of 2 requests plotted')).toBeTruthy();
+        expect(screen.queryByText(/requests plotted/)).toBeNull();
+        expect(listToggle().textContent).toContain('Plotted Requests (2)');
     });
 
     it('announces the new count through the app live region when a filter changes', async () => {
@@ -236,7 +241,7 @@ describe('StaffDashboardMap filter status messages', () => {
         openBox.focus();
         await user.keyboard(' ');
 
-        expect(screen.getByText('1 of 2 requests plotted')).toBeTruthy();
+        expect(listToggle().textContent).toContain('Plotted Requests (1)');
         const region = await screen.findByText('1 of 2 requests shown on the map');
         expect(region.id).toBe('aria-live-region');
         expect(region.getAttribute('aria-live')).toBe('polite');
