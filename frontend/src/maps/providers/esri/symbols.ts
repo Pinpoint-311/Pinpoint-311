@@ -43,6 +43,65 @@ export function withOpacity(color: string | undefined, opacity: number | undefin
 }
 
 /**
+ * ArcGIS rasterises a PictureMarkerSymbol once, from the source image's own
+ * intrinsic size, and then draws that raster at `width`/`height` CSS pixels. On
+ * a HiDPI screen those CSS pixels are `devicePixelRatio` device pixels, so a
+ * 52px bubble rasterised at 52x52 is stretched over 104x104 and reads as soft.
+ * It is worst on the largest symbols, which is why the cluster bubbles were the
+ * ones somebody noticed: the bigger the bubble, the more of the screen the
+ * blur covers. Google, Apple and Azure all resample per device pixel ratio
+ * themselves -- Azure's icons.ts already says out loud that MarkerIcon's
+ * width/height are the *rendered* size and the source image may be larger --
+ * and Esri is the only provider that does not.
+ *
+ * PictureMarkerSymbol has no "rasterise at 2x" switch, so the one lever left is
+ * the source image. Every marker in this product is an SVG data URI drawn in a
+ * viewBox (see markerIcons.ts), so re-emitting the same markup with a larger
+ * intrinsic width/height supersamples the raster without touching a single
+ * coordinate. The symbol's own width/height stay in CSS pixels, so layout,
+ * anchoring and every other provider are unaffected.
+ */
+const SVG_DATA_URI = /^data:image\/svg\+xml/;
+
+/** Beyond 4x the texture cost stops buying visible sharpness. */
+const MAX_SUPERSAMPLE = 4;
+
+function supersampleFactor(): number {
+    const ratio = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+    return Math.min(MAX_SUPERSAMPLE, Math.max(1, Math.ceil(ratio)));
+}
+
+export function supersampledIconUrl(url: string, factor: number): string {
+    if (factor <= 1 || !SVG_DATA_URI.test(url)) return url;
+
+    const comma = url.indexOf(',');
+    if (comma < 0) return url;
+
+    let markup: string;
+    try {
+        markup = decodeURIComponent(url.slice(comma + 1));
+    } catch {
+        // Base64 payload, or something we did not write. Leave it alone.
+        return url;
+    }
+
+    const open = markup.match(/^\s*<svg\b[^>]*>/);
+    if (!open) return url;
+    const tag = open[0];
+
+    // Without a viewBox the width and height *are* the coordinate system, and
+    // enlarging them would enlarge the drawing rather than resample it.
+    if (!/\bviewBox\s*=/.test(tag)) return url;
+
+    const scaled = tag
+        .replace(/\bwidth="([\d.]+)"/, (_m, v) => `width="${Number(v) * factor}"`)
+        .replace(/\bheight="([\d.]+)"/, (_m, v) => `height="${Number(v) * factor}"`);
+    if (scaled === tag) return url;
+
+    return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(scaled + markup.slice(tag.length))}`;
+}
+
+/**
  * Sizes are handed to ArcGIS as CSS px strings rather than bare numbers: a bare
  * number is interpreted as *points* and silently scaled by 4/3, which would make
  * every Esri marker a third larger than the same MarkerIcon on Google.
@@ -76,7 +135,7 @@ export function markerSymbol(mods: EsriModules, icon: MarkerIcon | undefined): a
     const ax = icon.anchor ? icon.anchor.x : icon.width / 2;
     const ay = icon.anchor ? icon.anchor.y : icon.height / 2;
     return new mods.PictureMarkerSymbol({
-        url: icon.url,
+        url: supersampledIconUrl(icon.url, supersampleFactor()),
         width: `${icon.width}px`,
         height: `${icon.height}px`,
         xoffset: `${icon.width / 2 - ax}px`,
