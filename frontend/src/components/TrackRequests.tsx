@@ -667,6 +667,33 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                     </Card>
                 </div>
 
+                {/* Photos the resident attached that are not here.
+                    Held out of media_urls because the face and licence-plate
+                    blur could not be completed, so no public surface renders
+                    one -- which from the tracker looked exactly like the photo
+                    having been lost. Rendered outside the block below because
+                    the commonest case is a report whose ONLY photo is held, and
+                    that block does not draw at all when media_urls is empty. */}
+                {(selectedRequest.photos_pending_review || 0) > 0 && (
+                    <div className="mt-6">
+                        <Card className="p-4 border border-amber-500/30 bg-amber-500/5">
+                            <h3 className="font-semibold text-amber-200 flex items-center gap-2 mb-2">
+                                <Image className="w-5 h-5 text-amber-300" aria-hidden="true" />
+                                {selectedRequest.photos_pending_review === 1
+                                    ? '1 photo is waiting to be checked'
+                                    : `${selectedRequest.photos_pending_review} photos are waiting to be checked`}
+                            </h3>
+                            <p className="text-sm text-amber-200/70">
+                                Faces and licence plates could not be blurred automatically, so
+                                {selectedRequest.photos_pending_review === 1 ? ' it is ' : ' they are '}
+                                not shown here. A staff member will look and either publish or
+                                delete {selectedRequest.photos_pending_review === 1 ? 'it' : 'them'}.
+                                This does not hold up the report itself.
+                            </p>
+                        </Card>
+                    </div>
+                )}
+
                 {/* Photos if available */}
                 {selectedRequest.media_urls && selectedRequest.media_urls.length > 0 && (
                     <div className="mt-6">

@@ -312,6 +312,13 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
         "updated_datetime": request.updated_datetime.isoformat() if request.updated_datetime else None,
         "closed_substatus": request.closed_substatus,
         "media_urls": request.media_urls or [],  # Full array of photo data for detail view
+        # The COUNT of photos held back for a staff check -- never the photos,
+        # which are unredacted by definition and live on the staff-only detail
+        # schema. Without this the resident who attached one sees a report with
+        # no photo and no explanation, which reads as "it was lost"; the tracker
+        # says "waiting to be checked" instead. See
+        # models.ServiceRequest.photos_pending_review.
+        "photos_pending_review": request.photos_pending_review,
         "completion_message": request.completion_message,
         "completion_photo_url": request.completion_photo_url,  # Full completion photo
         "assigned_department_name": request.assigned_department.name if request.assigned_department else None,
@@ -947,8 +954,14 @@ async def screen_photo(
             "handle": handle,
             "status": "needs_review",
             "reason": reason,
-            "message": "We couldn't check this photo automatically. It will be attached "
-                       "for a staff member to review before it appears publicly.",
+            # Not "a staff member will review this photo". Nothing here queues
+            # a person: this photo goes inline with the report and is screened
+            # AGAIN at submit, and a human is only involved if that second pass
+            # also fails to clear it. Promising a review that the submit path
+            # routinely makes unnecessary is how a photo came to be published
+            # under a message saying it would not be.
+            "message": "We couldn't check this photo automatically. It's attached, and "
+                       "it won't appear publicly until it has been checked.",
         }
 
     if batch.media[0] == media:
@@ -965,8 +978,14 @@ async def screen_photo(
             "handle": handle,
             "status": "needs_review",
             "reason": "unprocessed",
-            "message": "We couldn't check this photo automatically. It will be attached "
-                       "for a staff member to review before it appears publicly.",
+            # Not "a staff member will review this photo". Nothing here queues
+            # a person: this photo goes inline with the report and is screened
+            # AGAIN at submit, and a human is only involved if that second pass
+            # also fails to clear it. Promising a review that the submit path
+            # routinely makes unnecessary is how a photo came to be published
+            # under a message saying it would not be.
+            "message": "We couldn't check this photo automatically. It's attached, and "
+                       "it won't appear publicly until it has been checked.",
         }
 
     handle = await photo_handles.mint(
