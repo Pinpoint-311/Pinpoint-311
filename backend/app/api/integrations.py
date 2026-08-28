@@ -559,7 +559,15 @@ async def test_integration(
         log_status = "error"
 
     db.add(IntegrationSyncLog(
-        integration_id=integration.id, operation="test", status=log_status, detail=detail[:2000]
+        # The path parameter, not `integration.id`. The rollback above expires
+        # every instance in this session, so reading an attribute off the ORM
+        # object here re-loads it -- synchronous IO inside async attribute
+        # access, which raises MissingGreenlet and turns the whole endpoint into
+        # a 500. The admin then sees "Something went wrong running the check"
+        # instead of the vendor's actual complaint, which is the one piece of
+        # information that would let them fix their connection. _get_integration
+        # already 404'd if this id did not exist, so it is the same number.
+        integration_id=integration_id, operation="test", status=log_status, detail=detail[:2000]
     ))
     await db.commit()
     return result
