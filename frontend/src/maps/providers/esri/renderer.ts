@@ -1051,6 +1051,7 @@ export class EsriMapRenderer implements MapRenderer {
 
         this.installControls(options);
         this.installInteraction();
+        this.lowerBasemapLabels();
 
         this.view.when(() => {
             this.ready = true;
@@ -1083,9 +1084,96 @@ export class EsriMapRenderer implements MapRenderer {
             return new mods.Basemap({ baseLayers: [new mods.TileLayer({ url: id })] });
         }
         if (/^[0-9a-f]{32}$/i.test(id)) {
-            return new mods.Basemap({ portalItem: { id } });
+            return this.portalBasemap(id);
         }
         return id;
+    }
+
+    /**
+     * A basemap from a portal item id, whatever kind of item it turns out to be.
+     *
+     * `new Basemap({ portalItem })` reads an item's *baseLayers*, which only a
+     * Web Map has. Point it at a Vector Tile Service item -- which is what a
+     * county hands you when you ask for its basemap, and what this town had
+     * configured -- and it resolves happily to a basemap with **no layers at
+     * all**: `loaded === true`, `baseLayers.length === 0`, no error anywhere.
+     * The map then draws nothing and the admin has no way to tell that from a
+     * key problem or a typo. Confirmed against the live item.
+     *
+     * So the item is asked what it is first, and wrapped in the layer class that
+     * matches. The Basemap is returned straight away and filled in when the
+     * answer arrives: MapView takes it either way, and a basemap that populates
+     * a moment later is exactly how the SDK's own portal basemaps behave.
+     */
+    private portalBasemap(id: string): any {
+        const { mods } = this;
+        const basemap = new mods.Basemap({ baseLayers: [] });
+
+        basemap.when = basemap.when || (() => Promise.resolve(basemap));
+
+        void (async () => {
+            let itemType = '';
+            try {
+                const portal = mods.esriConfig?.portalUrl || 'https://www.arcgis.com';
+                const response = await fetch(`${portal}/sharing/rest/content/items/${id}?f=json`);
+                itemType = String((await response.json())?.type || '');
+            } catch (error) {
+                console.warn('[Esri] could not read basemap item', id, error);
+            }
+
+            const portalItem = { id };
+            if (/vector tile/i.test(itemType)) {
+                basemap.baseLayers.add(new mods.VectorTileLayer({ portalItem }));
+            } else if (/map service|image service|tile/i.test(itemType)) {
+                basemap.baseLayers.add(new mods.TileLayer({ portalItem }));
+            } else if (/web map/i.test(itemType) || !itemType) {
+                // A Web Map really does carry its own baseLayers, so hand the
+                // whole item to Basemap the way the SDK intends.
+                const fromItem = new mods.Basemap({ portalItem });
+                try {
+                    await fromItem.load();
+                    fromItem.baseLayers.toArray().forEach((layer: any) => basemap.baseLayers.add(layer));
+                } catch (error) {
+                    console.warn('[Esri] basemap item failed to load', id, error);
+                }
+            } else {
+                console.warn(
+                    `[Esri] basemap item ${id} is a "${itemType}", which cannot be used as a basemap.`,
+                );
+            }
+        })();
+
+        return basemap;
+    }
+
+    /**
+     * Basemap labels belong under our markers, as they are on Google.
+     *
+     * ArcGIS draws a basemap's `referenceLayers` above *every* operational
+     * layer -- that is what they are for -- so street names and place labels
+     * landed on top of request pins and cluster bubbles, and only on Esri. The
+     * layers are moved out of the basemap and into the bottom of the map's own
+     * layer list: still above the imagery, now below anything this app draws.
+     */
+    private lowerBasemapLabels(): void {
+        const { view } = this;
+        const basemap = view.map?.basemap;
+        if (!basemap) return;
+
+        const relocate = () => {
+            const references = basemap.referenceLayers?.toArray?.() ?? [];
+            if (!references.length) return;
+            basemap.referenceLayers.removeAll();
+            references.forEach((layer: any, index: number) => {
+                // Keep them out of layer lists: they are still basemap furniture,
+                // they have simply been re-stacked.
+                layer.listMode = 'hide';
+                view.map.add(layer, index);
+            });
+        };
+
+        if (typeof basemap.when === 'function') basemap.when(relocate, () => { });
+        else relocate();
     }
 
     private installControls(options: MapInitOptions): void {
@@ -1237,6 +1325,7 @@ export class EsriMapRenderer implements MapRenderer {
         if (type === this.baseMapType) return;
         this.baseMapType = type;
         this.view.map.basemap = this.basemapFor(type);
+        this.lowerBasemapLabels();
         for (const emit of this.emitters.basemaptypechange) emit({ type });
     }
 
