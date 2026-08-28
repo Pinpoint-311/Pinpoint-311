@@ -35,6 +35,13 @@ Config:
 Credentials:
     api_key             an ArcGIS API key (used as the `token` parameter)
     username, password  an ArcGIS account; exchanged for a token via generateToken
+    client_id, client_secret
+                        OAuth 2.0 application credentials; exchanged for an access
+                        token via oauth2/token (grant_type=client_credentials).
+                        This is what the ArcGIS developer dashboard issues for
+                        server-to-server access -- the "Temporary Token" beside
+                        them on that page expires in an hour and is not a
+                        credential to save here.
 """
 
 import json
@@ -199,21 +206,56 @@ class ArcGISConnector(BaseConnector):
             raise ConnectorError("ArcGIS generateToken returned no token")
         return str(token)
 
+    async def _oauth_token(self) -> str:
+        """Exchange OAuth 2.0 client credentials for an access token.
+
+        This is what ArcGIS now hands you for server-to-server work: the
+        developer dashboard's "OAuth 2.0 Credentials" item gives a client id and
+        secret, and the *only* other thing on that page is a "Temporary Token"
+        that expires in an hour. Without this path an operator has nothing on
+        that page they can paste into an API-key box that keeps working, so they
+        paste the temporary token -- and the connection dies an hour later with
+        "Invalid token", which is exactly what happened on the demo deployment.
+
+        The token is short-lived by design and cached only for this connector
+        instance, so a long-running worker re-mints rather than carrying a stale
+        one.
+        """
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self.portal_url}/sharing/rest/oauth2/token",
+                data={
+                    "client_id": self.credentials["client_id"],
+                    "client_secret": self.credentials["client_secret"],
+                    "grant_type": "client_credentials",
+                    "f": "json",
+                },
+            )
+            self._raise_for_status(resp, "ArcGIS oauth2/token")
+            body = self._arcgis_json(resp, "ArcGIS oauth2/token")
+        token = body.get("access_token")
+        if not token:
+            raise ConnectorError("ArcGIS oauth2/token returned no access_token")
+        return str(token)
+
     async def _get_token(self) -> str:
         if self._token:
             return self._token
         api_key = self.credentials.get("api_key")
         if api_key:
             self._token = str(api_key)
+        elif self.credentials.get("client_id") and self.credentials.get("client_secret"):
+            self._token = await self._oauth_token()
         elif self.credentials.get("username") and self.credentials.get("password"):
             self._token = await self._generate_token()
         else:
             reused = await self._maps_api_key()
             if not reused:
                 raise ConnectorError(
-                    "ArcGIS credentials missing: provide an API key, or a username "
-                    "and password, or save an ArcGIS API key under the maps settings "
-                    "for this connection to reuse."
+                    "ArcGIS credentials missing: provide an API key, an OAuth "
+                    "client id and secret, or a username and password -- or save an "
+                    "ArcGIS API key under the maps settings for this connection to "
+                    "reuse."
                 )
             self._token = reused
         return self._token
