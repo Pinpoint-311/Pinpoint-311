@@ -74,6 +74,8 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "capabilities": ["push", "push_status", "pull", "documents", "assets", "lookups", "test"],
         "credential_fields": [
             {"key": "api_key", "label": "ArcGIS API Key", "secret": True},
+            {"key": "client_id", "label": "OAuth Client ID (instead of an API key)", "secret": False},
+            {"key": "client_secret", "label": "OAuth Client Secret", "secret": True},
             {"key": "username", "label": "ArcGIS Username (instead of an API key)", "secret": False},
             {"key": "password", "label": "ArcGIS Password", "secret": True},
         ],
@@ -240,6 +242,8 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         },
         "field_help": {
             "api_key": "A long code from ArcGIS Developers -> Dashboard -> API keys. Leave blank if you already saved an ArcGIS key for your maps — the connection will reuse it — or if you're using a username and password instead.",
+            "client_id": "Only if you're not using an API key. From an \"OAuth 2.0 Credentials\" item in ArcGIS Developers — the Client ID on its item page. Do not use the \"Temporary Token\" shown beside it: that one expires in an hour and the connection would stop working the same day.",
+            "client_secret": "The Client Secret from that same item. Treat it like a password.",
             "username": "Only if you're not using an API key. The ArcGIS account the connection will act as.",
             "password": "That account's password.",
             "layer_url": "Open the layer in ArcGIS and copy the URL from its item page. It must end in a number, like /FeatureServer/0 — that number picks the specific layer.",
