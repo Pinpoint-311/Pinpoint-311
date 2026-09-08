@@ -70,11 +70,15 @@ class FakeMapView {
     width = 400;
     height = 300;
     stationary = true;
+    props: any;
+    popupEnabled: boolean;
     constructor(props: any) {
+        this.props = props;
         this.map = props.map;
         this.container = props.container ?? { style: {} };
         this.center = props.center;
         this.zoom = props.zoom;
+        this.popupEnabled = props.popupEnabled ?? true;
     }
     on() { return { remove: vi.fn() }; }
     when(resolve: () => void) { readyCallbacks.push(resolve); return Promise.resolve(); }
@@ -271,5 +275,24 @@ describe('EsriMapRenderer marker layers', () => {
 
         renderer.destroy();
         expect(map.layers.length).toBe(0);
+    });
+});
+
+describe('the view does not run its own click-to-popup behaviour', () => {
+    /**
+     * Every popup in this app is opened explicitly, from a marker's onClick.
+     * Leave ArcGIS's own click handling on and it runs for the same click,
+     * finds no popupTemplate on any layer (they are all created with
+     * popupEnabled: false) and closes the popup we just opened. Markers then
+     * look correct and do nothing when clicked -- which is what the live Esri
+     * deployment did, on request pins and town asset pins alike.
+     *
+     * Measured against demo.pinpoint311.org: opening a popup from inside a
+     * click renders nothing while this is true -- immediately or deferred a
+     * tick -- and renders as soon as it is false.
+     */
+    it('turns the view popup off, so an app-opened popup survives the click', () => {
+        const { renderer } = build();
+        expect((renderer as any).view.props.popupEnabled).toBe(false);
     });
 });

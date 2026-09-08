@@ -1027,6 +1027,19 @@ export class EsriMapRenderer implements MapRenderer {
             rotation: options.heading ?? 0,
             constraints: { rotationEnabled: options.controls?.rotate?.enabled ?? true },
             popup: { dockEnabled: false, dockOptions: { buttonEnabled: false } },
+            // The app opens every popup itself, from a marker's onClick. Leave
+            // the view's own click-to-popup behaviour on and it runs for the
+            // same click and suppresses ours: no layer here has a popupTemplate
+            // (they are all created with popupEnabled: false), so the SDK
+            // decides the click hit nothing and shuts the popup it just saw
+            // open. The symptom is a map whose markers look right and do
+            // nothing when clicked -- Esri only, since no other provider has an
+            // opinion about clicks we already handled.
+            //
+            // Measured on demo.pinpoint311.org: opening from inside a click
+            // renders nothing with this true (immediately or deferred a tick),
+            // and renders with it false. openPopup() is unaffected by the flag.
+            popupEnabled: false,
             ui: { components: [] },
             ...(options.vendorOptions as Record<string, unknown> | undefined),
         });
