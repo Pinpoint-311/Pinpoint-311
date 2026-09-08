@@ -94,7 +94,18 @@ const CARD = 'w-full rounded-2xl border border-white/12 bg-gradient-to-b '
     + 'shadow-[0_8px_30px_rgba(0,0,0,0.18)]';
 
 const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail, variant = 'footer' }) => {
-    const [done, setDone] = useState(() => alreadyAnswered());
+    /* Two different reasons this control goes quiet, and they are not the same
+     * thing to say out loud.
+     *
+     * `answeredBefore` is the memory of an earlier report: the question is not
+     * asked again, and nothing is rendered. Thanking somebody for feedback they
+     * gave last week -- on a screen where they have just filed an unrelated
+     * report -- reads as the site thanking itself, and it appeared before the
+     * question had ever been put on this visit.
+     *
+     * `justAnswered` is this visit. That is the only case a thanks belongs to. */
+    const [answeredBefore] = useState(() => alreadyAnswered());
+    const [justAnswered, setJustAnswered] = useState(false);
     const [open, setOpen] = useState(false);
     const [sending, setSending] = useState(false);
     const [failed, setFailed] = useState(false);
@@ -107,7 +118,7 @@ const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail, variant = '
         try {
             await api.submitPlatformFeedback(value);
             try { window.localStorage.setItem(ANSWERED_KEY, '1'); } catch { /* private mode */ }
-            setDone(true);
+            setJustAnswered(true);
         } catch {
             // Nothing is retried and nothing is queued. This is an opinion
             // about a website, and a resident should not be told twice that
@@ -128,7 +139,10 @@ const PlatformFeedback: React.FC<Props> = ({ enabled, feedbackEmail, variant = '
         </a>
     ) : null;
 
-    if (done) {
+    // Asked and answered on an earlier visit: say nothing at all.
+    if (answeredBefore && !justAnswered) return null;
+
+    if (justAnswered) {
         /* "Thanks — that helps." read as a receipt rather than a reply.
          * Somebody here has done two things for the town -- filed a report and
          * then answered an optional question on top of it -- and the

@@ -1951,7 +1951,19 @@ export default function ResidentPortal() {
                                     {submittedId && (
                                         <button
                                             type="button"
-                                            onClick={() => updateHash(`track/${submittedId}`)}
+                                            onClick={() => {
+                                                /* The hash alone does not move
+                                                   the page: the tracking view is
+                                                   its own piece of state, and
+                                                   every other route into it sets
+                                                   both. Changing only the hash
+                                                   left the resident on the
+                                                   confirmation screen with a
+                                                   button that appeared dead. */
+                                                updateHash(`track/${submittedId}`);
+                                                setShowTrackingView(true);
+                                                scrollToTop('instant');
+                                            }}
                                             className="w-full inline-flex items-center justify-center gap-2.5 rounded-2xl px-6 py-4 font-semibold text-white
                                                        bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500
                                                        border border-white/15 shadow-[0_10px_35px_rgba(59,130,246,0.35)]
