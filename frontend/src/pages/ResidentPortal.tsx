@@ -1177,7 +1177,18 @@ export default function ResidentPortal() {
                                         <StaffDashboardMap
                                             config={mapConfig}
                                             requests={allRequests}
-                                            mapLayers={mapLayers}
+                                            /* No asset layers on the public map.
+                                               These are the town's own
+                                               infrastructure -- hydrants, catch
+                                               basins, signs -- drawn as hollow
+                                               rings that sit among the request
+                                               pins and read as reports that are
+                                               not there. A resident looking at
+                                               "Community Requests" should see
+                                               requests. Staff still get them on
+                                               the dashboard, where the layer
+                                               list explains what they are. */
+                                            mapLayers={[]}
                                             services={services}
                                             departments={[]}
                                             users={[]}

@@ -120,6 +120,9 @@ export interface PuckOptions {
     strokeWidth?: number;
     /** A hole in the middle: "a reference point" rather than "an item". */
     hollow?: boolean;
+    /** A white ring inside the disc. Keeps the outer edge identical to the
+     *  other statuses so the three read as one family. */
+    innerRing?: boolean;
 }
 
 /**
@@ -138,10 +141,11 @@ export function puckIcon({
     size = 22,
     strokeWidth = 2.2,
     hollow = false,
+    innerRing = false,
 }: PuckOptions): MarkerIcon {
     const f = safeColor(fill);
     const st = safeColor(stroke, STROKE);
-    const s = uid('pk', f, st, String(size), String(hollow));
+    const s = uid('pk', f, st, String(size), String(hollow), String(innerRing));
 
     const c = size / 2;
     const r = c - strokeWidth / 2 - 0.7;
@@ -154,6 +158,17 @@ export function puckIcon({
         `<circle cx="${c}" cy="${c}" r="${r.toFixed(2)}" fill="${f}" stroke="${st}" stroke-width="${strokeWidth}"/>` +
         `<circle cx="${c}" cy="${c}" r="${r.toFixed(2)}" fill="url(#${s}g)"/>` +
         (hollow ? `<circle cx="${c}" cy="${c}" r="${hole.toFixed(2)}" fill="${STROKE}"/>` : '') +
+        /* An inner ring, drawn INSIDE the disc rather than by thickening the
+           outer stroke. Thickening it ate into the coloured area -- "in
+           progress" carried a 5.5 stroke against everyone else's 2.2, so its
+           disc was 7.6px across where the others were 9.2, and at a glance it
+           read as a white donut: a different KIND of marker rather than a
+           different status, easily mistaken for a town asset. Same outer edge
+           for all three now; only the interior says which. */
+        (innerRing
+            ? `<circle cx="${c}" cy="${c}" r="${(r * 0.52).toFixed(2)}" fill="none" `
+              + `stroke="${STROKE}" stroke-width="${(strokeWidth * 0.9).toFixed(2)}"/>`
+            : '') +
         `</g>` +
         `</svg>`;
 
