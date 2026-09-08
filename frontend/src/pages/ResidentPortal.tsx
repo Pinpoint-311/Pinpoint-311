@@ -1026,18 +1026,6 @@ export default function ResidentPortal() {
                             >
                                 {/* Hero Section */}
                                 <div className="text-center space-y-6">
-                                    <motion.div
-                                        initial={{ scale: 0.9, opacity: 0 }}
-                                        animate={{ scale: 1, opacity: 1 }}
-                                        transition={{ delay: 0.1 }}
-                                        className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary-500/20 border border-primary-500/30"
-                                    >
-                                        <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                                        <span className="text-sm font-medium text-primary-200">
-                                            Report Requests Online
-                                        </span>
-                                    </motion.div>
-
                                     <motion.h1
                                         ref={stepHeadingRef.categories}
                                         tabIndex={-1}
@@ -1067,14 +1055,17 @@ export default function ResidentPortal() {
                                     >
                                         <div className="relative">
                                             <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
-                                            <div
-                                                className="absolute top-1/2 -translate-y-1/2 w-5 h-5 pointer-events-none"
-                                                style={{
-                                                    left: '1rem',
-                                                    backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='rgba(255,255,255,0.7)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E")`,
-                                                    backgroundSize: 'contain',
-                                                    backgroundRepeat: 'no-repeat'
-                                                }}
+                                            {/* The lucide icon, not a CSS
+                                                background-image holding a
+                                                hand-escaped SVG data URI. The
+                                                escaped version rendered
+                                                nothing, and every other search
+                                                field in the app already uses
+                                                this component -- so it also
+                                                now matches them in stroke
+                                                weight and colour. */}
+                                            <Search
+                                                className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/70 pointer-events-none"
                                                 aria-hidden="true"
                                             />
                                             <input
