@@ -2464,7 +2464,9 @@ export default function StaffDashboard() {
 
                                 {/* Search Input */}
                                 <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" aria-hidden="true" />
+                                    {/* z-10: glass-input carries backdrop-filter, so without it
+                                        the input paints over this icon and blurs it. */}
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 z-10" aria-hidden="true" />
                                     <input
                                         type="text"
                                         placeholder="Search by ID, description, address..."
