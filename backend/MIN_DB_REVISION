@@ -17,10 +17,21 @@
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
 #
-# Head is d8f0b2c4e6a3 (integration_lookup_cache) — four nullable columns on an
-# existing table, purely additive — so the rule above puts the floor at the
-# revision immediately before it: c7e9a1b3d5f2 (integration_dead_letters),
-# itself a new table and equally additive.
+# Head is e4b7c9d2f1a8 (widen_encrypted_pii_columns) — the four encrypted PII
+# columns on service_requests go from varchar(500) to text. Widening loses
+# nothing and old code reads and writes a text column exactly as it did a
+# varchar, so this is expand, and the floor moves to the revision immediately
+# before it: d8f0b2c4e6a3 (integration_lookup_cache), four nullable columns and
+# equally additive.
+#
+# Worth stating, because it looks like a counter-example: this build DOES fail
+# on the old schema in one configuration -- a town wrapping PII with Azure Key
+# Vault produces a ~912-character ciphertext that varchar(500) rejects, which is
+# how resident submissions broke on the demo. That is a property of the town's
+# key service, not of the build: a town on the application key or on Google KMS
+# runs on the old schema unharmed, and the orchestrator cannot know which. The
+# floor stays where the schema compatibility actually is, and the migration is
+# what fixes the configuration that hurts.
 #
 # a1c2e3f4b5d6 (separate_legal_hold_from_moderation_flag) further down the same
 # chain IS a contract migration for this build — retention selects on
@@ -36,4 +47,4 @@
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-c7e9a1b3d5f2
+d8f0b2c4e6a3

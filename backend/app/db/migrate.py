@@ -173,6 +173,14 @@ _EXISTING_STRING = re.compile(
 _NEW_STRING = re.compile(
     r"\btype_\s*=\s*sa\.String\s*\(\s*(?:length\s*=\s*)?(\d+)\s*\)")
 
+# varchar(n) -> text. Unbounded is strictly wider than any n, so this is the
+# same proof as a length widen without a number to compare: nothing can fail to
+# fit. It is also the only end state that cannot be wrong again -- the encrypted
+# PII columns were widened twice, 200 then 500, and outgrown twice, because how
+# long a ciphertext is depends on which key service a town wrapped it with and
+# the schema cannot see that choice.
+_NEW_TEXT = re.compile(r"\btype_\s*=\s*sa\.Text\s*\(\s*\)")
+
 
 def _call_spans(body: str, name: str, receiver: str = r"[A-Za-z_]\w*"):
     """The argument text of each `<receiver>.<name>(...)` call -- one span per
@@ -232,16 +240,21 @@ _SAFE_WIDEN_KWARGS = {"existing_type", "type_", "existing_nullable", "nullable",
 
 
 def _is_pure_widen(args: str) -> bool:
-    """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)`,
-    m >= n, with no kwargs beyond _SAFE_WIDEN_KWARGS. Anything else -- a
+    """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)` with
+    m >= n, or -> `type_=sa.Text()`, with no kwargs beyond _SAFE_WIDEN_KWARGS. Anything else -- a
     narrow, a change to another type, a length this cannot parse, a sibling
     kwarg this does not positively recognise -- is not provably safe and
     stays gated."""
     if not _top_level_kwargs(args) <= _SAFE_WIDEN_KWARGS:
         return False
     existing = _EXISTING_STRING.search(args)
+    if not existing:
+        return False
+    # varchar(n) -> text: no length to compare, because there is no bound.
+    if _NEW_TEXT.search(args):
+        return True
     new = _NEW_STRING.search(args)
-    return bool(existing and new and int(new.group(1)) >= int(existing.group(1)))
+    return bool(new and int(new.group(1)) >= int(existing.group(1)))
 
 # SQL verbs that cannot lose data. Index creation is the case that actually
 # comes up: a GIST index on a cast expression is not something Alembic's op
