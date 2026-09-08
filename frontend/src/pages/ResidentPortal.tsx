@@ -1055,17 +1055,28 @@ export default function ResidentPortal() {
                                     >
                                         <div className="relative">
                                             <label htmlFor="service-search" className="sr-only">{"Search services..."}</label>
-                                            {/* The lucide icon, not a CSS
-                                                background-image holding a
-                                                hand-escaped SVG data URI. The
-                                                escaped version rendered
-                                                nothing, and every other search
-                                                field in the app already uses
-                                                this component -- so it also
-                                                now matches them in stroke
-                                                weight and colour. */}
+                                            {/* z-10 is load-bearing, not decoration.
+                                                `.glass-input` carries
+                                                backdrop-filter: blur(10px),
+                                                which makes the input its own
+                                                stacking context. This icon is a
+                                                positioned sibling at z-index
+                                                auto and the input comes after it
+                                                in the DOM, so the input painted
+                                                on top and its backdrop blurred
+                                                the icon into a grey smudge. The
+                                                same thing hid the CSS
+                                                background-image this replaced,
+                                                so the escaped data URI was never
+                                                the problem.
+
+                                                The lucide component regardless:
+                                                every other search field in the
+                                                app uses it, so this one now
+                                                matches them in stroke weight and
+                                                colour. */}
                                             <Search
-                                                className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/70 pointer-events-none"
+                                                className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-white/70 pointer-events-none z-10"
                                                 aria-hidden="true"
                                             />
                                             <input

@@ -51,7 +51,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
                 )}
                 <div className="relative">
                     {leftIcon && (
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" aria-hidden="true">
+                        /* z-10 is load-bearing. `.glass-input` carries
+                           backdrop-filter: blur(10px), which makes the input a
+                           stacking context; this icon is a positioned sibling
+                           at z-index auto and the input comes after it in the
+                           DOM, so the input painted on top and its backdrop
+                           blurred the icon into a smudge. Every leftIcon on
+                           every glass input in the app was affected. */
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 z-10" aria-hidden="true">
                             {leftIcon}
                         </div>
                     )}
