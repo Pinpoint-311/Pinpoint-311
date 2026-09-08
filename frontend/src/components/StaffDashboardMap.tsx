@@ -86,9 +86,15 @@ const statusLabel = (status: string) => STATUS_LABELS[status] ?? status.replace(
  * colour, so status does the same thing with the knobs `puckIcon` already
  * exposes, instead of inventing a second glyph vocabulary:
  *
- *   open          solid puck, thin ring   "reported, untouched"
- *   in progress   solid puck, thick ring  "somebody is on it"
+ *   open          solid puck              "reported, untouched"
+ *   in progress   puck with an inner ring "somebody is on it"
  *   closed        hollow puck             "done; a reference point now"
+ *
+ * All three share an outer edge and a disc size. "In progress" used to say its
+ * piece by thickening the OUTER stroke to 5.5, which shrank its coloured disc
+ * to 7.6px against the others' 9.2 and made it read as a white donut -- a
+ * different kind of marker rather than a different status, and easily taken for
+ * a town asset. The ring moved inside.
  *
  * The closed donut is deliberately the request size (22) while the asset donut
  * is 18, so the two hollow glyphs stay separable by size. They used to be named
@@ -98,7 +104,7 @@ const statusLabel = (status: string) => STATUS_LABELS[status] ?? status.replace(
 function statusMarkerIcon(status: string): MarkerIcon {
     const fill = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
     if (status === 'closed') return puckIcon({ fill, size: 22, hollow: true });
-    if (status === 'in_progress') return puckIcon({ fill, size: 22, strokeWidth: 5.5 });
+    if (status === 'in_progress') return puckIcon({ fill, size: 22, innerRing: true });
     return puckIcon({ fill, size: 22 });
 }
 
@@ -110,9 +116,18 @@ function statusMarkerIcon(status: string): MarkerIcon {
  */
 function StatusSwatch({ status }: { status: string }) {
     const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#6366f1';
+    // Matches statusMarkerIcon: same outer edge on all three, the interior
+    // carries the meaning. `inset` draws the in-progress ring inside the disc
+    // rather than as a thick border, which is what the pin does.
     const style = status === 'closed'
         ? { borderColor: color, backgroundColor: 'transparent' }              // hollow
-        : { borderColor: status === 'in_progress' ? '#ffffff' : color, backgroundColor: color };
+        : {
+            borderColor: color,
+            backgroundColor: color,
+            ...(status === 'in_progress'
+                ? { boxShadow: 'inset 0 0 0 2px #ffffff' }
+                : {}),
+        };
     return (
         <span
             className="w-4 h-4 shrink-0 rounded-full border-2 shadow-lg"
