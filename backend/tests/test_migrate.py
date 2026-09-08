@@ -989,3 +989,50 @@ def test_reconciliation_names_every_change_it_makes():
     described = " ".join(plan.describe())
     assert "system_settings.id" in described
     assert "system_settings.phone" in described and "200" in described and "500" in described
+
+
+# ---------------------------------------------------------------------------
+# varchar(n) -> text is a widen
+# ---------------------------------------------------------------------------
+#
+# The encrypted PII columns were widened twice -- 200, then 500 -- and outgrown
+# twice, because a ciphertext's length is set by whichever key service wrapped
+# it and the schema cannot see that choice. The second time, resident
+# submissions on the live demo failed with StringDataRightTruncation the day a
+# town's Key Vault permissions were finally correct. Text is the only end state
+# that cannot be outgrown, so the classifier has to recognise it as safe --
+# otherwise the fix for an outage is itself gated behind a human.
+
+def test_varchar_to_text_is_a_pure_widen():
+    from app.db.migrate import _is_pure_widen
+    assert _is_pure_widen(
+        '"service_requests", "email", existing_type=sa.String(length=500), '
+        'type_=sa.Text(), existing_nullable=False')
+
+
+def test_text_to_varchar_is_not_a_widen():
+    """The downgrade direction. Unbounded to bounded can fail on a long row --
+    and truncating a ciphertext is unrecoverable, so it stays gated."""
+    from app.db.migrate import _is_pure_widen
+    assert not _is_pure_widen(
+        '"service_requests", "email", existing_type=sa.Text(), '
+        'type_=sa.String(length=500)')
+
+
+def test_a_text_change_still_refuses_smuggled_sql():
+    """postgresql_using is arbitrary SQL riding inside alter_column; the widen
+    exemption must not become a way past that."""
+    from app.db.migrate import _is_pure_widen
+    assert not _is_pure_widen(
+        '"t", "c", existing_type=sa.String(length=500), type_=sa.Text(), '
+        'postgresql_using="\'\'"')
+
+
+def test_the_pii_widening_migration_is_not_gated():
+    """The whole point: this one must apply on its own at boot."""
+    from app.db.migrate import classify_source, ADDITIVE
+    root = Path(__file__).resolve().parents[1]
+    path = root / "alembic/versions/e4b7c9d2f1a8_widen_encrypted_pii_columns.py"
+    if not path.exists():
+        pytest.skip("migration not present in this checkout")
+    assert classify_source(path.read_text()) == ADDITIVE

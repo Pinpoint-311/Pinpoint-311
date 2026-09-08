@@ -154,15 +154,27 @@ class ServiceRequest(Base):
     
     # Reporter info (PII - encrypted with Google KMS or Fernet fallback)
     # These columns store encrypted values - use hybrid properties for access
-    _first_name_encrypted = Column("first_name", String(500))  # Encrypted storage
-    _last_name_encrypted = Column("last_name", String(500))   # Encrypted storage
-    _email_encrypted = Column("email", String(500), nullable=False)  # Encrypted storage
-    # 500 like the other three, not the 200 it started at. A KMS-wrapped value
-    # is ~225 characters -- prefix, wrapped data key, nonce, ciphertext -- so at
-    # 200 every phone write failed with StringDataRightTruncation the moment a
-    # cloud key service was configured, and the nightly re-wrap could never
-    # finish. Widening is the fix; truncating ciphertext is never recoverable.
-    _phone_encrypted = Column("phone", String(500))  # Encrypted storage
+    # Text, not String(n). The width has now been wrong twice, and for the same
+    # reason both times: a ciphertext's length is set by whichever key service
+    # wrapped it, and that is a per-town choice this file cannot see.
+    #
+    #   200  the original. Google KMS produces ~225 characters -- prefix,
+    #        wrapped data key, nonce, ciphertext -- so every phone write failed
+    #        with StringDataRightTruncation the moment a cloud key service was
+    #        configured, and the nightly re-wrap could never finish.
+    #   500  chosen against that ~225. Azure Key Vault wraps the data key with
+    #        the vault's RSA key: 684 bytes, ~912 characters base64. So the day
+    #        a town's Key Vault permissions were finally right, every resident
+    #        submission began failing -- and the failure surfaced as an opaque
+    #        "Request failed" on the report form.
+    #
+    # There is no number here that is safe against the next provider, so there
+    # is no number. Truncating ciphertext is never recoverable, and Postgres
+    # stores text and varchar identically.
+    _first_name_encrypted = Column("first_name", Text)  # Encrypted storage
+    _last_name_encrypted = Column("last_name", Text)   # Encrypted storage
+    _email_encrypted = Column("email", Text, nullable=False)  # Encrypted storage
+    _phone_encrypted = Column("phone", Text)  # Encrypted storage
     
     @hybrid_property
     def first_name(self):
