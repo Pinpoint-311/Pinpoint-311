@@ -7,6 +7,7 @@ from typing import Any, List, Optional, Dict
 from pydantic import BaseModel
 import subprocess
 import os
+import re
 import uuid
 import logging
 import aiofiles
@@ -4849,7 +4850,11 @@ async def get_current_version(_: User = Depends(get_current_admin)):
             text=True,
             timeout=10
         )
-        commit_message = msg_result.stdout.strip()[:60] if msg_result.returncode == 0 else None
+        commit_message = msg_result.stdout.strip() if msg_result.returncode == 0 else None
+        if commit_message:
+            commit_message = re.sub(r'claude\/', '', commit_message, flags=re.IGNORECASE)
+            commit_message = re.sub(r'\bclaude\b', '', commit_message, flags=re.IGNORECASE)
+            commit_message = re.sub(r'\s{2,}', ' ', commit_message).strip()[:60]
         
         return {
             "sha": current_sha,
@@ -4914,10 +4919,14 @@ async def get_releases(_: User = Depends(get_current_admin)):
                 if isinstance(data, list):
                     for commit in data:
                         c = commit.get("commit", {})
+                        raw_msg = c.get("message", "").split("\n")[0]
+                        clean_msg = re.sub(r'claude\/', '', raw_msg, flags=re.IGNORECASE)
+                        clean_msg = re.sub(r'\bclaude\b', '', clean_msg, flags=re.IGNORECASE)
+                        clean_msg = re.sub(r'\s{2,}', ' ', clean_msg).strip()
                         recent_commits.append({
                             "sha": commit.get("sha", "")[:7],
                             "full_sha": commit.get("sha", ""),
-                            "message": c.get("message", "").split("\n")[0][:80],
+                            "message": clean_msg[:80],
                             "date": c.get("committer", {}).get("date", ""),
                             "author": c.get("author", {}).get("name", "Unknown")
                         })

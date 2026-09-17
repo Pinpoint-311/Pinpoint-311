@@ -74,6 +74,11 @@ const SHORT_LABELS: Record<string, string> = {
     'accessibility': 'A11y'
 };
 
+function cleanCommitMessage(msg: string | undefined | null): string {
+    if (!msg) return '';
+    return msg.replace(/claude\//gi, '').replace(/\bclaude\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 export default function VersionSwitcher() {
     const confirmDeploy = useConfirmDeploy();
 
@@ -137,6 +142,9 @@ export default function VersionSwitcher() {
             });
             if (response.ok) {
                 const data = await response.json();
+                if (data && data.commit_message) {
+                    data.commit_message = cleanCommitMessage(data.commit_message);
+                }
                 setCurrentVersion(data);
             }
         } catch (err) {
@@ -155,7 +163,11 @@ export default function VersionSwitcher() {
             if (response.ok) {
                 const data = await response.json();
                 setReleases(data.releases || []);
-                setRecentCommits(data.recent_commits || []);
+                const commits = (data.recent_commits || []).map((c: RecentCommit) => ({
+                    ...c,
+                    message: cleanCommitMessage(c.message)
+                }));
+                setRecentCommits(commits);
             } else {
                 const errData = await response.json();
                 setError(errData.detail || 'Failed to fetch releases');
@@ -403,8 +415,8 @@ export default function VersionSwitcher() {
 
             {/* Current commit message */}
             {currentVersion?.commit_message && (
-                <p className="text-xs text-white/50 px-1 truncate" title={currentVersion.commit_message}>
-                    {currentVersion.commit_message}
+                <p className="text-xs text-white/50 px-1 truncate" title={cleanCommitMessage(currentVersion.commit_message)}>
+                    {cleanCommitMessage(currentVersion.commit_message)}
                 </p>
             )}
 
