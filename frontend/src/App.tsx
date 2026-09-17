@@ -182,10 +182,20 @@ function AppRoutes() {
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/accessibility" element={<AccessibilityPage />} />
+            <Route path="/njmmaform" element={<RedirectToNJMMA />} />
+            <Route path="/njmma" element={<RedirectToNJMMA />} />
+            <Route path="/njmma-form" element={<RedirectToNJMMA />} />
             <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
     );
+}
+
+function RedirectToNJMMA() {
+    useEffect(() => {
+        window.location.href = 'https://pinpoint311.org/njmmaform';
+    }, []);
+    return null;
 }
 
 export default function App() {
