@@ -895,8 +895,21 @@ def run(script_location: Optional[str] = None) -> int:
 
     engine = create_engine(url, poolclass=None)
 
+    import time
+    conn = None
+    for attempt in range(1, 31):
+        try:
+            conn = engine.connect()
+            break
+        except Exception as e:
+            if attempt == 30:
+                logger.error("[migrate] could not connect to database after 30 attempts: %s", e)
+                return 1
+            logger.info("[migrate] waiting for database connection (attempt %d/30)...", attempt)
+            time.sleep(1)
+
     try:
-        with engine.connect() as conn:
+        with conn:
             # Held for the whole operation. A second replica blocks here rather
             # than racing, and finds nothing pending once it acquires.
             conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY})
