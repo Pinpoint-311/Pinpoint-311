@@ -8,10 +8,24 @@ interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
     required?: boolean;
     /** Helper text displayed below the input */
     helperText?: string;
+    /**
+     * Whether the error message is its own `role="alert"`.
+     *
+     * True by default, because on most forms in the app a single field error
+     * appears with nothing else moving, and it would otherwise be silent.
+     *
+     * Set false on forms that already announce the failure some other way --
+     * the resident portal builds one error summary and puts focus on it, and a
+     * submit that fails four fields at once inserted five alert regions in the
+     * same commit, at which point a screen reader reliably announces *none* of
+     * them. The message is still associated by aria-describedby either way, so
+     * turning this off costs nothing: the field reads its own error on focus.
+     */
+    errorAsAlert?: boolean;
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-    ({ label, error, leftIcon, className = '', required, helperText, id: providedId, ...props }, ref) => {
+    ({ label, error, leftIcon, className = '', required, helperText, errorAsAlert = true, id: providedId, ...props }, ref) => {
         // Generate unique IDs for accessibility associations
         const generatedId = useId();
         const inputId = providedId || `input-${generatedId}`;
@@ -37,7 +51,14 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
                 )}
                 <div className="relative">
                     {leftIcon && (
-                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40" aria-hidden="true">
+                        /* z-10 is load-bearing. `.glass-input` carries
+                           backdrop-filter: blur(10px), which makes the input a
+                           stacking context; this icon is a positioned sibling
+                           at z-index auto and the input comes after it in the
+                           DOM, so the input painted on top and its backdrop
+                           blurred the icon into a smudge. Every leftIcon on
+                           every glass input in the app was affected. */
+                        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/40 z-10" aria-hidden="true">
                             {leftIcon}
                         </div>
                     )}
@@ -58,7 +79,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
                     </p>
                 )}
                 {error && (
-                    <p id={errorId} className="mt-1.5 text-sm text-red-400 error-message" role="alert">
+                    <p id={errorId} className="mt-1.5 text-sm text-red-400 error-message" role={errorAsAlert ? 'alert' : undefined}>
                         {error}
                     </p>
                 )}

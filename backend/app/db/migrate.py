@@ -35,6 +35,45 @@ Concurrency
 Everything runs under a Postgres advisory lock, so scaling the API to more than
 one replica does not mean two containers running `alembic upgrade` at the same
 moment. The second waits, then finds nothing pending.
+
+One authority
+-------------
+This module is the only thing that changes the schema. It did not used to be.
+`init_db.py` carried a second, hand-maintained list of DDL that ran on every
+boot, after this returned 0, and the two fought:
+
+  * seven columns were added by both `init_db`'s list and an Alembic revision.
+    `init_db` used ADD COLUMN IF NOT EXISTS; `op.add_column` does not. Whichever
+    ran first won, and if it was `init_db`, the revision later raised
+    DuplicateColumn and the container refused to start, permanently, with no
+    printed remedy.
+  * `init_db` also ran four unconditional `ALTER COLUMN ... TYPE VARCHAR(n)` on
+    every single boot -- a type rewrite, which `classify_source` below calls
+    DESTRUCTIVE, executed with no gate, no backup and no revision. Its own
+    comment records the outcome: it silently re-shrank the phone column that
+    revision e7f8a9b0c1d2 had widened, re-breaking KMS phone writes in
+    production on the next restart.
+  * and eight columns existed *only* in Alembic, which the `baseline` path
+    stamps past without applying. Two of those are ORM-mapped on SystemSettings,
+    so every settings query 500ed on an adopted database that reported itself
+    "up to date".
+
+The hand-maintained list is gone. What replaces it is `plan_reconciliation`:
+after Alembic has had its turn, the models are compared against the live
+database and the difference is closed -- but only in the two directions this
+module already calls provably additive.
+
+    add a column the models declare and the database lacks
+    widen a varchar the models made longer
+
+Never a drop, never a narrow, never a type change of any other kind. Those
+still go through a revision and still stop the container. The models are
+derived from, not duplicated: there is no second list to forget to update,
+which is what made the old arrangement drift in the first place.
+
+Ordering matters and is fixed: Alembic runs first, reconciliation second. A
+revision can therefore never collide with a column reconciliation already put
+there, which is the DuplicateColumn failure above.
 """
 
 from __future__ import annotations
@@ -92,7 +131,40 @@ DEFAULT_BACKUP_DIR = "/backups"
 #   drop_index -- an index is derived data; dropping one cannot lose a row.
 _DESTRUCTIVE_OPS = ("drop_table", "drop_column", "rename_table")
 
-_OP_CALL = re.compile(r"\bop\.(\w+)\s*\(")
+# Every `<something>.<method>(` in the body, receiver and method captured.
+#
+# This used to be `\bop\.(\w+)\s*\(` -- only calls written literally on `op`.
+# Three ways past it, all of which classified ADDITIVE and would have been
+# auto-applied to a populated municipal database with nobody watching:
+#
+#   with op.batch_alter_table("service_requests") as batch_op:
+#       batch_op.drop_column("photos")        # receiver is batch_op, not op
+#
+#   from alembic import op as o
+#   o.drop_table("service_requests")          # receiver is o
+#
+#   getattr(op, "drop_column")("t", "c")      # no attribute access to match
+#
+# Batch mode is the one that matters most: no shipped revision uses it today,
+# so this was latent rather than exploited, but `batch_alter_table` is the
+# ordinary way to write a migration that also has to run on SQLite, and the
+# first person to reach for it would have been writing drops the gate waved
+# through.
+#
+# Matching any receiver costs nothing in false positives: the method names
+# below are Alembic operation names. Nothing else in a revision file is called
+# `drop_column`.
+_ANY_CALL = re.compile(r"\b([A-Za-z_]\w*)\s*\.\s*(\w+)\s*\(")
+
+# A destructive operation *named* at all, called or not. `f = op.drop_column`
+# followed by `f("t", "c")` has no `drop_column(` in it.
+_DESTRUCTIVE_REFERENCE = re.compile(
+    r"\.\s*(?:" + "|".join(_DESTRUCTIVE_OPS) + r")\b")
+
+# Dynamic attribute lookup. What `getattr(op, name)` resolves to is decided at
+# runtime, so the operation cannot be read here -- and this module's whole
+# policy is that unreadable means a human looks at it.
+_DYNAMIC_DISPATCH = re.compile(r"\bgetattr\s*\(")
 
 # A String-typed length in an alter_column argument list, for the one type
 # change that is provably safe: widening a varchar.
@@ -101,17 +173,30 @@ _EXISTING_STRING = re.compile(
 _NEW_STRING = re.compile(
     r"\btype_\s*=\s*sa\.String\s*\(\s*(?:length\s*=\s*)?(\d+)\s*\)")
 
+# varchar(n) -> text. Unbounded is strictly wider than any n, so this is the
+# same proof as a length widen without a number to compare: nothing can fail to
+# fit. It is also the only end state that cannot be wrong again -- the encrypted
+# PII columns were widened twice, 200 then 500, and outgrown twice, because how
+# long a ciphertext is depends on which key service a town wrapped it with and
+# the schema cannot see that choice.
+_NEW_TEXT = re.compile(r"\btype_\s*=\s*sa\.Text\s*\(\s*\)")
 
-def _call_spans(body: str, name: str):
-    """The argument text of each `op.<name>(...)` call -- one span per call.
+
+def _call_spans(body: str, name: str, receiver: str = r"[A-Za-z_]\w*"):
+    """The argument text of each `<receiver>.<name>(...)` call -- one span per
+    call.
 
     Balanced-paren extraction, the same walk _executes_are_safe uses. The
     regex this replaces spanned `\\((.*?)\\)\\s*$`, which runs from one call's
     opening paren to whatever call happens to end a line later -- so a
     destructive alter_column and an adjacent widen merged into a single span
     and were judged together, inheriting the widen's verdict.
+
+    The receiver defaults to "anything": `batch_op.alter_column(...)` inside a
+    `with op.batch_alter_table(...)` block has to be read on the same terms as
+    `op.alter_column(...)`, and it was not being read at all.
     """
-    for call in re.finditer(rf"\bop\.{name}\s*\(", body):
+    for call in re.finditer(rf"\b(?:{receiver})\s*\.\s*{name}\s*\(", body):
         depth, i = 1, call.end()
         while i < len(body) and depth:
             depth += (body[i] == "(") - (body[i] == ")")
@@ -155,16 +240,21 @@ _SAFE_WIDEN_KWARGS = {"existing_type", "type_", "existing_nullable", "nullable",
 
 
 def _is_pure_widen(args: str) -> bool:
-    """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)`,
-    m >= n, with no kwargs beyond _SAFE_WIDEN_KWARGS. Anything else -- a
+    """True only for `existing_type=sa.String(n)` -> `type_=sa.String(m)` with
+    m >= n, or -> `type_=sa.Text()`, with no kwargs beyond _SAFE_WIDEN_KWARGS. Anything else -- a
     narrow, a change to another type, a length this cannot parse, a sibling
     kwarg this does not positively recognise -- is not provably safe and
     stays gated."""
     if not _top_level_kwargs(args) <= _SAFE_WIDEN_KWARGS:
         return False
     existing = _EXISTING_STRING.search(args)
+    if not existing:
+        return False
+    # varchar(n) -> text: no length to compare, because there is no bound.
+    if _NEW_TEXT.search(args):
+        return True
     new = _NEW_STRING.search(args)
-    return bool(existing and new and int(new.group(1)) >= int(existing.group(1)))
+    return bool(new and int(new.group(1)) >= int(existing.group(1)))
 
 # SQL verbs that cannot lose data. Index creation is the case that actually
 # comes up: a GIST index on a cast expression is not something Alembic's op
@@ -224,8 +314,17 @@ def _executes_are_safe(body: str) -> bool:
     lines as adjacent literals, so a single execute() call legitimately contains
     several strings. Only the first carries the verb; the rest are continuations
     and must not be judged on their own.
+
+    And the verb is only the verb of the FIRST statement. Postgres will happily
+    run a semicolon-separated batch through one execute(), so
+
+        op.execute("create index x on t(a); DROP TABLE service_requests")
+
+    starts with "create index" and used to classify additive -- a prefix check
+    on its own reads the first four words of a script and nothing after them.
+    So the prefix check is paired with "and there is exactly one statement".
     """
-    for span in _call_spans(body, "execute"):
+    for span in _call_spans(body, "execute", receiver="op"):
         args = span.strip()
 
         pieces = [next(g for g in m.groups() if g is not None)
@@ -241,6 +340,11 @@ def _executes_are_safe(body: str) -> bool:
 
         statement = " ".join(pieces).strip().lower()
         if not statement.startswith(_SAFE_SQL):
+            return False
+        # One statement, not a script. A single trailing semicolon is just
+        # punctuation; anything after it is a second statement this check has
+        # not read and cannot vouch for.
+        if ";" in statement.rstrip().rstrip(";"):
             return False
     return True
 
@@ -265,9 +369,16 @@ def classify_source(source: str) -> str:
         return DESTRUCTIVE
 
     body = upgrade_body(source or "")
-    calls = set(_OP_CALL.findall(body))
+    # (receiver, method) for every attribute call in the body. The receiver is
+    # deliberately not checked against "op": batch_op, an aliased import, or a
+    # variable holding the ops proxy all reach the same operations.
+    calls = {method for _receiver, method in _ANY_CALL.findall(body)}
 
-    if calls & set(_DESTRUCTIVE_OPS):
+    if calls & set(_DESTRUCTIVE_OPS) or _DESTRUCTIVE_REFERENCE.search(body):
+        return DESTRUCTIVE
+
+    # `getattr(op, "drop_column")("t", "c")` names no operation this can read.
+    if _DYNAMIC_DISPATCH.search(body):
         return DESTRUCTIVE
 
     if "execute" in calls and not _executes_are_safe(body):
@@ -383,8 +494,16 @@ def format_plan(plan: Plan, allow_destructive: bool = False) -> List[str]:
     if plan.baseline:
         # Also returns: "pending: 0 revision(s)" underneath this reads as though
         # something was checked and skipped, rather than adopted.
-        return ["[migrate] existing database has no migration history — recording the current "
-                "state as the baseline (no schema changes applied)"]
+        #
+        # It no longer says "no schema changes applied". That sentence was true,
+        # and being true was the bug: stamping head on a database that had never
+        # seen the chain declared it up to date while eight columns that exist
+        # only in Alembic were still missing -- two of them ORM-mapped on
+        # SystemSettings, so every settings query 500ed on a database this log
+        # had just called current. Adoption reconciles against the models first
+        # now; see plan_reconciliation.
+        return ["[migrate] existing database has no migration history — reconciling it "
+                "against the models, then recording that state as the baseline"]
     if plan.nothing_to_do:
         lines.append("[migrate] schema is up to date")
         return lines
@@ -410,6 +529,184 @@ def format_plan(plan: Plan, allow_destructive: bool = False) -> List[str]:
         lines.append("[migrate]   docker compose run --rm \\")
         lines.append(f"[migrate]     -e {ALLOW_DESTRUCTIVE_ENV}=1 backend alembic upgrade head")
     return lines
+
+
+# --------------------------------------------------------------------------
+# reconciling the database with the models -- additively, and only additively
+# --------------------------------------------------------------------------
+#
+# See "One authority" at the top of this file for why this exists. In short:
+# there used to be a second, hand-written list of DDL in init_db.py that ran on
+# every boot and fought with the revision chain over the same columns. A list
+# is the wrong shape for this. The models already say what the schema is, so
+# the difference is computed rather than remembered.
+#
+# The boundary is exactly the classifier's: this may do what classify_source
+# would call ADDITIVE, and nothing else.
+#
+#   a table the models declare and the database lacks   -> created
+#   a column the models declare and the database lacks  -> added
+#   a varchar the models made longer                    -> widened
+#
+# A column the DATABASE has and the models do not is left alone, deliberately.
+# That is either a column an older image still writes to during a rolling
+# deploy, or a column a revision is about to drop under the gate. Tidying it up
+# unattended is the exact thing this module exists to refuse.
+
+
+@dataclass
+class Reconciliation:
+    """The additive difference between the models and the live database."""
+
+    missing_tables: List[str] = field(default_factory=list)
+    missing_columns: List[Tuple[str, str]] = field(default_factory=list)
+    widenings: List[Tuple[str, str, int, int]] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.missing_tables or self.missing_columns or self.widenings)
+
+    def describe(self) -> List[str]:
+        """Log lines. Named individually: "reconciled 9 things" is not something
+        an operator can check against anything."""
+        lines = []
+        for table in self.missing_tables:
+            lines.append(f"[migrate]   + table {table}")
+        for table, column in self.missing_columns:
+            lines.append(f"[migrate]   + column {table}.{column}")
+        for table, column, have, want in self.widenings:
+            lines.append(f"[migrate]   ~ widen {table}.{column} varchar({have}) -> varchar({want})")
+        return lines
+
+
+def _varchar_length(column_type) -> Optional[int]:
+    """The declared length of a varchar, or None for anything else.
+
+    Anything else includes Text (no length), and it must: Text -> varchar is a
+    narrowing in disguise and is not this function's business.
+    """
+    try:
+        from sqlalchemy import String
+    except Exception:  # pragma: no cover - sqlalchemy is always present here
+        return None
+    if not isinstance(column_type, String):
+        return None
+    return getattr(column_type, "length", None)
+
+
+def plan_reconciliation(existing: Dict[str, Dict[str, Optional[int]]], metadata) -> Reconciliation:
+    """Work out the additive difference, without touching the database.
+
+    `existing` is {table: {column: varchar length or None}} -- the shape an
+    inspector gives, reduced to the only property that matters here. Passing it
+    in rather than reading it inside is what makes this testable: the interesting
+    cases (a column only Alembic knows about, a phone column still at 200 because
+    the widen never applied) are all a two-line dict.
+    """
+    plan = Reconciliation()
+    for table_name in sorted(metadata.tables):
+        table = metadata.tables[table_name]
+        if table_name not in existing:
+            plan.missing_tables.append(table_name)
+            continue
+        present = existing[table_name]
+        for column in table.columns:
+            if column.name not in present:
+                plan.missing_columns.append((table_name, column.name))
+                continue
+            want = _varchar_length(column.type)
+            have = present[column.name]
+            # Both must be known lengths, and it must be a genuine increase.
+            # A shrink is never applied: that is the tug of war init_db's
+            # per-boot `ALTER COLUMN phone TYPE VARCHAR(200)` kept winning
+            # against the revision that had widened it to 500, which re-broke
+            # KMS phone writes on every restart.
+            if isinstance(want, int) and isinstance(have, int) and want > have:
+                plan.widenings.append((table_name, column.name, have, want))
+    return plan
+
+
+def read_schema(conn) -> Dict[str, Dict[str, Optional[int]]]:
+    """{table: {column: varchar length or None}} for the live database."""
+    from sqlalchemy import inspect
+
+    inspector = inspect(conn)
+    out: Dict[str, Dict[str, Optional[int]]] = {}
+    for table in inspector.get_table_names():
+        columns: Dict[str, Optional[int]] = {}
+        for column in inspector.get_columns(table):
+            columns[column["name"]] = getattr(column.get("type"), "length", None)
+        out[table] = columns
+    return out
+
+
+def apply_reconciliation(conn, plan: Reconciliation, metadata) -> None:
+    """Execute the plan. Raises on the first failure, which is the point.
+
+    A column the models declare NOT NULL with no server default cannot be added
+    to a table that already has rows, and the ALTER will say so. That error must
+    reach the operator and stop the container: the alternative is an API serving
+    traffic against a schema it could not reconcile, which is the failure this
+    whole module exists to prevent.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.schema import CreateColumn
+
+    if plan.missing_tables:
+        # create_all rather than a per-table create(): it sorts by foreign-key
+        # dependency. Creating them one at a time in name order puts
+        # `client_error_log` before `users` and fails on the FK.
+        # checkfirst so a replica that won the lock first is not an error.
+        metadata.create_all(
+            conn,
+            tables=[metadata.tables[name] for name in plan.missing_tables],
+            checkfirst=True,
+        )
+        logger.info("[migrate] created %d missing table(s)", len(plan.missing_tables))
+
+    for table_name, column_name in plan.missing_columns:
+        column = metadata.tables[table_name].columns[column_name]
+        spec = CreateColumn(column).compile(dialect=conn.dialect)
+        conn.execute(text(f'ALTER TABLE "{table_name}" ADD COLUMN IF NOT EXISTS {spec}'))
+        logger.info("[migrate] added missing column %s.%s", table_name, column_name)
+
+    for table_name, column_name, have, want in plan.widenings:
+        conn.execute(text(
+            f'ALTER TABLE "{table_name}" ALTER COLUMN "{column_name}" TYPE VARCHAR({want})'))
+        logger.info("[migrate] widened %s.%s from varchar(%d) to varchar(%d)",
+                    table_name, column_name, have, want)
+
+    # Indexes last, and only for tables the plan touched. A column declared
+    # `index=True` gets no index from ADD COLUMN, and checkfirst makes a
+    # re-run a no-op. An index is derived data -- creating one cannot lose a
+    # row, which is why the classifier calls create_index additive too.
+    touched = set(plan.missing_tables) | {t for t, _ in plan.missing_columns}
+    for table_name in sorted(touched):
+        for index in metadata.tables[table_name].indexes:
+            try:
+                index.create(conn, checkfirst=True)
+            except Exception as exc:
+                # An index that cannot be built does not make the schema wrong,
+                # and refusing to start over one would be worse than the slow
+                # query it causes. Said out loud rather than swallowed.
+                logger.warning("[migrate] could not create index %s on %s: %s",
+                               index.name, table_name, str(exc)[:200])
+
+
+def reconcile(conn) -> Reconciliation:
+    """Read the live schema, close the additive gap, return what was done."""
+    from app.db.session import Base
+    import app.models  # noqa: F401 - registers every table
+
+    plan = plan_reconciliation(read_schema(conn), Base.metadata)
+    if plan.empty:
+        return plan
+    logger.info("[migrate] reconciling %d schema difference(s) against the models:",
+                len(plan.missing_tables) + len(plan.missing_columns) + len(plan.widenings))
+    for line in plan.describe():
+        logger.info(line)
+    apply_reconciliation(conn, plan, Base.metadata)
+    return plan
 
 
 # --------------------------------------------------------------------------
@@ -598,8 +895,21 @@ def run(script_location: Optional[str] = None) -> int:
 
     engine = create_engine(url, poolclass=None)
 
+    import time
+    conn = None
+    for attempt in range(1, 31):
+        try:
+            conn = engine.connect()
+            break
+        except Exception as e:
+            if attempt == 30:
+                logger.error("[migrate] could not connect to database after 30 attempts: %s", e)
+                return 1
+            logger.info("[migrate] waiting for database connection (attempt %d/30)...", attempt)
+            time.sleep(1)
+
     try:
-        with engine.connect() as conn:
+        with conn:
             # Held for the whole operation. A second replica blocks here rather
             # than racing, and finds nothing pending once it acquires.
             conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY})
@@ -627,7 +937,8 @@ def run(script_location: Optional[str] = None) -> int:
                 if plan.fresh:
                     # Create from the models, then record head so the next
                     # release migrates forward normally. The indexes and
-                    # triggers that Alembic cannot express are applied by
+                    # triggers the models cannot express (a GIST index on a
+                    # cast, the location trigger) are applied by
                     # _run_schema_migrations when the app starts, as they
                     # always have been.
                     from app.db.session import Base
@@ -640,11 +951,24 @@ def run(script_location: Optional[str] = None) -> int:
                     return 0
 
                 if plan.baseline:
+                    # Reconcile BEFORE stamping. Stamping first and reconciling
+                    # after would leave a window in which the database claims to
+                    # be at head and is not, and if the reconcile then failed
+                    # the claim would be permanent -- the next boot finds a
+                    # history, sees nothing pending, and never looks again.
+                    reconcile(conn)
+                    conn.commit()
                     command.stamp(_alembic_config(script_location), "head")
                     logger.info("[migrate] baseline recorded")
                     return 0
 
                 if plan.nothing_to_do:
+                    # Still reconcile. "No pending revisions" is a statement
+                    # about the revision chain, not about the schema, and the
+                    # two came apart on every database adopted by the baseline
+                    # path before it did this.
+                    reconcile(conn)
+                    conn.commit()
                     return 0
 
                 # No point dumping an empty database.
@@ -654,6 +978,14 @@ def run(script_location: Optional[str] = None) -> int:
 
                 command.upgrade(_alembic_config(script_location), "head")
                 logger.info("[migrate] applied %d revision(s), now at head", len(plan.pending))
+                # Alembic first, reconciliation second, always. A revision's
+                # `op.add_column` cannot collide with a column already put there
+                # by reconciliation if reconciliation only ever runs after the
+                # chain has finished -- that collision (DuplicateColumn, from
+                # init_db winning the race) is what used to wedge containers
+                # permanently with no printed remedy.
+                reconcile(conn)
+                conn.commit()
                 return 0
             finally:
                 conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_KEY})

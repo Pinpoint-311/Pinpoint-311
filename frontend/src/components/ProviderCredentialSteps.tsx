@@ -1,8 +1,10 @@
 import { CheckCircle, AlertCircle, Info, ShieldCheck } from 'lucide-react';
+import { useId } from 'react';
 
 import SecretField from './SecretField';
-import { claimedFields, stepsFor } from './setupSteps';
-import type { StepContext } from './setupSteps';
+import { SetupPathBanner, SetupPathChoice, SetupPathLaunch, usePathChoice } from './setupPathChoice';
+import { claimedFields, cloudForkFor, forkFields, forkFor, stepsFor } from './setupSteps';
+import type { SetupStep, StepContext } from './setupSteps';
 import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
 
 /**
@@ -28,7 +30,7 @@ import type { Capability, CloudIdentity, ProviderInfo } from '../services/api';
  */
 export default function ProviderCredentialSteps({
     cap, provider, active, values, onChange, ctx, identity, storedFields, hostProvided,
-    alreadySet = false, compact = false,
+    alreadySet = false, compact = false, forkShownAbove = false,
 }: {
     cap: Capability;
     /** Which provider's walk to render. Not read off the catalog: the guide
@@ -63,7 +65,42 @@ export default function ProviderCredentialSteps({
     alreadySet?: boolean;
     /** Tighter spacing for the guide, which nests this inside a step list. */
     compact?: boolean;
+    /**
+     * The cloud's fork has already been rendered above this card, so do not
+     * render it again.
+     *
+     * The choice belongs to the CLOUD, not to the card: one answer governs key
+     * management, AI, translation and maps together. But both surfaces render
+     * it, because a reader can arrive at either first -- and inside the guide,
+     * where the cloud task shows the fork and then lists the cards underneath
+     * it, that meant the banner, the deploy button and the hardening
+     * disclosure appeared twice on one screen, the second copy pointing at the
+     * same deployment as the first.
+     *
+     * The card still renders the STEPS of whichever path is chosen. What it
+     * drops is the chrome around the choice, which the cloud above already
+     * owns.
+     */
+    forkShownAbove?: boolean;
 }) {
+    /* Two genuine ways to do this job, or one.
+     *
+     * Both registries have to answer for the fork to exist: the capability
+     * needs two walks, and the cloud needs the wording of the choice. Either
+     * one absent -- which is every provider that is not Azure or AWS -- and
+     * this collapses to the step list that was here before.
+     *
+     * The choice is read by CLOUD, not by capability, because one template
+     * deployment covers four cards. Provider ids on these clouds are the cloud
+     * ids, which is what makes `provider` the right key. */
+    const fork = forkFor(cap, provider, ctx);
+    const presentation = fork ? cloudForkFor(provider, ctx) : null;
+    const { chosen, pick, revealedRef } = usePathChoice(provider);
+
+    /* The same walk can be on screen twice -- once on the provider card and
+     * once inside the guide -- so ids have to be per mount, not per provider. */
+    const uid = useId();
+
     const field = (key: string) => {
         const f = active.credential_fields.find(x => x.key === key);
         if (!f) return null;  // the catalog changed under the steps
@@ -118,8 +155,18 @@ export default function ProviderCredentialSteps({
         );
     };
 
-    const steps = stepsFor(cap, provider, ctx);
-    const claimed = claimedFields(steps);
+    /* Which steps are on screen. A forked provider shows none until asked --
+     * that is the point of the fork -- and then exactly one path's, numbered
+     * from 1 by the same map that has always numbered them. */
+    const steps: SetupStep[] = fork && presentation
+        ? (chosen ? fork[chosen] : [])
+        : stepsFor(cap, provider, ctx);
+
+    /* Before a choice, both paths count as claiming their fields. Otherwise the
+     * "a field no step claims still renders" rule below would drop the entire
+     * credential form under the two buttons, which is the wall of text this
+     * change exists to remove. */
+    const claimed = fork && presentation && !chosen ? forkFields(fork) : claimedFields(steps);
     const leftover = active.credential_fields.filter(f => !claimed.has(f.key));
 
     /* What this provider needs and this card does not ask for.
@@ -137,6 +184,23 @@ export default function ProviderCredentialSteps({
     const alternatives = alreadySet ? [] : (active.requires_any ?? []);
     const labelFor = (key: string) =>
         active.credential_fields.find(f => f.key === key)?.label ?? key;
+
+    /* Judgeable means "has boxes": a step with none cannot be known to be done.
+     * If any step is like that the bar is not rendered at all, rather than
+     * shown stuck one short of the end forever. */
+    const stepSettled = (st: { fields?: string[] }) => {
+        const keys = st.fields ?? [];
+        return keys.length > 0 && keys.every(
+            k => !!storedFields?.[k] || !!identity?.skippable_keys?.includes(k));
+    };
+    const stepProgress = steps.length > 1 && steps.every(st => (st.fields ?? []).length > 0)
+        ? { done: steps.filter(stepSettled).length, total: steps.length }
+        : null;
+    /* The first step still to do. Folding the finished ones leaves the rest
+     * looking like a wall of equal instructions; this is which one to look at.
+     * -1 when everything is settled, so nothing is highlighted on a finished
+     * card. */
+    const nextStepIndex = steps.findIndex(st => !stepSettled(st));
 
     return (
         <div>
@@ -168,41 +232,161 @@ export default function ProviderCredentialSteps({
                     )}
                 </div>
             )}
-            {steps.map((st, i) => (
-                <div key={i} className={compact ? 'mb-3' : 'mb-4'}>
-                    <div className="flex gap-3">
-                        <span className="mt-0.5 w-6 h-6 shrink-0 rounded-full bg-white/10 border border-white/15 text-[11px] font-semibold text-white/70 flex items-center justify-center">
-                            {i + 1}
+            {presentation && !chosen && !forkShownAbove && (
+                <SetupPathChoice fork={presentation} uid={uid} onPick={pick} />
+            )}
+            {presentation && chosen && !forkShownAbove && (
+                <SetupPathBanner
+                    fork={presentation}
+                    chosen={chosen}
+                    headingRef={revealedRef}
+                    uid={uid}
+                    onPick={pick}
+                />
+            )}
+            {/* The launch, above the numbered steps rather than inside step 1.
+                A reader who has just pressed "deploy with the template" wants
+                one link; it used to be the third line of the first instruction,
+                set in the same type as the prose around it. */}
+            {presentation?.launch && chosen === 'template' && !forkShownAbove && (
+                <SetupPathLaunch launch={presentation.launch} uid={uid} />
+            )}
+            {/* Where you are, drawn rather than described.
+              *
+              * Once a step folds, the card can look finished: a green "Done"
+              * line, and whatever is left sits below it looking like reference
+              * material. This is the answer to "is there anything else?" -- one
+              * segment per step, filled for done, outlined for the one to do
+              * next, faint for the rest. No sentence to read.
+              *
+              * Only when every step can actually be judged. A step with no
+              * boxes has no completion signal, so a bar including it could
+              * never fill, and a progress indicator that cannot reach the end
+              * is worse than none.
+              */}
+            {stepProgress && (
+                <div className={compact ? 'mb-3' : 'mb-4'} data-testid="setup-step-progress">
+                    <div
+                        className="flex items-center gap-1.5"
+                        role="img"
+                        aria-label={`${stepProgress.done} of ${stepProgress.total} steps done, ${stepProgress.total - stepProgress.done} to go`}
+                    >
+                        {steps.map((_, i) => (
+                            <span
+                                key={i}
+                                className={`h-1.5 flex-1 rounded-full ${
+                                    i < stepProgress.done
+                                        ? 'bg-emerald-400/70'
+                                        : i === stepProgress.done
+                                            ? 'bg-primary-400'
+                                            : 'bg-white/12'
+                                }`}
+                            />
+                        ))}
+                        <span className="ml-1.5 shrink-0 text-[11px] font-medium text-white/50 tabular-nums">
+                            {stepProgress.done}/{stepProgress.total}
                         </span>
-                        <div className="min-w-0 flex-1">
-                            <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
-                            {st.check && (
-                                <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
-                                    <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                    <span><span className="font-medium">You should see:</span> {st.check}</span>
-                                </p>
-                            )}
-                            {st.trouble && (
-                                <p className="mt-1.5 text-xs text-amber-200/90 flex items-start gap-1.5">
-                                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                                    <span>{st.trouble}</span>
-                                </p>
-                            )}
+                    </div>
+                </div>
+            )}
+            {steps.map((st, i) => {
+                /* A step whose every box is already filled is work that is
+                 * finished, and leaving it open at full height puts the reader's
+                 * remaining job below a screen of instructions they have already
+                 * carried out. It folds instead: the numbered badge turns into a
+                 * tick, the summary names what is saved, and everything is still
+                 * one click away because a saved value is a value somebody may
+                 * need to change.
+                 *
+                 * Only steps that HAVE boxes can be judged. A step that is pure
+                 * instruction -- attach the instance profile, add a delete lock
+                 * -- has no signal that it was carried out, and folding it on a
+                 * guess would tell somebody they had done something they had
+                 * not. Those stay open. */
+                const keys = st.fields ?? [];
+                const settled = (k: string) =>
+                    !!storedFields?.[k] || !!identity?.skippable_keys?.includes(k);
+                const finished = keys.length > 0 && keys.every(settled);
+
+                const inner = (
+                    <>
+                        <div className="text-sm text-white/75 leading-relaxed">{st.body}</div>
+                        {st.check && (
+                            <p className="mt-1.5 text-xs text-emerald-300/75 flex items-start gap-1.5">
+                                <CheckCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                <span><span className="font-medium">You should see:</span> {st.check}</span>
+                            </p>
+                        )}
+                        {st.trouble && (
+                            <p className="mt-1.5 text-xs text-amber-200/90 flex items-start gap-1.5">
+                                <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+                                <span>{st.trouble}</span>
+                            </p>
+                        )}
                             {/* No icon and no colour. A note competing visually
                                 with a warning is what made the warnings stop
                                 registering. */}
-                            {st.note && (
-                                <p className="mt-1.5 text-xs text-white/55 leading-relaxed">{st.note}</p>
-                            )}
-                            {!!st.fields?.length && (
-                                <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
-                                    {st.fields.map(field)}
-                                </div>
-                            )}
+                        {st.note && (
+                            <p className="mt-1.5 text-xs text-white/55 leading-relaxed">{st.note}</p>
+                        )}
+                        {!!st.fields?.length && (
+                            <div className="mt-2.5 grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-3">
+                                {st.fields.map(field)}
+                            </div>
+                        )}
+                    </>
+                );
+
+                if (finished) {
+                    return (
+                        <details key={i} className={compact ? 'mb-3' : 'mb-4'} data-testid={`setup-step-done-${i + 1}`}>
+                            <summary className="flex items-center gap-3 cursor-pointer list-none marker:content-none rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300">
+                                <span className="w-6 h-6 shrink-0 rounded-full bg-emerald-500/15 border border-emerald-400/30 flex items-center justify-center">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-300" aria-hidden="true" />
+                                </span>
+                                <span className="min-w-0 flex-1 text-sm text-white/55">
+                                    <span className="text-emerald-300/90">Done</span> — {keys.map(labelFor).join(', ')} saved.
+                                </span>
+                                <span className="text-xs text-primary-200 underline underline-offset-4 shrink-0">Change</span>
+                            </summary>
+                            <div className="mt-2.5 pl-9">{inner}</div>
+                        </details>
+                    );
+                }
+
+                const isNext = i === nextStepIndex && stepProgress !== null && stepProgress.done > 0;
+                return (
+                    <div
+                        key={i}
+                        data-next-step={isNext || undefined}
+                        className={`${compact ? 'mb-3' : 'mb-4'} ${
+                            isNext ? 'rounded-xl border border-primary-400/30 bg-primary-500/[0.06] p-3 -mx-1' : ''
+                        }`}
+                    >
+                        <div className="flex gap-3">
+                            {/* Filled, not outlined, when this is the one to do
+                                next -- the same weight the primary action gets
+                                everywhere else in the console. */}
+                            <span className={`mt-0.5 w-6 h-6 shrink-0 rounded-full border text-[11px] font-semibold flex items-center justify-center ${
+                                isNext
+                                    ? 'bg-primary-500 border-primary-400 text-white'
+                                    : 'bg-white/10 border-white/15 text-white/70'
+                            }`}>
+                                {i + 1}
+                            </span>
+                            <div className="min-w-0 flex-1">{inner}</div>
                         </div>
                     </div>
-                </div>
-            ))}
+                );
+            })}
+            {presentation?.templateExtras && chosen === 'template' && !forkShownAbove && (
+                <details className="mt-1 mb-4 group" data-testid="setup-path-extras">
+                    <summary className="cursor-pointer text-xs text-primary-200 underline underline-offset-4 marker:text-white/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 rounded">
+                        Optional hardening the template leaves to you
+                    </summary>
+                    <div className="mt-2 text-xs text-white/60 leading-relaxed">{presentation.templateExtras}</div>
+                </details>
+            )}
 
             {/* A field no step claims still renders, at the end. Adding a
                 credential to a catalog can never make it silently unreachable. */}

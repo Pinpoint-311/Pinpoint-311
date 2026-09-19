@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Check, ChevronDown, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+import { useOptionalAnnounce } from './liveAnnounce';
 
 import InlineProviderSetup from './InlineProviderSetup';
 import SecretField from './SecretField';
@@ -163,6 +164,30 @@ export default function SetupWizard(props: SetupWizardProps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [openId, status, open?.items.length]);
 
+    /* Choosing a task in the list, or auto-advancing after a green test, swaps
+     * the whole right-hand panel and leaves focus back in the nav. A sighted
+     * user sees the panel change; a screen-reader user is told nothing and is
+     * still standing in the list. Focus moves to the panel heading, which is
+     * also what gets read. */
+    const panelRef = useRef<HTMLElement | null>(null);
+    const announce = useOptionalAnnounce();
+    const firstPanel = useRef(true);
+    /* Read through a ref, not through the dependency list. `open` is recomputed
+     * every render and `remaining` changes the moment any credential is saved,
+     * so depending on either re-ran this effect mid-task and snatched focus off
+     * the Save button the clerk had just pressed. The panel only changes when
+     * the task changes, so `openId` is the whole dependency. */
+    const panelLatest = useRef({ open, remaining });
+    panelLatest.current = { open, remaining };
+    useEffect(() => {
+        const { open: task, remaining: left } = panelLatest.current;
+        if (!task) return;
+        if (firstPanel.current) { firstPanel.current = false; return; }
+        panelRef.current?.focus();
+        announce(`${task.title}. ${left === 0 ? 'All tasks done.' : `${left} left.`}`);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [openId, announce]);
+
     /** Finishing an item opens the next one, or moves on to the next task. */
     const advanceItem = (fromId: string) => {
         if (!open) return;
@@ -194,6 +219,8 @@ export default function SetupWizard(props: SetupWizardProps) {
                                     type="button"
                                     onClick={() => { chosen.current = true; setOpenId(active ? null : task.id); }}
                                     aria-current={active ? 'step' : undefined}
+                                    aria-expanded={active}
+                                    aria-controls={active ? `setup-task-panel-${task.id}` : undefined}
                                     className={`w-full text-left rounded-xl px-3 py-2.5 flex items-center gap-2.5 border transition-colors ${active
                                         ? 'bg-white/[0.09] border-white/20'
                                         : 'bg-white/[0.03] border-transparent hover:bg-white/[0.06]'}`}
@@ -228,9 +255,17 @@ export default function SetupWizard(props: SetupWizardProps) {
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -6 }}
                             transition={{ duration: 0.18 }}
-                            className="setup-panel p-5 sm:p-6"
+                            className="setup-panel p-5 sm:p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400"
+                            ref={panelRef as any}
+                            tabIndex={-1}
+                            /* The panel needs an id of its own. The step button's
+                             * aria-controls used to name the <h3> below, which is
+                             * the panel's label, not the thing the button opens —
+                             * so it pointed at a heading rather than the region. */
+                            id={`setup-task-panel-${open.id}`}
+                            aria-labelledby={`setup-task-${open.id}`}
                         >
-                            <h3 className="font-semibold text-white text-base">{open.title}</h3>
+                            <h3 id={`setup-task-${open.id}`} className="font-semibold text-white text-base">{open.title}</h3>
                             <p className="text-sm text-white/55 leading-relaxed mt-1">{open.blurb}</p>
 
                             {open.foundation && (
@@ -246,6 +281,7 @@ export default function SetupWizard(props: SetupWizardProps) {
                                         item={item}
                                         index={i + 1}
                                         total={open.items.length}
+                                        forkShownAbove={!!open.foundation}
                                         done={itemDone(item)}
                                         expanded={item.id === openItemId}
                                         onToggle={() => {
@@ -309,10 +345,13 @@ export default function SetupWizard(props: SetupWizardProps) {
 
 /** One thing inside a task: a provider with a catalog, plain settings, or both. */
 function TaskItem({
-    item, index, total, done, expanded, onToggle, onDone, publicOrigin,
+    item, index, total, done, expanded, onToggle, onDone, publicOrigin, forkShownAbove,
     secretValues, onSecretChange, onSaveSecrets, savingSecret, isSecretConfigured,
 }: {
     item: PlanItem;
+    /** This item sits under a cloud task whose foundation already rendered the
+     *  fork, so the card must not render a second copy of it. */
+    forkShownAbove: boolean;
     index: number;
     total: number;
     done: boolean;
@@ -330,6 +369,11 @@ function TaskItem({
                 type="button"
                 onClick={onToggle}
                 aria-expanded={expanded}
+                /* aria-expanded said something opened; nothing said what. Named
+                 * only while expanded, because the panel is unmounted otherwise
+                 * and a reference to an absent id is decoration, not a
+                 * relationship. */
+                aria-controls={expanded ? `setup-item-${item.id}` : undefined}
                 className="w-full text-left px-4 py-3 flex items-center gap-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
             >
                 <span
@@ -360,13 +404,14 @@ function TaskItem({
             {/* No blurb repeated inside: it is already in the header above,
                 which stays visible while expanded. */}
             {expanded && (
-                <div className="px-4 pb-4 pt-1">
+                <div id={`setup-item-${item.id}`} className="px-4 pb-4 pt-1">
                     {item.cap && item.provider && (
                         <InlineProviderSetup
                             cap={item.cap}
                             provider={item.provider}
                             onSaved={onDone}
                             publicOrigin={publicOrigin}
+                            forkShownAbove={forkShownAbove}
                         />
                     )}
 

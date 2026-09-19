@@ -166,6 +166,12 @@ export interface ServiceRequest {
     // AI Analysis (optional, for sorting purposes - priority_score is in ai_analysis)
     ai_analysis?: Record<string, unknown> | null;
     manual_priority_score?: number | null;
+    /** How many photos on this report are held out of media_urls waiting for a
+     *  staff decision. A count, not the photos: those are unredacted and stay
+     *  on ServiceRequestDetail. Present on the staff list so the queue can be
+     *  found without opening every report one at a time, and echoed by the
+     *  create response so the resident can be told at submission. */
+    photos_pending_review?: number;
 }
 
 // Public-facing request (no personal information)
@@ -183,6 +189,9 @@ export interface PublicServiceRequest {
     closed_substatus: ClosedSubstatus | null;
     media_urls: string[];  // Array of photo URLs
     photo_count?: number;  // Number of photos (from list response)
+    /** Photos withheld from every public surface until a staff member checks
+     *  them. A count only — the photos are unredacted and never public. */
+    photos_pending_review?: number;
     completion_message: string | null;
     completion_photo_url: string | null;
     assigned_to: string | null;
@@ -229,8 +238,15 @@ export interface ServiceRequestDetail extends ServiceRequest {
 
 export interface RequestComment {
     id: number;
-    service_request_id: number;
-    user_id: number | null;
+    // Absent on the public tracker's copy: both are internal identifiers the
+    // unauthenticated comments route no longer emits (open311.py,
+    // PublicRequestCommentResponse). Present on the staff endpoint.
+    service_request_id?: number;
+    user_id?: number | null;
+    // Stated by the public route, which cannot expose user_id for the client
+    // to infer authorship from. Absent on the staff endpoint, where
+    // commentActor still derives it. See commentUI.tsx.
+    author_type?: 'staff' | 'resident' | 'integration';
     username: string;
     content: string;
     visibility: CommentVisibility;

@@ -65,12 +65,47 @@ const setCachedTranslation = (text: string, translation: string, sourceLang: str
     translationCache.get(key)!.set(text, translation);
 };
 
+/** The language this product is authored in, and the `source_lang` every
+ *  translate call already declares. */
+const SOURCE_LANGUAGE = 'en';
+
+/**
+ * Mark a subtree that translation deliberately skipped — WCAG 3.1.2 Language of
+ * Parts.
+ *
+ * This component translates text nodes in place: `node.textContent =
+ * translation`. After that pass, translated and skipped text are
+ * indistinguishable siblings in the same document — there is no wrapper, no
+ * class and no marker separating them, which is why this has to happen on the
+ * skip branch itself. It is the last moment the difference is known.
+ *
+ * What goes wrong without it is not subtle. `<html lang>` has already been
+ * switched to the target language, so a screen reader applies (say) Spanish
+ * pronunciation rules to the whole page — including the code samples and every
+ * `[data-no-translate]` block, which are still English. A Spanish synthesiser
+ * reading English word by word is not accented English; it is noise.
+ *
+ * `lang` is not in TRANSLATABLE_ATTRIBUTES, so writing it does not wake the
+ * MutationObserver and re-enter translation.
+ */
+function markAsSourceLanguage(element: HTMLElement): void {
+    // Never overwrite a lang the author set deliberately — they know better
+    // than this heuristic what language their content is in.
+    if (element.getAttribute('lang')) return;
+    element.setAttribute('lang', SOURCE_LANGUAGE);
+}
+
 // Store original attribute values
 interface AttributeOriginal {
     element: HTMLElement;
     attribute: string;
     originalValue: string;
 }
+
+/* One line of banner text at a desktop width. Wrong for a wrapped translation,
+ * which is why it is measured — but right far more often than zero, and it is
+ * what the spacer is worth before anything has been laid out. */
+const DEFAULT_BANNER_HEIGHT = 40;
 
 export function AutoTranslate({ children }: AutoTranslateProps) {
     const { language } = useTranslation();
@@ -84,6 +119,34 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
     const [translationProgress, setTranslationProgress] = useState(100);
     const [isTranslating, setIsTranslating] = useState(false);
     const isTranslatingRef = useRef(false); // Ref to prevent re-triggering
+
+    /* Measured height of the fixed banner, mirrored into the spacer below it.
+     *
+     * The measurement is a REFINEMENT, never the starting point. Starting from
+     * zero meant every non-English page load painted once with the header
+     * underneath the fixed banner and then jumped when the effect ran, and any
+     * environment where offsetHeight reports 0 (a banner not yet laid out, a
+     * display:none ancestor) left the header permanently obscured. So the
+     * one-line height is the default, which is right for the common case from
+     * the first frame, and a real measurement replaces it when there is one. */
+    const bannerRef = useRef<HTMLDivElement>(null);
+    const [bannerHeight, setBannerHeight] = useState(DEFAULT_BANNER_HEIGHT);
+
+    useEffect(() => {
+        const banner = bannerRef.current;
+        if (language === 'en' || !banner) {
+            setBannerHeight(DEFAULT_BANNER_HEIGHT);
+            return;
+        }
+        const measure = () => setBannerHeight(banner.offsetHeight || DEFAULT_BANNER_HEIGHT);
+        measure();
+        // Guarded: jsdom and older Safari have no ResizeObserver, and failing to
+        // observe must not cost the initial measurement above.
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(measure);
+        observer.observe(banner);
+        return () => observer.disconnect();
+    }, [language, isTranslating]);
 
     // Dynamic banner message translation
     const [bannerMessage, setBannerMessage] = useState('Translated by Google Translate. Translations may not be 100% accurate.');
@@ -107,7 +170,11 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
 
                     // Skip script, style, noscript tags
                     const tag = parent.tagName.toLowerCase();
-                    if (['script', 'style', 'noscript', 'code', 'pre'].includes(tag)) {
+                    if (['script', 'style', 'noscript'].includes(tag)) {
+                        return NodeFilter.FILTER_REJECT;
+                    }
+                    if (tag === 'code' || tag === 'pre') {
+                        markAsSourceLanguage(parent);
                         return NodeFilter.FILTER_REJECT;
                     }
 
@@ -116,9 +183,12 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                     if (!text) return NodeFilter.FILTER_REJECT;
 
                     // Skip if parent has data-no-translate attribute
-                    if (parent.closest('[data-no-translate]')) {
+                    const optedOut = parent.closest('[data-no-translate]');
+                    if (optedOut instanceof HTMLElement) {
+                        markAsSourceLanguage(optedOut);
                         return NodeFilter.FILTER_REJECT;
                     }
+                    if (optedOut) return NodeFilter.FILTER_REJECT;
 
                     return NodeFilter.FILTER_ACCEPT;
                 }
@@ -223,6 +293,10 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                     element.setAttribute(attribute, originalValue);
                 }
             });
+            // Same reason as the drain at the end of the translate branch: these
+            // writes are mutations too, and left queued they schedule a pass that
+            // has nothing to do.
+            observerRef.current?.takeRecords();
             return;
         }
 
@@ -327,6 +401,31 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                 translatedCount += batch.length;
                 setTranslationProgress(Math.round((translatedCount / totalTexts) * 100));
             }
+
+            /* Throw away the mutations this pass just caused.
+             *
+             * Translation is applied as `node.textContent = translation`, and
+             * the MutationObserver below watches characterData on the same
+             * subtree -- so every write this component makes wakes the observer
+             * that schedules this component. The isTranslatingRef guard stops
+             * passes OVERLAPPING, but records queued during a pass are
+             * delivered after it clears, and the next pass reads the text this
+             * one just wrote.
+             *
+             * That is a loop, and it bills. The source language is declared as
+             * English rather than detected, so already-Spanish text is sent
+             * back to be translated from English again -- a fresh string every
+             * time, so the cache never catches it. On 17 August 2026 a demo
+             * holding 54 reports and 2,679 characters of description
+             * translated 674,448 characters in a day, and the rows it left
+             * behind are Spanish text recorded as English source.
+             *
+             * takeRecords() drains the queue without invoking the callback, so
+             * the observer keeps watching for real changes and forgets the ones
+             * we made. It has to run before the guard drops, or the records it
+             * discards will already have scheduled the next pass.
+             */
+            observerRef.current?.takeRecords();
 
             setIsTranslating(false);
             isTranslatingRef.current = false;
@@ -461,8 +560,17 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             {/* Translation accuracy banner - in the user's selected language */}
             {language !== 'en' && (
                 <div
+                    ref={bannerRef}
                     className="fixed top-0 left-0 right-0 z-[100] bg-gradient-to-r from-slate-700/95 to-slate-800/95 text-white/90 shadow-lg backdrop-blur-sm border-b border-white/10"
                     data-no-translate
+                    /* data-no-translate keeps this banner out of the translation
+                     * pass, but its text is written in the target language, not the
+                     * authoring one — the "Traduciendo…" strings below are literally
+                     * Spanish. Without this, `markAsSourceLanguage` would stamp it
+                     * `lang="en"` on the way past and a Spanish voice would read it
+                     * with English rules (3.1.2). The explicit lang also wins over
+                     * that stamp, by design. */
+                    lang={language}
                 >
                     <div className="py-2 px-4 text-center text-sm font-medium">
                         <div className="flex items-center justify-center gap-2">
@@ -502,9 +610,22 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
                     )}
                 </div>
             )}
-            {/* Add top padding when banner is shown */}
-            <div ref={containerRef} style={{ display: 'contents', paddingTop: language !== 'en' ? '40px' : 0 }}>
-                {language !== 'en' && <div style={{ height: '40px' }} />}
+            {/* Push the page down by however tall the banner actually is.
+              *
+              * The old version set `paddingTop: 40px` on this element and hard-coded
+              * a 40px spacer. The padding was inert — `display: contents` removes
+              * the box the padding would apply to — and the 40px was only ever right
+              * for a single line of English. "Traducido por Google Translate. Es
+              * posible que las traducciones no sean 100% precisas." wraps to two
+              * lines well before 320px and three at the narrowest supported width,
+              * so the fixed banner sat on top of the page header: content obscured
+              * with no way to reach it, which is 1.4.10 Reflow.
+              *
+              * Measured rather than estimated, because the height depends on the
+              * translated string, the viewport and the user's font size — none of
+              * which are knowable here. */}
+            <div ref={containerRef} style={{ display: 'contents' }}>
+                {language !== 'en' && <div aria-hidden="true" data-banner-spacer="" style={{ height: bannerHeight }} />}
                 {children}
             </div>
         </>

@@ -77,7 +77,7 @@ DEFAULT_SECRETS = [
     
     
     # Google Maps / GIS
-    {"key_name": "GOOGLE_MAPS_API_KEY", "description": "Google Maps API key for geocoding and maps (public, browser-facing)"},
+    {"key_name": "GOOGLE_MAPS_API_KEY", "description": "Google Maps/Geocoding/Translate key used by the SERVER for billed calls. Never sent to a browser -- the map in the resident's page uses GOOGLE_MAPS_BROWSER_API_KEY. Restrict this one by IP."},
     {"key_name": "GOOGLE_MAPS_MAP_ID", "description": "Google Maps Map ID (from Cloud Console, with Feature Layers enabled)"},
     {"key_name": "TOWNSHIP_PLACE_ID", "description": "Google Places ID of the township boundary"},
     
@@ -116,116 +116,70 @@ DEFAULT_SECRETS = [
 ]
 
 
-async def _run_pii_migrations():
-    """
-    Run one-time migrations for PII encryption.
-    Increases column sizes to accommodate encrypted values.
-    Safe to run multiple times (idempotent).
-    """
-    from app.db.session import sync_engine
-    from sqlalchemy import text
-    
-    migrations = [
-        # Increase PII column sizes for encrypted storage (KMS or Fernet)
-        # Encrypted values are ~1.5x larger than plaintext
-        "ALTER TABLE service_requests ALTER COLUMN first_name TYPE VARCHAR(500)",
-        "ALTER TABLE service_requests ALTER COLUMN last_name TYPE VARCHAR(500)",
-        "ALTER TABLE service_requests ALTER COLUMN email TYPE VARCHAR(500)",
-        # 500 like the other three. This ran at every boot saying 200 and
-        # silently *shrank* the column migration e7f8a9b0c1d2 had widened --
-        # Postgres allows the shrink whenever every stored value happens to
-        # fit, which is exactly the state right after the widen, so the first
-        # restart re-broke KMS phone writes. Same number as models.py or it
-        # is not a size fix, it is a tug of war.
-        "ALTER TABLE service_requests ALTER COLUMN phone TYPE VARCHAR(500)",
-    ]
-    
-    try:
-        with sync_engine.connect() as conn:
-            for sql in migrations:
-                try:
-                    conn.execute(text(sql))
-                    conn.commit()
-                except Exception as e:
-                    # Ignore if column already has this type
-                    if "already" not in str(e).lower():
-                        logger.debug(f"Migration note: {e}")
-                    conn.rollback()
-        logger.info("PII encryption migrations completed")
-    except Exception as e:
-        logger.warning(f"Could not run PII migrations (may not exist yet): {e}")
+# --------------------------------------------------------------------------
+# This module does NOT own the schema. app/db/migrate.py does.
+# --------------------------------------------------------------------------
+#
+# It used to own half of it, from two hand-maintained lists that ran on every
+# boot after migrate.py had already returned 0, and the two authorities fought
+# over the same columns:
+#
+#   _run_pii_migrations   four unconditional
+#                         `ALTER TABLE service_requests ALTER COLUMN ... TYPE
+#                         VARCHAR(n)` -- a type rewrite, which migrate.py's own
+#                         classifier calls DESTRUCTIVE, executed on every single
+#                         boot with no gate, no backup and no revision. The
+#                         comment it carried recorded the damage: it had been
+#                         saying VARCHAR(200) for phone and Postgres allows a
+#                         shrink whenever the stored values happen to fit --
+#                         which is exactly the state right after a widen -- so
+#                         the first restart after revision e7f8a9b0c1d2 silently
+#                         un-widened the column and re-broke KMS phone writes in
+#                         production. Raising the literal to 500 stopped that
+#                         instance of it and left the mechanism in place.
+#
+#   _run_schema_migrations
+#                         a list of ADD COLUMN IF NOT EXISTS, seven of whose
+#                         columns are ALSO added by an Alembic revision. Alembic's
+#                         `op.add_column` has no IF NOT EXISTS, so whichever ran
+#                         first won -- and when it was this list, the revision
+#                         later raised DuplicateColumn and the container refused
+#                         to start, permanently, with no printed remedy.
+#
+# Both are gone. Columns and varchar widths are now derived from the models by
+# migrate.py's `reconcile()`, which runs after Alembic under the advisory lock
+# and can only add or widen. Deriving beats remembering: there is no second list
+# to update, so there is nothing to drift.
+#
+# What stays below is the DDL the models genuinely cannot express -- a GIST
+# index on a cast expression, the PostGIS extension, the location trigger and
+# its backfill. None of it is a column, so none of it can contradict a revision:
+# an index is derived data and `CREATE INDEX IF NOT EXISTS` twice is a no-op.
+# Anything that adds, drops or retypes a COLUMN belongs in a revision. Do not
+# put one here.
 
 
 async def _run_schema_migrations():
     """
-    Automatically add missing columns to existing tables on startup.
-    Uses 'ADD COLUMN IF NOT EXISTS' (PostgreSQL 9.6+) so it's idempotent.
-    Add new column migrations here — they'll apply on next deploy.
+    Apply the startup DDL that neither the models nor Alembic express.
+
+    Indexes, extensions and triggers only. Every statement is idempotent and
+    none of them is a column -- see the note above this function for why that
+    boundary exists and what happened when it did not.
     """
     from app.db.session import sync_engine
     from sqlalchemy import text
-    
+
     migrations = [
-        # Service category ordering (added 2026-03-14)
-        "ALTER TABLE service_definitions ADD COLUMN IF NOT EXISTS display_order INTEGER DEFAULT 0",
-        # Live AI model-list cache (added 2026-07-22): discovered models per
-        # provider so the model picker self-updates and can flag a retired model.
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS ai_models_cache JSON DEFAULT '{}'",
-        # Proactive health alert de-dup state (added 2026-07-26): last-seen status
-        # per check so alerts fire only on transitions into a worse state.
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS health_alert_state JSON DEFAULT '{}'",
-        # Optional per-category SLA target in hours (added 2026-07-27). NULL means
-        # no SLA is set for that service category.
-        "ALTER TABLE service_definitions ADD COLUMN IF NOT EXISTS sla_hours INTEGER",
-        # Resident-chosen public-feed visibility (added 2026-07-27). Existing rows
-        # default to public, preserving current behavior.
-        "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT true",
-        "CREATE INDEX IF NOT EXISTS ix_service_requests_is_public ON service_requests (is_public)",
-        # Staff-controlled archival from the public tracker and map (added
-        # 2026-08-07). Nothing is archived until staff say so, and the town-wide
-        # policy stays unset until an admin picks a number, so both are no-ops
-        # on an existing install.
-        "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS public_archived BOOLEAN NOT NULL DEFAULT false",
-        "CREATE INDEX IF NOT EXISTS ix_service_requests_public_archived ON service_requests (public_archived)",
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS public_archive_days INTEGER",
-        # Which credential keys the deployment's host supplied, rather than the
-        # town (added 2026-08-10). Key NAMES only; values live in the secret
-        # store and the encrypted system_secrets copy like any other credential.
-        # NULL reads as "none of them", so an install that has not migrated
-        # behaves as a town that owns all its own credentials -- which is the
-        # safe direction: a host push is refused rather than a town's key being
-        # overwritten by one.
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS host_provided_keys JSON",
-        # The operator answering the "Register your deployment" prompt for the
-        # whole deployment rather than for one browser (added 2026-08-17).
-        # False everywhere until somebody switches it on, so the per-browser
-        # dismissal keeps deciding exactly as it did.
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS registration_prompt_dismissed BOOLEAN NOT NULL DEFAULT false",
-        # Where longer platform feedback is emailed, when the optional
-        # platform_feedback module is on (added 2026-08-18). NULL means no
-        # address is configured, which renders no "tell us more" link at all
-        # -- so an install that has not migrated behaves as one that never
-        # made the offer, rather than pointing residents somewhere wrong.
-        "ALTER TABLE system_settings ADD COLUMN IF NOT EXISTS platform_feedback_email VARCHAR(255)",
-        # Photos the redactor could not clear, held back from every public
-        # surface until staff look at them (added 2026-08-12). NULL reads as
-        # "nothing waiting", which is the right answer for every report filed
-        # before this existed -- the old behaviour published those photos.
-        "ALTER TABLE service_requests ADD COLUMN IF NOT EXISTS media_pending_review JSON",
-        # GovTech integrations: comment/document sync tracking (added 2026-07-01)
-        "ALTER TABLE request_comments ADD COLUMN IF NOT EXISTS external_ref VARCHAR(200)",
-        "CREATE INDEX IF NOT EXISTS ix_request_comments_external_ref ON request_comments (external_ref)",
-        "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS pushed_comment_ids JSON DEFAULT '[]'",
-        "ALTER TABLE integration_links ADD COLUMN IF NOT EXISTS documents_pushed_count INTEGER DEFAULT 0",
         # One integration per platform. The create endpoint does a
         # SELECT-then-INSERT, so without this two concurrent connects produce two
         # enabled rows for one vendor and every report is pushed there twice.
         # Non-unique index dropped by name first, since this replaces it.
+        #
+        # Not derivable from the models: the swap from a non-unique index to a
+        # unique one of the SAME NAME is two statements in a required order.
         "DROP INDEX IF EXISTS ix_integration_configs_platform",
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_integration_configs_platform ON integration_configs (platform)",
-        # Immutable/tamper-evident request audit log hash chain (added 2026-07-02)
-        "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)",
-        "ALTER TABLE request_audit_logs ADD COLUMN IF NOT EXISTS entry_hash VARCHAR(64)",
         # Road geometry for jurisdiction routing (added 2026-07-29). Road-based
         # blocking used to substring-match configured road names against a
         # reverse-geocoded address string, which attributed corner lots to the
@@ -285,13 +239,12 @@ async def seed_database():
     
     # Create tables
     await init_db()
-    
-    # Run migrations for PII encryption (increase column sizes)
-    await _run_pii_migrations()
-    
-    # Run schema migrations (add missing columns to existing tables)
+
+    # Indexes, extensions and triggers only. Columns and varchar widths are
+    # migrate.py's, and were taken away from here on purpose -- see the note
+    # above _run_schema_migrations.
     await _run_schema_migrations()
-    
+
     async with SessionLocal() as db:
         # Check if already seeded
         result = await db.execute(select(User).limit(1))
@@ -338,14 +291,8 @@ async def seed_database():
             # a card is switched in `capability_switches`, which starts empty --
             # a fresh install has answered nothing, and an empty map reads as
             # "not answered" rather than as "off".
-            modules={
-                "unlisted_reports": False,
-                "research_portal": False,
-                # Optional platform-feedback question. Off, like the others:
-                # collecting anything from residents is a thing a town opts
-                # into, never a thing a fresh install starts doing.
-                "platform_feedback": False,
-            },
+            modules={"unlisted_reports": False, "research_portal": False,
+                     "platform_feedback": False},
             capability_switches={},
         )
         db.add(settings_obj)

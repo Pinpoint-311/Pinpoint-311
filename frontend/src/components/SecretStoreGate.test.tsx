@@ -45,6 +45,8 @@ const UNCHOSEN = {
 let host: HTMLDivElement;
 let root: Root;
 
+// Mounted bare, with no provider around it: the gate is the first thing the
+// setup page renders and must not depend on any context to come up.
 async function mount(props: Record<string, unknown> = {}) {
     const { default: Gate } = await import('./SecretStoreGate');
     await act(async () => { root.render(React.createElement(Gate, props)); });
@@ -60,6 +62,19 @@ function button(pattern: RegExp): HTMLElement {
 
 async function click(pattern: RegExp) {
     await act(async () => { button(pattern).click(); });
+}
+
+/** The store options are real radios now, not toggle buttons. */
+async function pick(pattern: RegExp) {
+    const input = Array.from(host.querySelectorAll('input[type="radio"]'))
+        .find(r => pattern.test((r.closest('label')?.textContent) || ''));
+    if (!input) throw new Error(`no store option matching ${pattern}`);
+    await act(async () => { (input as HTMLInputElement).click(); });
+}
+
+/** Commit the picked store. One click, as it has always been. */
+async function useStore() {
+    await click(/Use this store/i);
 }
 
 beforeEach(() => {
@@ -94,7 +109,7 @@ describe('choosing where credentials are kept', () => {
         await mount();
         expect(host.textContent).not.toMatch(/every .{0,10}backup/i);
 
-        await click(/encrypted database/);
+        await pick(/encrypted database/);
 
         // The specific consequence, in the specific words that matter: the keys
         // are in every backup, and backups leave this server.
@@ -104,8 +119,8 @@ describe('choosing where credentials are kept', () => {
 
     it('records the choice', async () => {
         await mount();
-        await click(/encrypted database/);
-        await click(/Use this store/);
+        await pick(/encrypted database/);
+        await useStore();
 
         expect(chosen).toEqual(['database']);
     });
@@ -119,7 +134,7 @@ describe('choosing where credentials are kept', () => {
         // The credentials that make a vault reachable are entered on this same
         // page, so gating on reachability would be a loop with no way in.
         await mount();
-        await click(/Azure Key Vault/);
+        await pick(/Azure Key Vault/);
         expect((button(/Use this store/) as HTMLButtonElement).disabled).toBe(false);
     });
 
@@ -146,9 +161,9 @@ describe('choosing where credentials are kept', () => {
 
     it('reports a refused choice rather than looking like it took', async () => {
         await mount();
-        await click(/AWS Secrets Manager/);
+        await pick(/AWS Secrets Manager/);
         refuseWith = 'the store is pinned by this deployment';
-        await click(/Use this store/);
+        await useStore();
 
         expect(host.textContent).toContain('pinned by this deployment');
         expect(host.textContent).toMatch(/where should this town/i);
@@ -168,8 +183,8 @@ describe('telling the page whether to lock its fields', () => {
     it('reports chosen as soon as the answer is recorded, so they unlock', async () => {
         const seen: boolean[] = [];
         await mount({ onState: (v: boolean) => seen.push(v) });
-        await click(/encrypted database/i);
-        await click(/Use this store/i);
+        await pick(/encrypted database/i);
+        await useStore();
         expect(seen).toEqual([false, true]);
     });
 
@@ -180,5 +195,22 @@ describe('telling the page whether to lock its fields', () => {
         const seen: boolean[] = [];
         await mount({ onState: (v: boolean) => seen.push(v) });
         expect(seen).toEqual([]);
+    });
+});
+
+describe('the store options as a radio group', () => {
+    it('scopes the group to the instance, so two gates do not share one', async () => {
+        const { default: Gate } = await import('./SecretStoreGate');
+        await act(async () => {
+            root.render(React.createElement('div', null,
+                React.createElement(Gate, { key: 'a' }),
+                React.createElement(Gate, { key: 'b' })));
+        });
+
+        const names = new Set(Array.from(host.querySelectorAll('input[type="radio"]'))
+            .map(r => r.getAttribute('name')));
+        // Two groups, not one: a hard-coded name would make picking in either
+        // gate clear the selection in the other.
+        expect(names.size).toBe(2);
     });
 });

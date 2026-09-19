@@ -155,8 +155,9 @@ interface SidebarGroupProps {
     children: React.ReactNode;
 }
 
-function SidebarGroup({ title, icon: Icon, isActive, defaultOpen = false, children }: SidebarGroupProps) {
+export function SidebarGroup({ title, icon: Icon, isActive, defaultOpen = false, children }: SidebarGroupProps) {
     const [isOpen, setIsOpen] = useState(defaultOpen);
+    const panelId = React.useId();
 
     // Auto-open when active
     React.useEffect(() => {
@@ -167,16 +168,24 @@ function SidebarGroup({ title, icon: Icon, isActive, defaultOpen = false, childr
 
     return (
         <div className="rounded-xl overflow-hidden">
+            {/* A disclosure has to say that it is one: without aria-expanded the
+              * only signal that this group is open is a rotated chevron, which
+              * is nothing at all to a screen reader, and without aria-controls
+              * there is no tie between the button and the items it reveals
+              * (WCAG 4.1.2 Name, Role, Value). */}
             <button
                 onClick={() => setIsOpen(!isOpen)}
+                aria-expanded={isOpen}
+                aria-controls={panelId}
                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-colors ${isActive ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white'
                     }`}
             >
-                <Icon className="w-5 h-5" />
+                <Icon className="w-5 h-5" aria-hidden="true" />
                 <span className="font-medium flex-1 text-left">{title}</span>
                 <motion.div
                     animate={{ rotate: isOpen ? 180 : 0 }}
                     transition={{ duration: 0.2 }}
+                    aria-hidden="true"
                 >
                     <ChevronDown className="w-4 h-4 opacity-50" />
                 </motion.div>
@@ -184,6 +193,7 @@ function SidebarGroup({ title, icon: Icon, isActive, defaultOpen = false, childr
             <AnimatePresence initial={false}>
                 {isOpen && (
                     <motion.div
+                        id={panelId}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
@@ -207,16 +217,22 @@ interface SidebarItemProps {
     onClick: () => void;
 }
 
-function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps) {
+export function SidebarItem({ icon: Icon, label, isActive, onClick }: SidebarItemProps) {
     return (
+        /* aria-current marks which console section you are actually in. Before
+         * this, "where am I" was carried entirely by a background tint and a
+         * brighter label -- meaning conveyed by colour alone (WCAG 1.4.1), and
+         * invisible to a screen reader, which announced all eight items
+         * identically. */
         <button
             onClick={onClick}
+            aria-current={isActive ? 'page' : undefined}
             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${isActive
                 ? 'bg-primary-500/20 text-white'
                 : 'text-white/50 hover:bg-white/5 hover:text-white'
                 }`}
         >
-            <Icon className="w-4 h-4" />
+            <Icon className="w-4 h-4" aria-hidden="true" />
             <span className="font-medium">{label}</span>
         </button>
     );
@@ -647,10 +663,15 @@ export default function AdminConsole() {
     const contentRef = useRef<HTMLDivElement>(null);
 
     // URL hashing, dynamic titles, and scroll-to-top
-    const { updateHash, updateTitle, scrollToTop } = usePageNavigation({
+    const { updateHash, updateTitle, scrollToTop, focusMain } = usePageNavigation({
         baseTitle: settings?.township_name ? `Admin Console | ${settings.township_name}` : 'Admin Console',
         scrollContainerRef: contentRef,
     });
+
+    /* First render is arrival, not navigation. Moving focus on mount would rip
+     * it away from wherever the browser put it before the operator has done
+     * anything; only a deliberate section change should relocate it. */
+    const isFirstTabRender = useRef(true);
 
     // Update hash and title when tab changes
     useEffect(() => {
@@ -667,7 +688,19 @@ export default function AdminConsole() {
         };
         updateTitle(tabTitles[currentTab]);
         scrollToTop('instant');
-    }, [currentTab, updateHash, updateTitle, scrollToTop]);
+
+        /* Move focus into the section that just loaded (WCAG 2.4.3 Focus Order).
+         * Clicking a sidebar item replaces the whole of #main-content while
+         * focus stays on the button that was pressed: a screen reader user heard
+         * the button re-announce itself and nothing about the section they had
+         * asked for, and the next Tab walked the remaining seven sidebar items
+         * before reaching any of it. */
+        if (isFirstTabRender.current) {
+            isFirstTabRender.current = false;
+        } else {
+            focusMain();
+        }
+    }, [currentTab, updateHash, updateTitle, scrollToTop, focusMain]);
 
     // Branding state
     const [brandingForm, setBrandingForm] = useState<Partial<SystemSettings>>({});

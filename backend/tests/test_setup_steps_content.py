@@ -56,23 +56,61 @@ def _catalogs():
     return catalogs
 
 
+# Everything that opens a new region of the file: a provider's steps, a
+# provider's two paths, or a named step list one of those paths is built from.
+# Splitting on all three is what keeps a plain scan honest now that a walk can
+# be written once and referenced twice.
+_BOUNDARY = re.compile(
+    r"defineSteps\(\s*'(?P<cap>[a-z]+)'\s*,\s*'(?P<prov>[a-z0-9]+)'"
+    r"|defineFork\(\s*'(?P<fcap>[a-z]+)'\s*,\s*'(?P<fprov>[a-z0-9]+)'"
+    r"|const\s+(?P<name>\w+)\s*:\s*StepBuilder"
+)
+
+
+def _fields_in(block: str):
+    fields = []
+    for chunk in re.findall(r"fields:\s*\[([^\]]*)\]", block):
+        fields += re.findall(r"'([A-Z0-9_]+)'", chunk)
+    return fields
+
+
 def _declarations():
     """[(capability, provider, [field keys]), ...] as written in the TSX.
 
-    Each defineSteps call runs to the next one, so the fields between two calls
-    belong to the first -- which is what lets a plain scan attribute keys to
-    providers without parsing JSX.
+    One entry per *walk*, not per provider. A cloud with a deployment template
+    registers two complete walks for the same capability -- the template path
+    and the by-hand path -- and both legitimately fill the same boxes, because
+    they are two ways to reach the same credentials. Attributing every key in
+    the region to one declaration would report that as a provider claiming a
+    field twice, which is the one thing this file cannot afford to cry wolf
+    about: the check exists to catch two inputs bound to one secret on a single
+    screen, and only one path is ever on screen.
+
+    So the named `StepBuilder` consts are collected first, and a `defineFork`
+    yields one declaration per path, carrying that path's fields alone.
     """
     source = CONTENT.read_text()
-    calls = list(re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source))
+    marks = list(_BOUNDARY.finditer(source))
+    named = {}
     out = []
-    for i, call in enumerate(calls):
-        end = calls[i + 1].start() if i + 1 < len(calls) else len(source)
-        body = source[call.start():end]
-        fields = []
-        for block in re.findall(r"fields:\s*\[([^\]]*)\]", body):
-            fields += re.findall(r"'([A-Z0-9_]+)'", block)
-        out.append((call.group(1), call.group(2), fields))
+    forks = []
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(source)
+        block = source[mark.start():end]
+        if mark.group("name"):
+            named[mark.group("name")] = _fields_in(block)
+        elif mark.group("cap"):
+            out.append((mark.group("cap"), mark.group("prov"), _fields_in(block)))
+        else:
+            forks.append((mark.group("fcap"), mark.group("fprov"), block))
+
+    for cap, prov, block in forks:
+        # `template: azureTemplateSteps(ctx), manual: azureManualSteps(ctx)`
+        paths = re.findall(r"(?:template|manual):\s*(\w+)\(", block)
+        assert paths, f"defineFork {cap}:{prov} names no step lists this can read"
+        for name in paths:
+            assert name in named, f"defineFork {cap}:{prov} references unknown {name}"
+            out.append((cap, prov, named[name]))
     return out
 
 
@@ -243,13 +281,20 @@ def test_every_provider_records_the_traps_it_has(declarations):
     `test_warnings_are_rare_enough_to_read`.
     """
     source = CONTENT.read_text()
-    calls = list(re.finditer(r"defineSteps\(\s*'([a-z]+)'\s*,\s*'([a-z0-9]+)'", source))
+    marks = list(_BOUNDARY.finditer(source))
     missing = []
-    for i, call in enumerate(calls):
-        end = calls[i + 1].start() if i + 1 < len(calls) else len(source)
-        block = source[call.start():end]
-        if "trouble:" not in block and "note:" not in block:
-            missing.append(f"{call.group(1)}:{call.group(2)}")
+    for i, mark in enumerate(marks):
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(source)
+        block = source[mark.start():end]
+        if "trouble:" in block or "note:" in block:
+            continue
+        if mark.group("cap"):
+            missing.append(f"{mark.group('cap')}:{mark.group('prov')}")
+        elif mark.group("name"):
+            # A named walk one of the forks is built from. Named rather than
+            # keyed by provider because that is all this scan knows about it,
+            # and the name says which cloud and which path it is.
+            missing.append(mark.group("name"))
     assert not missing, f"nothing written down about the traps in: {missing}"
 
 
@@ -262,9 +307,19 @@ def test_the_key_deletion_warnings_are_present():
         "lien",                       # google: project deletion is refused
         "purge protection",           # azure: soft-deleted keys stay recoverable
         "kms:ScheduleKeyDeletion",    # aws: explicit deny beats any allow
-        "unrecoverable",              # what happens if all of that fails
     ):
         assert phrase in source, phrase
+
+    # And that the end of the road is stated somewhere, in whatever words.
+    #
+    # This used to pin the single word "unrecoverable". A copy pass then said
+    # the same thing more calmly -- "cannot be recovered, by you or by Google"
+    # -- and the test failed on a rewrite that had lost nothing. The fact is
+    # what has to survive a rewrite; the vocabulary is not, and pinning it
+    # pushes the prose towards the more alarming word for no reader's benefit.
+    assert re.search(r"cannot be recovered|unrecoverable", source), (
+        "no walk says what happens once a key is actually gone"
+    )
 
 
 def test_redaction_says_how_to_prove_it_works():
@@ -274,3 +329,30 @@ def test_redaction_says_how_to_prove_it_works():
     source = CONTENT.read_text()
     assert "VERIFY_WITH_A_PHOTO" in source
     assert "UNCONFIGURED_DETECTOR" in source
+
+
+def test_the_vault_registration_says_which_kind_of_app():
+    """"Register an app" is not an instruction: Entra's New registration form
+    asks for supported account types and a redirect URI before it will proceed.
+
+    The two registrations in this product need OPPOSITE answers, which is why
+    leaving it unsaid is worse than it looks. Staff sign-in is an interactive
+    app and needs a Web redirect URI; the vault credential signs no one in and
+    needs none. A reader who has just done the sign-in walk will paste the
+    callback URL into both.
+    """
+    source = (ROOT / "frontend/src/components/setupStepsContent.tsx").read_text()
+
+    # Wherever the vault credential is registered -- the by-hand walk and the
+    # template walk both do it -- the account type and the redirect URI are named.
+    for marker in ("Now the identity Pinpoint signs in as",
+                   "How this server opens the vault"):
+        assert marker in source, f"the vault registration step moved: {marker}"
+        block = source[source.index(marker):][:900]
+        assert "organizational directory only" in block, (
+            f"{marker}: the step does not say which account type to choose"
+        )
+        assert "redirect" in block.lower(), (
+            f"{marker}: the step does not say what to do about the redirect URI, "
+            f"which the sign-in walk tells the same reader to fill in"
+        )

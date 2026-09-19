@@ -185,7 +185,10 @@ async def _discover_vertex(creds: Dict[str, str]) -> Optional[List[Dict[str, str
 
 
 async def _discover_azure(creds: Dict[str, str]) -> Optional[List[Dict[str, str]]]:
-    endpoint = (creds.get("AZURE_OPENAI_ENDPOINT") or "").rstrip("/")
+    # Same normalisation as the provider itself, or discovery fails on a
+    # pasted Target URI while the card says nothing useful about why.
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+    endpoint = normalise_azure_endpoint(creds.get("AZURE_OPENAI_ENDPOINT"))
     api_key = creds.get("AZURE_OPENAI_API_KEY")
     if not endpoint or not api_key:
         return None

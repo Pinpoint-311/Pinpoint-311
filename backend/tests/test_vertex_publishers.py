@@ -299,13 +299,22 @@ class TestTheCallerSpeaksMoreThanGemini:
 
 
 class TestOneDefaultPerProvider:
-    def test_azure_agrees_with_itself(self):
-        """The catalog's default and the client's fallback are two defaults for
-        the same thing; drift puts a town on a deployment the picker never
-        offered."""
+    def test_azure_has_no_default_deployment_to_drift(self):
+        """There used to be two defaults for the same thing and a test that they
+        matched. Both are gone: a deployment name is invented by whoever created
+        it, so every value either of them could hold is wrong except by
+        coincidence. The card asks, and the client refuses to call until it has
+        an answer."""
         registry = _source("app/services/ai/registry.py")
         client = _source("app/services/ai/azure_openai.py")
         import re
-        catalog_default = re.search(r'"default_model": "(gpt[^"]+)"', registry).group(1)
-        client_default = re.search(r'DEFAULT_DEPLOYMENT = "([^"]+)"', client).group(1)
-        assert catalog_default == client_default
+
+        assert re.search(r'DEFAULT_DEPLOYMENT = None', client), (
+            "azure_openai.py is guessing a deployment name again")
+
+        # The azure catalog entry offers no models to pick from, because Azure
+        # cannot list them with an api-key and the ids are not model ids.
+        azure = registry[registry.index('"azure": {'):]
+        azure = azure[:azure.index('"bedrock"')]
+        assert '"models": []' in azure, "the azure model list is back"
+        assert '"default_model"' not in azure, "the azure default_model is back"

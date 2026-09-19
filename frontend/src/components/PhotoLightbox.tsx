@@ -4,6 +4,14 @@ import { X } from 'lucide-react';
 interface PhotoLightboxProps {
     /** The photo to show full size. The lightbox renders only when set. */
     url: string;
+    /** Alt text for the photo, supplied by whoever opened it.
+     *
+     * The lightbox used to hardcode "Full size preview" for every image, which
+     * discarded the specific description the caller already had ("Submitted
+     * photo 2", "Completion photo") and told a screen-reader user only that a
+     * picture existed (WCAG 1.1.1). It stays required so a new call site cannot
+     * quietly reintroduce the generic string. */
+    alt: string;
     onClose: () => void;
 }
 
@@ -19,7 +27,7 @@ interface PhotoLightboxProps {
  * Escape and focus restoration are the caller's, because the caller knows
  * which thumbnail opened it.
  */
-export default function PhotoLightbox({ url, onClose }: PhotoLightboxProps) {
+export default function PhotoLightbox({ url, alt, onClose }: PhotoLightboxProps) {
     const containerRef = useRef<HTMLDivElement>(null);
 
     // Keep Tab inside the overlay. The dialog holds a single focusable
@@ -79,14 +87,17 @@ export default function PhotoLightbox({ url, onClose }: PhotoLightboxProps) {
                 {/* Image */}
                 <img
                     src={url}
-                    alt="Full size preview"
+                    alt={alt}
                     className="relative max-w-full max-h-[85vh] object-contain bg-gray-900/50 rounded-2xl"
                 />
             </div>
 
             {/* Instructions */}
             <p className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white/50 text-sm">
-                Press Escape or click anywhere to close
+                {/* "Click anywhere" was the only instruction given, and it is not
+                    true for anyone who is not holding a mouse. Escape is named
+                    first because it is the one that always works. */}
+                Press Escape to close, or click outside the photo
             </p>
         </div>
     );

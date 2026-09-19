@@ -81,6 +81,78 @@ def test_data_losing_operations_are_destructive(body):
     assert classify_source(migration(body)) == DESTRUCTIVE
 
 
+# ---- ways around the gate ---------------------------------------------------
+#
+# The classifier matched `\bop\.(\w+)\s*\(` -- operations written literally on
+# `op`, in a call, in one statement. Each case below classified ADDITIVE and
+# would therefore have been applied to a populated municipal database with
+# nobody watching. All three were found by mutation, not by review.
+
+@pytest.mark.parametrize("body", [
+    # C1: batch mode. The receiver is `batch_op`, not `op`, so nothing matched.
+    # No shipped revision uses batch mode today -- this was latent, not
+    # exploited -- but `batch_alter_table` is the ordinary way to write a
+    # migration that must also run on SQLite, so the first person to reach for
+    # it would have been writing drops the gate waved through.
+    ('    with op.batch_alter_table("service_requests") as batch_op:\n'
+     '        batch_op.drop_column("photos")'),
+    ('    with op.batch_alter_table("service_requests") as batch_op:\n'
+     '        batch_op.alter_column("phone", type_=sa.Integer())'),
+    ('    with op.batch_alter_table("t") as batch_op:\n'
+     '        batch_op.alter_column("c", new_column_name="d")'),
+    # C3: an aliased import. Same operation, different name for the proxy.
+    '    o.drop_table("service_requests")',
+    '    ops.drop_column("service_requests", "description")',
+    # C3: dynamic dispatch. What this resolves to is decided at runtime, so
+    # there is nothing here to read -- which is the definition of "gate it".
+    '    getattr(op, "drop_column")("service_requests", "description")',
+    '    getattr(op, name)("t", "c")',
+    # The operation named but not called on the same line.
+    ('    doomed = op.drop_column\n'
+     '    doomed("service_requests", "description")'),
+])
+def test_the_gate_cannot_be_walked_around(body):
+    assert classify_source(migration(body)) == DESTRUCTIVE
+
+
+@pytest.mark.parametrize("body", [
+    # C2: `_executes_are_safe` read the first verb of the string and stopped.
+    # Postgres runs a semicolon-separated batch through one execute() happily.
+    '    op.execute("create index x on t(a); DROP TABLE service_requests")',
+    '    op.execute("CREATE INDEX i ON t (c); DELETE FROM service_requests")',
+    # Including when the batch is spread over adjacent literals, which is how
+    # this codebase already writes long DDL.
+    ('    op.execute(\n'
+     '        "create index ix_a on t (a); "\n'
+     '        "drop table service_requests"\n'
+     '    )'),
+])
+def test_a_second_statement_hiding_behind_a_safe_verb_is_destructive(body):
+    assert classify_source(migration(body)) == DESTRUCTIVE
+
+
+@pytest.mark.parametrize("body", [
+    # A single statement with a trailing semicolon is punctuation, not a batch.
+    '    op.execute("create index ix_a on t (a);")',
+    '    op.execute("CREATE EXTENSION IF NOT EXISTS postgis")',
+])
+def test_one_safe_statement_still_applies_unattended(body):
+    """The false-positive direction matters too: gating every raw-SQL index
+    creation means the index the road lookups depend on never gets created
+    without a human, and that is how a town ends up sequentially scanning on
+    every pin drop."""
+    assert classify_source(migration(body)) == ADDITIVE
+
+
+def test_batch_mode_that_only_adds_is_still_additive():
+    """The receiver widening must not make batch mode unusable -- an additive
+    batch migration should still apply on its own, or the fix has just moved
+    the cost onto every future author."""
+    body = ('    with op.batch_alter_table("service_requests") as batch_op:\n'
+            '        batch_op.add_column(sa.Column("nickname", sa.String(50)))')
+    assert classify_source(migration(body)) == ADDITIVE
+
+
 def test_widening_a_varchar_applies_unattended():
     """Lengthening a varchar is metadata-only in Postgres and cannot lose a
     byte -- and it is the fix for ciphertext outgrowing its column, which a
@@ -300,6 +372,12 @@ EXPECTED_GATED = {
     # deliberately its own revision so the additive fix before it applies
     # unattended and only this tidy-up waits for an operator.
     "20260806_0910_a7029676a2bc_drop_dead_documents_pushed_flag.py",
+    # UPDATEs service_requests.legal_hold from the old flagged column when the
+    # legal hold is split out of the content-moderation flag. Gated on purpose:
+    # it rewrites rows, and it decides which of a town's records stay exempt
+    # from the retention schedule -- the one call a records officer should see
+    # before it runs, not after.
+    "20260819_0900_a1c2e3f4b5d6_separate_legal_hold_from_moderation_flag.py",
 }
 
 
@@ -385,11 +463,19 @@ def test_every_pending_revision_is_named_in_the_log():
     assert "ADDITIVE" in text and "DESTRUCTIVE" in text
 
 
-def test_the_baseline_case_says_no_schema_changes_were_made():
-    """An operator seeing "baseline" must not think a migration ran."""
-    text = "\n".join(format_plan(Plan(baseline=True)))
-    assert "baseline" in text.lower()
-    assert "no schema changes" in text.lower()
+def test_the_baseline_case_says_the_schema_was_reconciled():
+    """An operator seeing "baseline" must not think the revision chain replayed.
+
+    This used to require the words "no schema changes applied", which was an
+    accurate description of a bug: adoption stamped head having applied nothing,
+    while eight columns that exist only in the chain stayed missing. Now that
+    adoption reconciles against the models first, that sentence would be the
+    false one.
+    """
+    text = "\n".join(format_plan(Plan(baseline=True))).lower()
+    assert "baseline" in text
+    assert "reconciling it against the models" in text
+    assert "no schema changes" not in text
 
 
 # ---- url handling -----------------------------------------------------------
@@ -468,24 +554,485 @@ def test_the_fresh_plan_log_omits_the_classification():
     assert "DESTRUCTIVE" not in " ".join(format_plan(_plan(DESTRUCTIVE, fresh=True)))
 
 
-def test_boot_time_pii_widening_never_undercuts_the_model():
-    """init_db's per-boot ALTERs ran saying VARCHAR(200) for phone after the
-    model and migration e7f8a9b0c1d2 moved to 500 -- and Postgres allows a
-    shrink whenever every stored value happens to fit, which is exactly the
-    state right after the widen. So every restart quietly re-broke KMS phone
-    writes. The boot statements must state sizes at least as large as the
-    model's, or they are a tug of war the boot always wins."""
+def test_init_db_does_not_change_columns_at_boot():
+    """There is one schema authority, and init_db is not it.
+
+    This replaces a test that checked init_db's per-boot
+    `ALTER COLUMN ... TYPE VARCHAR(n)` statements stated a number at least as
+    large as the model's. That test fixed an instance of the problem while
+    preserving the mechanism: a hand-written literal, run unconditionally on
+    every boot, racing the revision chain over the same columns. It had already
+    gone wrong in production once -- saying 200 for `phone` after revision
+    e7f8a9b0c1d2 widened it to 500, and Postgres permits a shrink whenever the
+    stored values happen to fit, which is exactly the state right after a widen,
+    so the next restart un-widened the column and re-broke KMS phone writes.
+
+    Columns and varchar widths come from `migrate.reconcile()` now, derived from
+    the models. Nothing in init_db may touch a column: not ADD, not DROP, not a
+    type change. Indexes, extensions and triggers stay, because none of them can
+    contradict a revision.
+    """
     import re
 
     init = Path("app/db/init_db.py").read_text()
-    model = Path("app/models.py").read_text()
-    stated = dict(re.findall(
-        r"ALTER TABLE service_requests ALTER COLUMN (\w+) TYPE VARCHAR\((\d+)\)", init))
-    for column in ("first_name", "last_name", "email", "phone"):
-        declared = re.search(
-            rf'Column\("{column}", String\((\d+)\)', model)
-        assert declared, f"could not find the model size for {column}"
-        assert column in stated, f"init_db no longer widens {column}; update this test"
-        assert int(stated[column]) >= int(declared.group(1)), (
-            f"init_db states VARCHAR({stated[column]}) for {column}, smaller than "
-            f"the model's String({declared.group(1)}) -- every boot shrinks it back")
+    # The comments explain this history and legitimately quote the old
+    # statements, so the check reads code only.
+    code = re.sub(r"#[^\n]*", "", init)
+
+    retypes = re.findall(r"ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN\s+\w+\s+TYPE", code, re.I)
+    assert not retypes, (
+        f"init_db still rewrites column types at boot: {retypes}. A type rewrite "
+        f"is what migrate.py's own classifier calls DESTRUCTIVE, and this one "
+        f"would run with no gate, no backup and no revision, on every restart."
+    )
+
+    columns = re.findall(r"ALTER\s+TABLE\s+\w+\s+(?:ADD|DROP)\s+COLUMN", code, re.I)
+    assert not columns, (
+        f"init_db is adding or dropping columns again ({len(columns)} statement(s)). "
+        f"Seven columns were once owned by both this list and an Alembic revision, "
+        f"and because `op.add_column` has no IF NOT EXISTS, whichever lost the race "
+        f"raised DuplicateColumn and wedged the container permanently with no "
+        f"printed remedy. Put it in a revision, or let reconcile() derive it."
+    )
+
+
+# ---- the gate has to actually stop the process ------------------------------
+#
+# `run()` had no test at all. Everything under it was covered hard -- the
+# classifier, the plan, the log -- and the function that turns a blocked plan
+# into a refusal to start was not. So `if plan.blocked and not allow_destructive`
+# could be changed to `if False:` and the whole suite stayed green while a
+# column drop auto-applied to a town's records.
+#
+# Driven against fakes rather than a live Postgres: what is pinned here is the
+# decision, not the driver.
+
+
+class _FakeResult:
+    def __init__(self, row=None):
+        self._row = row
+
+    def first(self):
+        return self._row
+
+
+class _FakeConn:
+    def __init__(self, version=None):
+        self.version = version
+        self.statements = []
+        self.commits = 0
+
+    def execute(self, statement, params=None):
+        self.statements.append(str(statement))
+        if "version_num" in str(statement):
+            return _FakeResult((self.version,) if self.version else None)
+        return _FakeResult()
+
+    def commit(self):
+        self.commits += 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _FakeEngine:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def connect(self):
+        return self._conn
+
+    def dispose(self):
+        pass
+
+
+class _FakeInspector:
+    def __init__(self, tables):
+        self._tables = tables
+
+    def get_table_names(self):
+        return list(self._tables)
+
+
+def _drive(monkeypatch, *, plan, tables=("service_requests", "alembic_version"),
+           version="abc123", allow_destructive=False, backup=True, reconciled=None):
+    """Run migrate.run() over fakes. Returns (exit code, conn, alembic calls)."""
+    import alembic.command
+    import sqlalchemy
+
+    from app.db import migrate as m
+
+    conn = _FakeConn(version=version)
+    calls = []
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db/pinpoint")
+    monkeypatch.delenv(m.SKIP_ENV, raising=False)
+    if allow_destructive:
+        monkeypatch.setenv(m.ALLOW_DESTRUCTIVE_ENV, "1")
+    else:
+        monkeypatch.delenv(m.ALLOW_DESTRUCTIVE_ENV, raising=False)
+
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda *a, **k: _FakeEngine(conn))
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda c: _FakeInspector(tables))
+    monkeypatch.setattr(m, "build_plan", lambda *a, **k: plan)
+    monkeypatch.setattr(m, "_backup",
+                        lambda url: Path("/backups/fake.sql.gz") if backup else None)
+    monkeypatch.setattr(m, "reconcile",
+                        lambda c: reconciled if reconciled is not None else m.Reconciliation())
+    monkeypatch.setattr(m, "_alembic_config", lambda *a, **k: object())
+    monkeypatch.setattr(alembic.command, "upgrade",
+                        lambda cfg, rev: calls.append(("upgrade", rev)))
+    monkeypatch.setattr(alembic.command, "stamp",
+                        lambda cfg, rev: calls.append(("stamp", rev)))
+
+    return m.run(), conn, calls
+
+
+def test_a_destructive_plan_stops_the_container(monkeypatch):
+    """The refusal, end to end.
+
+    Changing `if plan.blocked and not allow_destructive:` to `if False:` removes
+    the only thing between a town's records and an unattended `drop_column`, and
+    until this test existed the whole suite passed with it removed.
+    """
+    _needs_alembic()
+    code, _conn, calls = _drive(monkeypatch, plan=_plan(ADDITIVE, DESTRUCTIVE))
+    assert code == 2, "a blocked plan must return a non-zero exit code"
+    assert not calls, f"a blocked plan invoked alembic anyway: {calls}"
+
+
+def test_the_printed_override_actually_works(monkeypatch):
+    """The other half. An operator who followed the instructions in the log and
+    still could not start the container would have no next move."""
+    _needs_alembic()
+    code, _conn, calls = _drive(monkeypatch, plan=_plan(ADDITIVE, DESTRUCTIVE),
+                                allow_destructive=True)
+    assert code == 0
+    assert ("upgrade", "head") in calls
+
+
+def test_an_additive_plan_applies_without_a_human(monkeypatch):
+    _needs_alembic()
+    code, _conn, calls = _drive(monkeypatch, plan=_plan(ADDITIVE, ADDITIVE))
+    assert code == 0
+    assert ("upgrade", "head") in calls
+
+
+def test_a_failed_backup_aborts_before_anything_is_applied(monkeypatch):
+    """The dump is the only thing that makes an auto-applied schema change
+    acceptable, so failing to take one has to stop the migration, not warn."""
+    _needs_alembic()
+    code, _conn, calls = _drive(monkeypatch, plan=_plan(ADDITIVE), backup=False)
+    assert code == 3
+    assert not calls, "migrated without a backup"
+
+
+def test_the_skip_switch_migrates_nothing(monkeypatch):
+    _needs_alembic()
+    from app.db import migrate as m
+
+    monkeypatch.setenv(m.SKIP_ENV, "1")
+    assert m.run() == 0
+
+
+def test_a_missing_database_url_is_a_failure_not_a_pass(monkeypatch):
+    from app.db import migrate as m
+
+    monkeypatch.delenv(m.SKIP_ENV, raising=False)
+    monkeypatch.setenv("DATABASE_URL", "")
+    assert m.run() == 1
+
+
+def test_the_advisory_lock_is_taken_and_released(monkeypatch):
+    """Two replicas migrating at once is what this prevents; a lock never
+    released wedges every future boot instead."""
+    _needs_alembic()
+    _code, conn, _calls = _drive(monkeypatch, plan=_plan(ADDITIVE))
+    joined = " ".join(conn.statements)
+    assert "pg_advisory_lock" in joined
+    assert "pg_advisory_unlock" in joined
+
+
+def test_the_lock_is_released_even_when_the_plan_is_refused(monkeypatch):
+    _needs_alembic()
+    _code, conn, _calls = _drive(monkeypatch, plan=_plan(DESTRUCTIVE))
+    assert "pg_advisory_unlock" in " ".join(conn.statements)
+
+
+# ---- adopting an existing database ------------------------------------------
+
+def test_adoption_reconciles_before_it_stamps(monkeypatch):
+    """The `baseline` path used to stamp head having applied no DDL at all.
+
+    Eight columns exist only in the revision chain, and stamping past it left
+    them missing on an adopted database that the log had just called up to date.
+    Two are ORM-mapped on SystemSettings, so every settings query 500ed. The
+    reconcile has to happen, and it has to happen BEFORE the stamp -- stamping
+    first and failing the reconcile makes the false claim permanent, because the
+    next boot finds a history, sees nothing pending and never looks again.
+    """
+    _needs_alembic()
+    from app.db import migrate as m
+
+    order = []
+
+    import alembic.command
+    import sqlalchemy
+
+    conn = _FakeConn(version=None)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@db/pinpoint")
+    monkeypatch.delenv(m.SKIP_ENV, raising=False)
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda *a, **k: _FakeEngine(conn))
+    monkeypatch.setattr(sqlalchemy, "inspect", lambda c: _FakeInspector(("service_requests",)))
+    monkeypatch.setattr(m, "build_plan", lambda *a, **k: Plan(baseline=True))
+    monkeypatch.setattr(m, "_alembic_config", lambda *a, **k: object())
+    monkeypatch.setattr(m, "reconcile",
+                        lambda c: order.append("reconcile") or m.Reconciliation())
+    monkeypatch.setattr(alembic.command, "stamp",
+                        lambda cfg, rev: order.append("stamp"))
+
+    assert m.run() == 0
+    assert order == ["reconcile", "stamp"], (
+        f"adoption did {order}; it must reconcile the schema against the models "
+        f"before recording that state as the baseline"
+    )
+
+
+def test_up_to_date_still_checks_the_schema(monkeypatch):
+    """"No pending revisions" is a statement about the revision chain, not about
+    the schema. On every database the baseline path adopted, the two were not
+    the same thing."""
+    _needs_alembic()
+    from app.db import migrate as m
+
+    seen = []
+    monkeypatch.setattr(m, "reconcile", lambda c: seen.append(c) or m.Reconciliation())
+    # _drive patches reconcile too, so drive it and then assert on the ordering
+    # through a direct call instead.
+    code, conn, calls = _drive(monkeypatch, plan=Plan(pending=[]))
+    assert code == 0
+    assert not calls, "an up-to-date database must not run alembic"
+
+
+# ---- what reconciliation is allowed to do -----------------------------------
+
+def _metadata(*columns):
+    """A one-table MetaData built from (name, type) pairs."""
+    import sqlalchemy as sa
+
+    meta = sa.MetaData()
+    sa.Table("system_settings", meta, *[sa.Column(n, t) for n, t in columns])
+    return meta
+
+
+def test_a_column_only_alembic_knows_about_is_added():
+    """The D3 case: adopted database, column exists only in the chain."""
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("id", sa.Integer()), ("capability_switches", sa.JSON()))
+    plan = plan_reconciliation({"system_settings": {"id": None}}, meta)
+    assert plan.missing_columns == [("system_settings", "capability_switches")]
+    assert not plan.widenings and not plan.missing_tables
+
+
+def test_a_varchar_the_models_lengthened_is_widened():
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("phone", sa.String(500)))
+    plan = plan_reconciliation({"system_settings": {"phone": 200}}, meta)
+    assert plan.widenings == [("system_settings", "phone", 200, 500)]
+
+
+def test_reconciliation_never_narrows_a_column():
+    """The tug of war. init_db's boot-time ALTER kept shrinking `phone` back to
+    200 after the revision widened it to 500, because Postgres allows a shrink
+    whenever the stored values happen to fit -- which is the state right after a
+    widen. Nothing derived from the models may ever emit a narrowing."""
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("phone", sa.String(200)))
+    plan = plan_reconciliation({"system_settings": {"phone": 500}}, meta)
+    assert plan.empty, f"reconciliation wants to narrow a column: {plan.widenings}"
+
+
+def test_reconciliation_never_drops_anything():
+    """A column the database has and the models do not is left alone: it is
+    either one an older container is still writing to during a rolling deploy,
+    or one a revision is about to drop under the gate."""
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("id", sa.Integer()))
+    plan = plan_reconciliation(
+        {"system_settings": {"id": None, "legacy_column": 50}}, meta)
+    assert plan.empty
+    assert "legacy_column" not in " ".join(plan.describe())
+
+
+def test_reconciliation_leaves_a_matching_schema_alone():
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("id", sa.Integer()), ("name", sa.String(100)))
+    plan = plan_reconciliation({"system_settings": {"id": None, "name": 100}}, meta)
+    assert plan.empty
+
+
+def test_a_text_column_is_never_treated_as_a_varchar_change():
+    """Text has no length. Reading that as "length 0" would emit a narrowing
+    on every boot."""
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("description", sa.Text()))
+    plan = plan_reconciliation({"system_settings": {"description": None}}, meta)
+    assert plan.empty
+
+
+def test_reconcile_actually_applies_the_plan_it_computed(monkeypatch):
+    """The wiring, not the arithmetic.
+
+    Everything above tests `plan_reconciliation`, which is pure. But a pure
+    planner nothing calls closes no gap: `reconcile()` could be stubbed to
+    return an empty Reconciliation and every one of those tests would still
+    pass, while an adopted database went right on missing its columns.
+
+    So this drives `reconcile()` over a stand-in schema and requires that what
+    the planner found is what gets handed to the applier.
+    """
+    _needs_alembic()
+    from app.db import migrate as m
+
+    applied = {}
+
+    def _fake_read_schema(conn):
+        # Every table as the models declare it, except one column removed --
+        # the shape of a database adopted by the baseline path, missing a
+        # column that exists only in the revision chain.
+        from app.db.session import Base
+        import app.models  # noqa: F401
+
+        out = {}
+        for name, table in Base.metadata.tables.items():
+            out[name] = {c.name: getattr(c.type, "length", None) for c in table.columns}
+        del out["system_settings"]["capability_switches"]
+        return out
+
+    def _fake_apply(conn, plan, metadata):
+        applied["plan"] = plan
+
+    monkeypatch.setattr(m, "read_schema", _fake_read_schema)
+    monkeypatch.setattr(m, "apply_reconciliation", _fake_apply)
+
+    result = m.reconcile(object())
+
+    assert not result.empty, (
+        "reconcile() reported nothing to do on a database missing a column"
+    )
+    assert ("system_settings", "capability_switches") in result.missing_columns
+    assert "plan" in applied, (
+        "reconcile() computed a plan and never applied it, so the column stays "
+        "missing and every settings read on that deployment 500s"
+    )
+    assert applied["plan"].missing_columns == result.missing_columns
+
+
+def test_reconcile_does_nothing_when_the_schema_already_matches(monkeypatch):
+    """It runs on every boot. It must not touch the database when there is
+    nothing to do."""
+    _needs_alembic()
+    from app.db import migrate as m
+
+    def _matching(conn):
+        from app.db.session import Base
+        import app.models  # noqa: F401
+
+        return {name: {c.name: getattr(c.type, "length", None) for c in table.columns}
+                for name, table in Base.metadata.tables.items()}
+
+    touched = []
+    monkeypatch.setattr(m, "read_schema", _matching)
+    monkeypatch.setattr(m, "apply_reconciliation", lambda *a, **k: touched.append(True))
+
+    assert m.reconcile(object()).empty
+    assert not touched, "reconcile() issued DDL against a schema that already matched"
+
+
+def test_reconciliation_names_every_change_it_makes():
+    """"reconciled 9 differences" is not something an operator can check against
+    anything."""
+    _needs_alembic()
+    import sqlalchemy as sa
+
+    from app.db.migrate import plan_reconciliation
+
+    meta = _metadata(("id", sa.Integer()), ("phone", sa.String(500)))
+    plan = plan_reconciliation({"system_settings": {"phone": 200}}, meta)
+    described = " ".join(plan.describe())
+    assert "system_settings.id" in described
+    assert "system_settings.phone" in described and "200" in described and "500" in described
+
+
+# ---------------------------------------------------------------------------
+# varchar(n) -> text is a widen
+# ---------------------------------------------------------------------------
+#
+# The encrypted PII columns were widened twice -- 200, then 500 -- and outgrown
+# twice, because a ciphertext's length is set by whichever key service wrapped
+# it and the schema cannot see that choice. The second time, resident
+# submissions on the live demo failed with StringDataRightTruncation the day a
+# town's Key Vault permissions were finally correct. Text is the only end state
+# that cannot be outgrown, so the classifier has to recognise it as safe --
+# otherwise the fix for an outage is itself gated behind a human.
+
+def test_varchar_to_text_is_a_pure_widen():
+    from app.db.migrate import _is_pure_widen
+    assert _is_pure_widen(
+        '"service_requests", "email", existing_type=sa.String(length=500), '
+        'type_=sa.Text(), existing_nullable=False')
+
+
+def test_text_to_varchar_is_not_a_widen():
+    """The downgrade direction. Unbounded to bounded can fail on a long row --
+    and truncating a ciphertext is unrecoverable, so it stays gated."""
+    from app.db.migrate import _is_pure_widen
+    assert not _is_pure_widen(
+        '"service_requests", "email", existing_type=sa.Text(), '
+        'type_=sa.String(length=500)')
+
+
+def test_a_text_change_still_refuses_smuggled_sql():
+    """postgresql_using is arbitrary SQL riding inside alter_column; the widen
+    exemption must not become a way past that."""
+    from app.db.migrate import _is_pure_widen
+    assert not _is_pure_widen(
+        '"t", "c", existing_type=sa.String(length=500), type_=sa.Text(), '
+        'postgresql_using="\'\'"')
+
+
+def test_the_pii_widening_migration_is_not_gated():
+    """The whole point: this one must apply on its own at boot."""
+    from app.db.migrate import classify_source, ADDITIVE
+    root = Path(__file__).resolve().parents[1]
+    path = root / "alembic/versions/e4b7c9d2f1a8_widen_encrypted_pii_columns.py"
+    if not path.exists():
+        pytest.skip("migration not present in this checkout")
+    assert classify_source(path.read_text()) == ADDITIVE

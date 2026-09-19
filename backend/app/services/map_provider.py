@@ -47,17 +47,20 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         ),
         "boundary": "Commercial (Google Cloud)",
         "credential_fields": [
-            {"key": "GOOGLE_MAPS_API_KEY", "label": "Maps API key", "secret": True, "required": True},
+            {"key": "GOOGLE_MAPS_API_KEY", "label": "Server API key", "secret": True, "required": True},
+            {"key": "GOOGLE_MAPS_BROWSER_API_KEY", "label": "Browser API key", "secret": True, "required": True, "browser_twin": True},
             {"key": "GOOGLE_MAPS_MAP_ID", "label": "Map ID (optional)", "secret": False, "required": False},
         ],
         "field_help": {
             "GOOGLE_MAPS_API_KEY": (
-                "Google Cloud Console -> APIs & Services -> Credentials -> Create "
-                "credentials -> API key. Enable 'Maps JavaScript API', 'Geocoding "
-                "API' and 'Places API (New)' -- the last one is a separate product "
-                "from the older 'Places API', and the address box needs the new "
-                "one. Restrict the key to your site's domain before saving it "
-                "anywhere."
+                "Server-side only, for geocoding -- never sent to a browser. "
+                "Restrict it to this server's IP address."
+            ),
+            "GOOGLE_MAPS_BROWSER_API_KEY": (
+                "Goes into the page residents load, so restrict it by HTTP "
+                "referrer to your domain. It needs Maps Embed API, Maps "
+                "JavaScript API, Places API (New) and Places API. The same "
+                "value in both boxes works if you would rather run one key."
             ),
             "GOOGLE_MAPS_MAP_ID": (
                 "Optional. Google Cloud Console -> Google Maps Platform -> Map "
@@ -74,11 +77,17 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         ),
         "boundary": "Commercial (ArcGIS Online) or your own ArcGIS Enterprise",
         "credential_fields": [
-            {"key": "ARCGIS_API_KEY", "label": "ArcGIS API key", "secret": True, "required": True},
+            {"key": "ARCGIS_API_KEY", "label": "Server API key", "secret": True, "required": True},
+            {"key": "ARCGIS_BROWSER_API_KEY", "label": "Browser API key", "secret": True, "required": True, "browser_twin": True},
             {"key": "ARCGIS_BASEMAP_ID", "label": "Basemap ID (optional)", "secret": False, "required": False},
             {"key": "ARCGIS_LOCATOR_URL", "label": "Address locator URL (optional)", "secret": False, "required": False},
         ],
         "field_help": {
+            "ARCGIS_BROWSER_API_KEY": (
+                "Goes into the page residents load. Scope it to 'Basemaps' and "
+                "set its referrer to your domain. The same value in both boxes "
+                "works if you would rather run one key."
+            ),
             "ARCGIS_API_KEY": (
                 "ArcGIS Developers -> Dashboard -> API keys -> New API key. Scope "
                 "it to 'Basemaps' and 'Geocoding'. If your organisation has an "
@@ -100,9 +109,15 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         "description": "Fits a town already standardised on Azure for its other services.",
         "boundary": "Commercial (Microsoft Azure)",
         "credential_fields": [
-            {"key": "AZURE_MAPS_KEY", "label": "Subscription key", "secret": True, "required": True},
+            {"key": "AZURE_MAPS_KEY", "label": "Server subscription key", "secret": True, "required": True},
+            {"key": "AZURE_MAPS_BROWSER_KEY", "label": "Browser subscription key", "secret": True, "required": True, "browser_twin": True},
         ],
         "field_help": {
+            "AZURE_MAPS_BROWSER_KEY": (
+                "Goes into the page residents load. Azure keys cannot be "
+                "origin-restricted, so separating them means a second Maps "
+                "account; otherwise put the same value in both boxes."
+            ),
             "AZURE_MAPS_KEY": (
                 "Azure Portal -> Create a resource -> Azure Maps -> Create. Once "
                 "deployed, open the resource -> Authentication -> Primary Key."
@@ -219,6 +234,14 @@ async def resolve_credentials(provider: str, get_secret) -> Dict[str, Optional[s
         # signed server-side and only the signed token is sent to a browser.
         if field.get("secret") and field["key"].endswith("PRIVATE_KEY"):
             continue
+        # A browser twin is a box on the setup page, not a field in this
+        # payload. The browser ALREADY receives its value: gis.py reads every
+        # key through browser_secret_reader, which resolves the vendor-shaped
+        # name (GOOGLE_MAPS_API_KEY) to the twin before the lookup. Resolving
+        # the twin under its own name as well would put the same secret in the
+        # response twice, once under a client field nothing reads.
+        if field.get("browser_twin"):
+            continue
         try:
             resolved[_client_field(field["key"])] = await get_secret(field["key"])
         except Exception as exc:
@@ -236,6 +259,14 @@ def missing_requirements(provider: str, credentials: Dict[str, Optional[str]]) -
             continue
         if field["key"].endswith("PRIVATE_KEY"):
             continue  # server-side only; presence is reported by the token mint
+        # Skipped for the same reason it is skipped in resolve_credentials: the
+        # twin is never resolved under its own name, so asking whether it came
+        # back would report it missing on every town, forever. What the browser
+        # actually got is the value under the vendor-shaped name below -- and
+        # that IS the twin's value, because the reader substituted it. So the
+        # check on that key already answers "did a browser key arrive".
+        if field.get("browser_twin"):
+            continue
         if not credentials.get(_client_field(field["key"])):
             missing.append(_client_field(field["key"]))
     return missing

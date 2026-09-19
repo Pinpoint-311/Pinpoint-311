@@ -25,6 +25,7 @@ from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
 from app.models import (
     IntegrationConfig,
+    IntegrationDeadLetter,
     IntegrationLink,
     IntegrationSyncLog,
     MapLayer,
@@ -44,6 +45,164 @@ def _comment_fp(content: str) -> str:
     """Stable content fingerprint used as a fallback echo-dedup marker for
     comments whose platform returns no comment id on create."""
     return "fp:" + hashlib.sha1((content or "").strip().encode("utf-8")).hexdigest()[:16]
+
+
+def _safe_error(exc) -> str:
+    """A vendor failure as it is safe to store and render.
+
+    Every string below lands somewhere a person reads it: `integration_sync_logs
+    .detail` in the Activity drawer, `integration_links.sync_error` on the
+    request, `integration_configs.last_sync_error` on the card. Vendors echo the
+    request back in 4xx bodies, and one of our own auth styles (generic_rest
+    `auth_style=query`) puts the API key in the URL, so any of these can carry a
+    credential.
+
+    `BaseConnector._raise_for_status` already redacts the body it quotes, but
+    that only covers errors this code shaped. A transport error, a JSON decode
+    failure, or anything else raised inside httpx arrives here untouched --
+    and `connector_health.clean_error` is the scrubber of record for exactly
+    this: it strips whole URL query strings as well as `param=value` pairs, and
+    it is the same function the health row and the alert email already use. One
+    scrubber, every surface, rather than two that drift.
+    """
+    return connector_health.clean_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# The backlog of pushes that have not landed yet
+#
+# A failed push wrote one row to `integration_sync_logs` and stopped. That table
+# is an audit trail: nothing reads it back and nothing retries from it, so a
+# report that could not reach the county during a twenty-minute vendor outage
+# never arrived, and the only trace was a line in a drawer nobody opens.
+#
+# `integration_dead_letters` is the work still owed. A row leaves it two ways --
+# the replay lands, or an administrator says it should not be sent -- and never
+# by being quietly dropped, because giving up silently is the failure this
+# exists to prevent. After the schedule below is exhausted the row STAYS,
+# unscheduled and visible; it stops costing the vendor requests and starts
+# costing somebody a decision, which is the right way round.
+# ---------------------------------------------------------------------------
+
+# Hours between attempts. Deliberately front-loaded: most vendor failures are a
+# gateway blip or a deploy and clear in minutes, and the long tail is a revoked
+# credential that no amount of retrying will fix.
+DEAD_LETTER_BACKOFF_HOURS = (5 / 60, 15 / 60, 45 / 60, 2, 6, 12, 24, 24)
+MAX_DEAD_LETTER_ATTEMPTS = len(DEAD_LETTER_BACKOFF_HOURS)
+
+
+def _dead_letter_where(integration_id: int, operation: str,
+                       service_request_id=None, comment_id=None):
+    return [
+        IntegrationDeadLetter.integration_id == integration_id,
+        IntegrationDeadLetter.operation == operation,
+        IntegrationDeadLetter.service_request_id.is_(None) if service_request_id is None
+        else IntegrationDeadLetter.service_request_id == service_request_id,
+        IntegrationDeadLetter.comment_id.is_(None) if comment_id is None
+        else IntegrationDeadLetter.comment_id == comment_id,
+    ]
+
+
+async def _record_dead_letter(db, integration_id: int, operation: str, error,
+                              *, service_request_id=None, comment_id=None,
+                              payload=None) -> None:
+    """Remember that this piece of work still has to go out. Never raises.
+
+    Never raises for the same reason connector_health does not: bookkeeping that
+    can break the thing it is keeping books on is worse than none. A deployment
+    that has not run the migration yet has no table here, and the push path must
+    degrade to the old log-only behaviour rather than turning a vendor failure
+    into a task crash.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        row = (await db.execute(
+            select(IntegrationDeadLetter).where(
+                *_dead_letter_where(integration_id, operation, service_request_id, comment_id),
+                IntegrationDeadLetter.resolved_at.is_(None),
+            )
+        )).scalar_one_or_none()
+        if row is None:
+            row = IntegrationDeadLetter(
+                integration_id=integration_id,
+                operation=operation,
+                service_request_id=service_request_id,
+                comment_id=comment_id,
+                payload=payload or {},
+                attempts=0,
+                first_failed_at=now,
+            )
+            db.add(row)
+        attempts = (row.attempts or 0) + 1
+        row.attempts = attempts
+        row.last_error = _safe_error(error)[:2000]
+        row.last_attempt_at = now
+        if attempts >= MAX_DEAD_LETTER_ATTEMPTS:
+            # Out of automatic attempts. The row stays open and unscheduled: it
+            # is now a question for a person, not a call to keep making.
+            row.next_attempt_at = None
+        else:
+            row.next_attempt_at = now + timedelta(
+                hours=DEAD_LETTER_BACKOFF_HOURS[attempts - 1])
+        await db.commit()
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.warning("[Integrations] could not record the failed push for "
+                       "integration %s (%s): %s", integration_id, operation,
+                       connector_health.clean_error(exc))
+
+
+async def _clear_dead_letter(db, integration_id: int, operation: str,
+                             *, service_request_id=None, comment_id=None) -> None:
+    """This work finally landed. Never raises.
+
+    Called on every success, not only on a replay: a report that failed at 09:00
+    and was pushed again by an admin pressing Sync at 09:05 is done, and leaving
+    it in the backlog would have the retry loop push it a second time.
+    """
+    try:
+        rows = (await db.execute(
+            select(IntegrationDeadLetter).where(
+                *_dead_letter_where(integration_id, operation, service_request_id, comment_id),
+                IntegrationDeadLetter.resolved_at.is_(None),
+            )
+        )).scalars().all()
+        if not rows:
+            return
+        for row in rows:
+            row.resolved_at = datetime.now(timezone.utc)
+            row.resolution = "succeeded"
+            row.next_attempt_at = None
+        await db.commit()
+    except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        logger.debug("[Integrations] could not close the backlog entry for "
+                     "integration %s (%s): %s", integration_id, operation,
+                     connector_health.clean_error(exc))
+
+
+def _retired(integration) -> bool:
+    """Whether this stored row names a platform Pinpoint no longer connects.
+
+    A town that configured a connector we have since removed keeps its row --
+    that is their record of a decision they made, and deleting a town's data on
+    their behalf is not ours to do. But every loop in this module would
+    otherwise call `build_connector_for` on it, take a ValueError, and write an
+    error to the sync log: once per resident report, once every fifteen minutes
+    on the pull, once a night on the assets. The Activity drawer fills up with a
+    failure about a connector that no longer exists and cannot be fixed.
+
+    Skipping is silent on purpose. The admin list endpoint marks the row
+    `retired` so it can say so once, in the one place somebody is looking.
+    """
+    from app.integrations.registry import connector_available
+    return not connector_available(getattr(integration, "platform", "") or "")
 
 
 def _flag(config: dict, key: str, default: bool = False) -> bool:
@@ -100,7 +259,8 @@ _DATA_URI_RE = re.compile(r"^data:(image/[a-zA-Z0-9.+-]+);base64,(.+)$", re.DOTA
 _EXT_BY_MIME = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
 
 
-def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = None) -> dict:
+def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = None,
+                   due_date: Optional[str] = None) -> dict:
     """Normalized outbound payload. PII is only included when the integration
     is explicitly configured to share it (config.share_pii). Work-order fields
     (priority, assignment, due date) are carried so a work-order management
@@ -124,7 +284,6 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
         "priority": sr.manual_priority_score if sr.manual_priority_score is not None else sr.priority,
         "assigned_to": sr.assigned_to,
         "assigned_department": dept_name,
-        "due_date": sr.due_datetime.isoformat() if getattr(sr, "due_datetime", None) else None,
         # How and when it was resolved. A work order that syncs the request but
         # not its outcome leaves the external system showing an open job the
         # town closed weeks ago -- and `completion_message` is the sentence the
@@ -147,6 +306,18 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
         "source": sr.source,
         "preferred_language": sr.preferred_language,
     }
+    # Only when there is one. Resolved by the caller from the category's SLA
+    # (see `_due_date`); a category with no SLA has no deadline to send.
+    #
+    # The key is omitted rather than sent null, which is the whole reason the
+    # old version was a bug worth fixing: it read `getattr(sr, "due_datetime",
+    # None)` against a column ServiceRequest does not have, so every work order
+    # Pinpoint ever opened carried `due_date: null` -- and a vendor mapping that
+    # into its own due-date column has the town blanking a date the vendor set.
+    # An absent key leaves the far side's value alone.
+    if due_date:
+        payload["due_date"] = due_date
+
     if _flag(config, "share_pii"):
         payload.update({
             "first_name": sr.first_name,
@@ -155,6 +326,40 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
             "phone": sr.phone,
         })
     return payload
+
+
+async def _due_date(db, sr: ServiceRequest) -> Optional[str]:
+    """When the town has said this report should be finished, as ISO 8601.
+
+    The outbound `due_date` was `getattr(sr, "due_datetime", None)` against a
+    column ServiceRequest has never had. `due_datetime` exists only on the
+    *inbound* ExternalRecord dataclass, where a vendor's work-order system tells
+    us when it has scheduled a job -- so the field went out null on every work
+    order Pinpoint has ever opened, and a work-order system handed no due date
+    schedules nothing and escalates nothing.
+
+    The town does set a deadline, once, per category: `ServiceDefinition
+    .sla_hours`, documented on the column as "target hours from submission to
+    closure" and already the only deadline app/services/sla.py recognises. Due
+    date is that, counted from when the resident filed.
+
+    A category with no SLA still sends nothing. SLAs are opt-in here by design,
+    and inventing a deadline the town never agreed to would be worse than the
+    null this replaces -- it would show up in the vendor's system as a
+    commitment somebody has to answer for.
+    """
+    if not sr.requested_datetime or not sr.service_code:
+        return None
+    service = (await db.execute(
+        select(ServiceDefinition).where(ServiceDefinition.service_code == sr.service_code)
+    )).scalar_one_or_none()
+    hours = getattr(service, "sla_hours", None) if service else None
+    if not hours or hours <= 0:
+        return None
+    requested = sr.requested_datetime
+    if requested.tzinfo is None:
+        requested = requested.replace(tzinfo=timezone.utc)
+    return (requested + timedelta(hours=int(hours))).isoformat()
 
 
 async def _dept_name(db, sr: ServiceRequest) -> Optional[str]:
@@ -285,7 +490,7 @@ async def _push_documents(db, connector, integration, link, sr):
         # Persist however many succeeded so a retry doesn't re-upload them.
         link.documents_pushed_count = already + pushed
         await _log(db, integration.id, "push_documents", "error",
-                   f"{sr.service_request_id}: {e} ({pushed} uploaded before failure)")
+                   f"{sr.service_request_id}: {_safe_error(e)} ({pushed} uploaded before failure)")
         logger.warning(f"[Integrations] Document push to {integration.platform} failed: {e}")
 
 
@@ -358,8 +563,22 @@ async def _log(db, integration_id: int, operation: str, status: str, detail: str
     await db.commit()
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
-def push_request_to_integrations(self, request_id: int):
+# Deliberately not a retrying task.
+#
+# These used to be declared `bind=True, max_retries=3, default_retry_delay=60`
+# and never once called `self.retry`, so the policy was decoration: an admin
+# reading it would believe a failed push is tried again three times, and none
+# of them ever was. Rather than start calling `self.retry` -- which would
+# re-enter the whole loop and re-push to the integrations that had already
+# succeeded -- the declaration is removed, because retrying is already handled
+# at the two layers that can do it safely:
+#
+#   * RetryTransport (app/integrations/base.py) retries the individual HTTP
+#     call, and only where a retry cannot duplicate a record;
+#   * the circuit breaker stops hammering a vendor that is genuinely down, and
+#     each loop records its own failure per integration and carries on.
+@celery_app.task
+def push_request_to_integrations(request_id: int):
     """Push a newly created request to all enabled push integrations."""
     from app.integrations import build_connector_for
 
@@ -379,6 +598,8 @@ def push_request_to_integrations(self, request_id: int):
             )).scalars().all()
 
             for integration in integrations:
+                if _retired(integration):
+                    continue
                 # Skip if already linked (retries / duplicate dispatch)
                 existing = (await db.execute(
                     select(IntegrationLink).where(
@@ -403,7 +624,10 @@ def push_request_to_integrations(self, request_id: int):
                     # service that is not coming back this minute. This also
                     # records the outcome, so the admin badge reflects real
                     # pushes rather than only whenever someone pressed Test.
-                    payload = _build_payload(sr, integration.config or {}, await _dept_name(db, sr))
+                    payload = _build_payload(
+                        sr, integration.config or {},
+                        await _dept_name(db, sr), await _due_date(db, sr),
+                    )
                     record = await guard(
                         health_key(integration.platform),
                         lambda: connector.push_request(payload),
@@ -419,8 +643,19 @@ def push_request_to_integrations(self, request_id: int):
                         last_pushed_at=datetime.now(timezone.utc),
                     )
                     db.add(link)
+                    # Committed here, before anything else in this iteration can
+                    # fail. The vendor's record exists as of the line above; if
+                    # this transaction rolls back the link does not exist, the
+                    # "already linked?" check at the top of the loop finds
+                    # nothing on the next attempt, and the same pothole is filed
+                    # at the county twice. Everything after this point -- the
+                    # sync-log row, the photo upload -- is allowed to fail
+                    # without costing us the link.
+                    await db.commit()
                     await _log(db, integration.id, "push", "success",
                                f"{sr.service_request_id} -> {record.external_id}", 1)
+                    await _clear_dead_letter(db, integration.id, "push",
+                                             service_request_id=sr.id)
                     logger.info(f"[Integrations] Pushed {sr.service_request_id} to {integration.platform} as {record.external_id}")
                     # Attach embedded photos to the newly created external record
                     await _push_documents(db, connector, integration, link, sr)
@@ -432,14 +667,19 @@ def push_request_to_integrations(self, request_id: int):
                     # one vendor's problem silently becoming every vendor's.
                     await db.rollback()
                     await _log(db, integration.id, "push", "error",
-                               f"{sr.service_request_id}: {e}")
+                               f"{sr.service_request_id}: {_safe_error(e)}")
+                    # The report still has to reach them. Logging it and moving
+                    # on is how a twenty-minute outage silently costs the town
+                    # every report filed during it.
+                    await _record_dead_letter(db, integration.id, "push", e,
+                                              service_request_id=sr.id)
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
 
     run_async(_push())
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
-def push_status_to_integrations(self, request_id: int, notes: str = None):
+@celery_app.task  # not retrying -- see push_request_to_integrations
+def push_status_to_integrations(request_id: int, notes: str = None):
     """Propagate a local status change to all platforms the request is linked to."""
     from app.integrations import build_connector_for
 
@@ -461,6 +701,8 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
             )).all()
 
             for link, integration in links:
+                if _retired(integration):
+                    continue
                 # Read while the session is certainly usable. After a rollback
                 # the instance is expired, and building an UPDATE from it would
                 # need to re-read the primary key -- a lazy load, which under the
@@ -481,6 +723,8 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     link.sync_error = None
                     await _log(db, integration.id, "push_status", "success",
                                f"{sr.service_request_id} -> {sr.status}", 1)
+                    await _clear_dead_letter(db, integration.id, "push_status",
+                                             service_request_id=sr.id)
                     # Attach any photos added since the last push (idempotent).
                     await _push_documents(db, connector, integration, link, sr)
                 except Exception as e:
@@ -493,10 +737,15 @@ def push_status_to_integrations(self, request_id: int, notes: str = None):
                     await db.execute(
                         update(IntegrationLink)
                         .where(IntegrationLink.id == link_id)
-                        .values(sync_error=str(e)[:1000])
+                        .values(sync_error=_safe_error(e)[:1000])
                     )
                     await _log(db, integration.id, "push_status", "error",
-                               f"{sr.service_request_id}: {e}")
+                               f"{sr.service_request_id}: {_safe_error(e)}")
+                    # A status the vendor never received leaves their record
+                    # showing an open job the town closed weeks ago.
+                    await _record_dead_letter(db, integration.id, "push_status", e,
+                                              service_request_id=sr.id,
+                                              payload={"notes": notes} if notes else {})
                     logger.warning(f"[Integrations] Status push to {integration.platform} failed: {e}")
             await db.commit()
 
@@ -528,6 +777,8 @@ def pull_integration_updates(integration_id: Optional[int] = None):
             integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
+                if _retired(integration):
+                    continue
                 # Read while the session is certainly usable; see the error
                 # handler below for why they cannot be read from the instance
                 # after a rollback.
@@ -635,7 +886,7 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     # and counting a call we chose not to make would inflate the
                     # number that decides blip from outage.
                     await db.rollback()
-                    await _log(db, row_id, "pull", "skipped", str(e))
+                    await _log(db, row_id, "pull", "skipped", _safe_error(e))
                     continue
                 except Exception as e:
                     # Clear any pending-rollback state before writing the error
@@ -654,17 +905,17 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     await db.execute(
                         update(IntegrationConfig)
                         .where(IntegrationConfig.id == row_id)
-                        .values(last_sync_status="error", last_sync_error=str(e)[:1000])
+                        .values(last_sync_status="error", last_sync_error=_safe_error(e)[:1000])
                     )
-                    await _log(db, row_id, "pull", "error", str(e))
+                    await _log(db, row_id, "pull", "error", _safe_error(e))
                     logger.warning(f"[Integrations] Pull from {platform} failed: {e}")
             await db.commit()
 
     run_async(_pull())
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
-def refresh_request_from_integrations(self, request_id: int):
+@celery_app.task  # not retrying -- see push_request_to_integrations
+def refresh_request_from_integrations(request_id: int):
     """On-demand: pull the latest work-order state for ONE request from each
     platform it's linked to (uses the connector's fetch_record). Lets staff hit
     "Refresh work order" and see current assignment/schedule/status without
@@ -690,7 +941,7 @@ def refresh_request_from_integrations(self, request_id: int):
                         IntegrationConfig.enabled == True,  # noqa: E712
                     )
                 )).scalar_one_or_none()
-                if not integration:
+                if not integration or _retired(integration):
                     continue
                 try:
                     connector = await build_connector_for(integration)
@@ -726,8 +977,8 @@ def refresh_request_from_integrations(self, request_id: int):
     return run_async(_refresh())
 
 
-@celery_app.task(bind=True, max_retries=3, default_retry_delay=60)
-def push_comment_to_integrations(self, comment_id: int):
+@celery_app.task  # not retrying -- see push_request_to_integrations
+def push_comment_to_integrations(comment_id: int):
     """Post an external-visibility comment to every platform its request is linked to."""
     from app.integrations import build_connector_for
 
@@ -749,6 +1000,16 @@ def push_comment_to_integrations(self, comment_id: int):
             )).all()
 
             for link, integration in links:
+                if _retired(integration):
+                    continue
+                # Already posted to *this* platform. The echo-dedup markers are
+                # written on success, so their presence means the vendor has it
+                # -- and this task can legitimately run twice for one comment: a
+                # Celery redelivery, or a dead-letter replay for a second
+                # integration that failed while this one succeeded. Without the
+                # check the replay posts the same sentence to the vendor again.
+                if _comment_fp(comment.content) in set(link.pushed_comment_ids or []):
+                    continue
                 try:
                     connector = await build_connector_for(integration)
                     if "comments" not in connector.capabilities:
@@ -767,10 +1028,15 @@ def push_comment_to_integrations(self, comment_id: int):
                     link.pushed_comment_ids = [*(link.pushed_comment_ids or []), *markers]
                     await _log(db, integration.id, "push_comment", "success",
                                f"comment {comment.id} -> {link.external_id}", 1)
+                    await _clear_dead_letter(db, integration.id, "push_comment",
+                                             comment_id=comment.id)
                 except Exception as e:
                     await db.rollback()
                     await _log(db, integration.id, "push_comment", "error",
-                               f"comment {comment.id}: {e}")
+                               f"comment {comment.id}: {_safe_error(e)}")
+                    await _record_dead_letter(db, integration.id, "push_comment", e,
+                                              service_request_id=comment.service_request_id,
+                                              comment_id=comment.id)
                     logger.warning(f"[Integrations] Comment push to {integration.platform} failed: {e}")
             await db.commit()
 
@@ -797,6 +1063,8 @@ def pull_integration_comments(integration_id: Optional[int] = None):
             integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
+                if _retired(integration):
+                    continue
                 # Read while the session is certainly usable. The rollback in
                 # the error handler expires the instance, and attribute access
                 # on an expired instance raises under the async engine.
@@ -858,11 +1126,78 @@ def pull_integration_comments(integration_id: Optional[int] = None):
                     # write a sync-log line no health surface reads.
                     await connector_health.record_failure(
                         db, health_key(platform), e, provider=platform)
-                    await _log(db, row_id, "pull_comments", "error", str(e))
+                    await _log(db, row_id, "pull_comments", "error", _safe_error(e))
                     logger.warning(f"[Integrations] Comment pull from {platform} failed: {e}")
             await db.commit()
 
     run_async(_pull_comments())
+
+
+@celery_app.task
+def retry_integration_dead_letters(limit: int = 50):
+    """Push again whatever is owed and due. Runs on the beat.
+
+    Replay re-invokes the ordinary push task rather than reimplementing it. That
+    is the whole reason this is small: `push_request_to_integrations` already
+    skips an integration the report is linked to, `push_status_to_integrations`
+    setting the same status twice is a no-op, and the comment path now checks
+    the echo-dedup marker before posting -- so re-running the real task is
+    idempotent per integration, and there is no second copy of the push logic to
+    drift from the first.
+
+    Success is recorded by the push path itself, which clears the backlog entry
+    when it lands. Nothing here marks a row resolved: this task's only job is to
+    ask again.
+
+    Rows past `MAX_DEAD_LETTER_ATTEMPTS` have `next_attempt_at = None` and are
+    not selected. They are not gone -- they are waiting for a person, which is
+    what the admin endpoint is for.
+    """
+    async def _due():
+        async with SessionLocal() as db:
+            try:
+                rows = (await db.execute(
+                    select(IntegrationDeadLetter)
+                    .join(IntegrationConfig,
+                          IntegrationDeadLetter.integration_id == IntegrationConfig.id)
+                    .where(
+                        IntegrationDeadLetter.resolved_at.is_(None),
+                        IntegrationDeadLetter.next_attempt_at.isnot(None),
+                        IntegrationDeadLetter.next_attempt_at <= datetime.now(timezone.utc),
+                        IntegrationConfig.enabled == True,  # noqa: E712
+                    )
+                    .order_by(IntegrationDeadLetter.next_attempt_at.asc())
+                    .limit(max(1, min(int(limit or 50), 500)))
+                )).scalars().all()
+            except Exception as e:
+                # No table yet (migration pending), or the query failed. Either
+                # way the beat must not crash on it.
+                logger.warning("[Integrations] could not read the push backlog: %s",
+                               connector_health.clean_error(e))
+                return []
+            # Read out before the session closes: replaying opens its own.
+            return [(r.operation, r.service_request_id, r.comment_id) for r in rows]
+
+    work = run_async(_due())
+    replayed = 0
+    for operation, service_request_id, comment_id in work:
+        try:
+            if operation == "push" and service_request_id:
+                push_request_to_integrations(service_request_id)
+            elif operation == "push_status" and service_request_id:
+                push_status_to_integrations(service_request_id)
+            elif operation == "push_comment" and comment_id:
+                push_comment_to_integrations(comment_id)
+            else:
+                continue
+            replayed += 1
+        except Exception as e:
+            # The push task records its own failure and reschedules the row.
+            # Reaching here means the task itself blew up, which must not stop
+            # the rest of the backlog.
+            logger.warning("[Integrations] replay of %s failed: %s",
+                           operation, connector_health.clean_error(e))
+    return {"replayed": replayed, "due": len(work)}
 
 
 @celery_app.task
@@ -891,6 +1226,8 @@ def sync_integration_assets(integration_id: Optional[int] = None):
             integrations = (await db.execute(query)).scalars().all()
 
             for integration in integrations:
+                if _retired(integration):
+                    continue
                 config = integration.config or {}
                 # Read while the session is certainly usable. The rollback in
                 # the error handler expires the instance, and attribute access
@@ -942,7 +1279,7 @@ def sync_integration_assets(integration_id: Optional[int] = None):
                     await db.rollback()
                     await connector_health.record_failure(
                         db, health_key(platform), e, provider=platform)
-                    await _log(db, row_id, "sync_assets", "error", str(e))
+                    await _log(db, row_id, "sync_assets", "error", _safe_error(e))
                     logger.warning(f"[Integrations] Asset sync from {platform} failed: {e}")
             await db.commit()
 

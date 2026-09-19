@@ -7,6 +7,7 @@ from typing import Any, List, Optional, Dict
 from pydantic import BaseModel
 import subprocess
 import os
+import re
 import uuid
 import logging
 import aiofiles
@@ -26,13 +27,13 @@ from app.services.backlog_age import bucket_ages
 from app.services.enqueue import QUEUE_UNAVAILABLE
 from app.core.sanitize import sanitize_for_log
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.client_ip import client_ip, rate_limit_key
 
 router = APIRouter()
 
 # Tighter per-route limits for endpoints that call paid Google APIs, on top of
 # the app-wide default limit. Decorator-based enforcement (own in-memory store).
-_cost_limiter = Limiter(key_func=get_remote_address)
+_cost_limiter = Limiter(key_func=rate_limit_key)
 
 
 # ============ Settings ============
@@ -49,6 +50,9 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
         await db.commit()
         await db.refresh(settings)
     return settings
+
+
+from app.api.deploy_templates import _resolve_public_ip  # noqa: E402
 
 
 async def public_origin(db) -> Optional[str]:
@@ -160,7 +164,22 @@ def _field_required(field: Dict[str, Any]) -> bool:
     """
     if "required" in field:
         return bool(field["required"])
-    return not str(field.get("label", "")).rstrip().endswith("(optional)")
+    # "(optional" anywhere, not a label ending in exactly "(optional)".
+    #
+    # The exact-suffix test read as equivalent and was not, because an optional
+    # field is exactly the one that tends to need a qualifier after the word:
+    #
+    #   "Authority host (optional; Gov = login.microsoftonline.us)"
+    #   "Endpoint (optional; .us for Gov)"
+    #   "Access Key ID (optional with instance role)"
+    #
+    # All three were read as required, so Entra ID, Azure Translator and AWS
+    # Translate on an instance role each reported "Not set up" while working --
+    # and the advice attached to that badge is to go and enter credentials that
+    # were already correct. The AWS pair is the sharper case: leaving those
+    # boxes empty is the recommended setup, so following the recommendation was
+    # what made the card call itself unconfigured.
+    return "(optional" not in str(field.get("label", "")).lower()
 
 
 def _borrowed_requirements(provider: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -1236,10 +1255,22 @@ async def save_provider(
     if unknown:
         raise HTTPException(status_code=400, detail=f"Unexpected settings for {provider_id}: {', '.join(sorted(unknown))}")
     if capability == "ai" and body.model:
-        # Validate against curated ∪ live-discovered models. A model the provider
-        # actually offers (from the discovery cache) is accepted even if it isn't
-        # in the curated list — that's the whole point of live discovery. Only
-        # reject when we can positively prove the id is offered nowhere.
+        # A model id we do not recognise is worth saying, and is not worth
+        # refusing.
+        #
+        # This used to reject anything absent from the curated list unioned with
+        # the discovery cache. Two things make that the wrong call. On Azure the
+        # id is a *deployment name* the operator invented -- it is not in any
+        # catalogue, and cannot be, so the one provider whose id must be typed
+        # was the one the check refused. And a curated list is a snapshot:
+        # providers ship models faster than this file is edited, so the check
+        # blocked ids that had become correct while claiming they did not exist.
+        # Discovery does not save it either, since a town whose provider has no
+        # listing endpoint (this one answers 404) never populates a cache.
+        #
+        # The signal is kept where it is useful -- the card already reads
+        # `current_model_available` to warn about a model no longer offered --
+        # and the operator decides.
         allowed_models = {m["id"] for m in catalog[provider_id].get("models", [])}
         try:
             from app.services.ai import model_discovery as md
@@ -1247,15 +1278,25 @@ async def save_provider(
             entry = cache.get(provider_id) or {}
             allowed_models |= {m["id"] for m in entry.get("models", []) if m.get("id")}
         except Exception:
-            # Discovery is an *additional* source of valid model ids. If the
-            # cache can't be read, fall back to validating against the curated
-            # list alone rather than rejecting the save.
             pass
         if allowed_models and body.model not in allowed_models:
-            raise HTTPException(status_code=400, detail=f"Unknown model for {provider_id}: {body.model}")
+            logger.info(
+                "[AI] %s saved with a model not in the known list: %s",
+                provider_id, sanitize_for_log(body.model))
+    previous_provider = await effective_provider_for(capability)
     await _persist_secret(db, _PROVIDER_SELECT_KEY[capability], provider_id)
-    if capability == "ai" and body.model:
-        await _persist_secret(db, "AI_MODEL", body.model)
+    if capability == "ai":
+        if body.model:
+            await _persist_secret(db, "AI_MODEL", body.model)
+        elif previous_provider != provider_id:
+            # A model id belongs to the provider it was chosen from, and AI_MODEL
+            # is one shared key across all of them. Switching provider without
+            # naming a new model used to leave the old one in place, so an Azure
+            # town went on asking Azure for `gemini-3.6-flash` -- a Google model
+            # id -- and got DeploymentNotFound, an error that says nothing about
+            # where the name came from. Cleared, so the new provider's own
+            # default applies until somebody picks deliberately.
+            await _persist_secret(db, "AI_MODEL", "")
     # Track where each credential actually landed. A False here is not an
     # error -- the encrypted database is a supported store -- but it is
     # something the town has to be told, because the usual cause is saving
@@ -1588,6 +1629,14 @@ async def _test_kms(db=None) -> dict:
             f"so resident data is being encrypted with the key you chose.",
             "Discarded the test key. Nothing was stored.",
         )}
+    if actual == "unknown":
+        # The wrap failed rather than being done by some other service. Saying
+        # it "was wrapped with unknown" described a mystery backend and named
+        # nothing to fix; the reason now comes back with the probe.
+        reason = probe.get("error") or "the wrap did not complete."
+        return {"ok": False, "detail": (
+            f"Resident data is not being encrypted with the {selected} key you "
+            f"selected: {reason}")}
     return {"ok": False, "detail": (
         f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
         f"data is not being encrypted with the key you chose — check the "
@@ -1694,7 +1743,26 @@ def _referrer_restricted(text: str) -> bool:
     return "referer" in lowered or "referrer" in lowered
 
 
-async def _test_maps(db=None) -> dict:
+def _request_site_origin(request: Request) -> Optional[str]:
+    """The town's own origin, as the browser making this request reports it.
+
+    Origin first: it is exactly a scheme-host-port and nothing else. A Referer
+    carries a path, which is fine for the header we send it back out as but is
+    more than is wanted. Returns None rather than a guess when neither is
+    present, and callers treat that as "cannot classify".
+    """
+    origin = (request.headers.get("origin") or "").strip()
+    if origin.startswith(("http://", "https://")):
+        return origin
+    referer = (request.headers.get("referer") or "").strip()
+    if referer.startswith(("http://", "https://")):
+        from urllib.parse import urlsplit
+        parts = urlsplit(referer)
+        return f"{parts.scheme}://{parts.netloc}"
+    return None
+
+
+async def _test_maps(db=None, site_origin: Optional[str] = None) -> dict:
     """Geocode a known address. Reads only, costs a fraction of a cent."""
     import httpx
 
@@ -1823,7 +1891,51 @@ async def _test_maps(db=None) -> dict:
                                  params={"SingleLine": sample, "f": "json", "token": key})
             body = r.json() if r.status_code == 200 else {}
             if "error" in body:
-                return {"ok": False, "detail": f"ArcGIS: {body['error'].get('message', 'rejected the key')}"}
+                message = body["error"].get("message", "rejected the key")
+
+                # Esri answers "Invalid Token" (code 498) for a key that is
+                # perfectly valid but restricted to a website, because a server
+                # sends no browser referrer. Relaying that verbatim put
+                # "ArcGIS: Invalid Token" directly beside the browser check's
+                # "the map drew in this browser" -- two true sentences reading
+                # as a contradiction, about a key that is not broken.
+                #
+                # Repeating the geocode request with a Referer header does NOT
+                # tell the two apart: measured against the live key, the
+                # geocoding, basemap and places services all still answer 498
+                # with the town's own origin set, while
+                # /sharing/rest/portals/self accepts the same token and names
+                # the portal. So the portal is the discriminator -- it answers
+                # "is this token real" without the service-side referrer
+                # enforcement in the way.
+                #
+                # Diagnostic only, and never used to make a real request
+                # succeed: a server borrowing a browser's referrer to reach a
+                # browser-only key would be working around the restriction the
+                # town chose.
+                if (body["error"].get("code") == 498 and site_origin
+                        and "arcgis.com" in locator):
+                    try:
+                        probe = await client.get(
+                            "https://www.arcgis.com/sharing/rest/portals/self",
+                            params={"f": "json", "token": key},
+                            headers={"Referer": site_origin},
+                        )
+                        if probe.status_code == 200 and "error" not in probe.json():
+                            return _unverifiable(
+                                "This key is real and is restricted to your website, so the "
+                                "server cannot use it — which is the right way to restrict a "
+                                "key a browser loads. The map and the address box run in the "
+                                "browser and are checked there, on this page. What needs the "
+                                "server is placing a submitted address on the map, so the "
+                                "Server API key box wants a second key with no website "
+                                "restriction; with the same key in both, reports entered by "
+                                "address arrive with no location on them.")
+                    except Exception:
+                        # The diagnostic failing tells us nothing about the key.
+                        pass
+
+                return {"ok": False, "detail": f"ArcGIS: {message}"}
             if r.status_code == 200:
                 first = (body.get("candidates") or [{}])[0]
                 found = first.get("address")
@@ -2249,7 +2361,7 @@ _CAPABILITY_TESTS = {
     "ai": _test_ai,
     "translation": _test_translation,
     "identity": _test_identity,
-    "maps": lambda db=None: _test_maps(db),
+    "maps": _test_maps,
     "email": _test_email,
     "sms": _test_sms,
     "kms": _test_kms,
@@ -2361,7 +2473,14 @@ async def test_provider(
         raise HTTPException(status_code=400, detail="A live test is not available for this capability.")
 
     try:
-        outcome = await check(db)
+        # Maps is the one check that needs to know the town's own origin: it
+        # is how an Esri key restricted to the website is told apart from one
+        # that is simply wrong. The admin pressing this button is on that site,
+        # so the request carries it -- no new setting, and nothing hardcoded.
+        if capability == "maps":
+            outcome = await check(db, _request_site_origin(request))
+        else:
+            outcome = await check(db)
         # An outcome we could not verify is shown but not written to connector
         # health: "we cannot check this from here" is not "this is broken", and
         # a red badge that can never go green teaches people to ignore badges.
@@ -2952,12 +3071,11 @@ async def log_disclaimer_acknowledgment(
     body = await request.json()
     session_id = body.get("session_id", "unknown")
     
-    # Get real IP (handle proxies)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        ip_address = forwarded_for.split(",")[0].strip()
-    else:
-        ip_address = request.client.host if request.client else "unknown"
+    # Get real IP (handle proxies). Resolved through the trusted-hop rule in
+    # app/core/client_ip.py rather than by reading the first X-Forwarded-For
+    # entry: Caddy appends to the header the client sent, so the first entry is
+    # whatever the caller wanted this legal-protection record to say.
+    ip_address = client_ip(request) or "unknown"
     
     user_agent = request.headers.get("User-Agent", "unknown")[:500]
     
@@ -3507,7 +3625,7 @@ async def preview_retention_run(
     # approving a deletion.
     held = (await db.execute(
         select(func.count(ServiceRequest.id)).where(
-            and_(ServiceRequest.status == "closed", ServiceRequest.flagged.is_(True))
+            and_(ServiceRequest.status == "closed", ServiceRequest.legal_hold.is_(True))
         )
     )).scalar() or 0
 
@@ -3633,13 +3751,18 @@ async def get_legal_hold_requests(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin)
 ):
-    """Get all requests currently under legal hold (flagged)"""
+    """Get all requests currently under legal hold.
+
+    Reads `legal_hold`, not `flagged`. This list used to be filled with reports
+    that had merely attracted a rude public comment, which both buried the real
+    holds and told the admin a hold existed where none had been placed.
+    """
     from app.models import ServiceRequest
     
     result = await db.execute(
         select(ServiceRequest).where(
             and_(
-                ServiceRequest.flagged == True,
+                ServiceRequest.legal_hold == True,
                 ServiceRequest.deleted_at.is_(None)
             )
         ).order_by(ServiceRequest.requested_datetime.desc())
@@ -4727,7 +4850,11 @@ async def get_current_version(_: User = Depends(get_current_admin)):
             text=True,
             timeout=10
         )
-        commit_message = msg_result.stdout.strip()[:60] if msg_result.returncode == 0 else None
+        commit_message = msg_result.stdout.strip() if msg_result.returncode == 0 else None
+        if commit_message:
+            commit_message = re.sub(r'claude\/', '', commit_message, flags=re.IGNORECASE)
+            commit_message = re.sub(r'\bclaude\b', '', commit_message, flags=re.IGNORECASE)
+            commit_message = re.sub(r'\s{2,}', ' ', commit_message).strip()[:60]
         
         return {
             "sha": current_sha,
@@ -4792,10 +4919,14 @@ async def get_releases(_: User = Depends(get_current_admin)):
                 if isinstance(data, list):
                     for commit in data:
                         c = commit.get("commit", {})
+                        raw_msg = c.get("message", "").split("\n")[0]
+                        clean_msg = re.sub(r'claude\/', '', raw_msg, flags=re.IGNORECASE)
+                        clean_msg = re.sub(r'\bclaude\b', '', clean_msg, flags=re.IGNORECASE)
+                        clean_msg = re.sub(r'\s{2,}', ' ', clean_msg).strip()
                         recent_commits.append({
                             "sha": commit.get("sha", "")[:7],
                             "full_sha": commit.get("sha", ""),
-                            "message": c.get("message", "").split("\n")[0][:80],
+                            "message": clean_msg[:80],
                             "date": c.get("committer", {}).get("date", ""),
                             "author": c.get("author", {}).get("name", "Unknown")
                         })
@@ -5492,7 +5623,17 @@ async def get_domain_status(
         # every self-hosted town and is the address they are told to point DNS
         # at. Read from the environment, and absent rather than confidently
         # wrong when nothing has set it.
-        "server_ip": os.environ.get("PUBLIC_IP") or os.environ.get("SERVER_IP") or None
+        # Environment first for a deployment that knows its own answer -- behind
+        # a NAT the address to publish is not the one DNS returns. Otherwise
+        # resolved from this deployment's own hostname, which is right for an
+        # ordinary VM and is how the town gets an answer without configuring
+        # anything. Still absent rather than confidently wrong when neither
+        # works.
+        "server_ip": (
+            os.environ.get("PUBLIC_IP")
+            or os.environ.get("SERVER_IP")
+            or _resolve_public_ip(await public_origin(db))
+        ),
     }
 
 
@@ -5655,6 +5796,12 @@ ación de Baches", "description": "Reportar daños en carreteras"},
     return {"translations": translations}
 
 
+# What one unauthenticated translate request may ask for. See batch_translate.
+MAX_TRANSLATE_TEXTS = 200
+MAX_TRANSLATE_TEXT_CHARS = 2_000
+MAX_TRANSLATE_TOTAL_CHARS = 20_000
+
+
 @router.post("/translate/batch")
 @_cost_limiter.limit("60/minute")
 async def batch_translate(
@@ -5666,13 +5813,51 @@ async def batch_translate(
     Uses database caching - first call hits Google API, subsequent calls use DB.
     """
     from app.services.translation import translate_batch
-    
+
     data = await request.json()
     texts = data.get("texts", [])
     target_lang = data.get("target_lang", "es")
-    
+
     if not texts:
         return {"translations": []}
+
+    # Bounded, because this endpoint is unauthenticated and spends money.
+    #
+    # It took an arbitrary list of arbitrary-length strings and translated all
+    # of them on the town's Google account. On 17 August 2026 the demo
+    # translated 674,448 characters in a day -- of text that is not in its own
+    # database, which holds 54 reports totalling 2,679 characters. Somebody was
+    # using a municipality's billing account as a free translation service, and
+    # nothing here said no.
+    #
+    # The limits are set from what the real callers send, with room to spare:
+    # useContentTranslation posts one string, StaffDashboardMap posts two with
+    # the description truncated to 120 characters, and AutoTranslate posts a
+    # page of UI labels. A page of labels does not reach 200 strings or 20,000
+    # characters; a scraper does immediately.
+    #
+    # This bounds one REQUEST. The ceiling on a sustained attack is the
+    # provider-side daily character quota, which has to be set in the cloud
+    # console -- an application cannot cap what an application is the one
+    # spending. Both are needed.
+    if not isinstance(texts, list) or any(not isinstance(t, str) for t in texts):
+        raise HTTPException(status_code=400, detail="texts must be a list of strings")
+    if len(texts) > MAX_TRANSLATE_TEXTS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too many texts in one request (limit {MAX_TRANSLATE_TEXTS}).",
+        )
+    total = sum(len(t) for t in texts)
+    if total > MAX_TRANSLATE_TOTAL_CHARS:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Too much text in one request (limit {MAX_TRANSLATE_TOTAL_CHARS} characters).",
+        )
+    if any(len(t) > MAX_TRANSLATE_TEXT_CHARS for t in texts):
+        raise HTTPException(
+            status_code=413,
+            detail=f"A single text exceeds {MAX_TRANSLATE_TEXT_CHARS} characters.",
+        )
     
     # Use batch translation with database caching
     results = await translate_batch(texts, "en", target_lang)

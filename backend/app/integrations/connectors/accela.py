@@ -438,6 +438,20 @@ class AccelaConnector(BaseConnector):
             )
             self._raise_for_status(resp, "Accela upload document")
 
+    # ---- Vendor lookups: deliberately not implemented --------------------
+    #
+    # Accela's record types and status values are agency configuration, and they
+    # do live behind the Construct API somewhere -- but this connector's author
+    # is not confident of the exact settings path, and an invented URL here
+    # produces a mapping screen full of nothing, or worse a 404 written to the
+    # sync log every time an admin opens the page. "Type what your Accela
+    # administrator told you" is a worse experience than picking from a list and
+    # a better one than picking from a list that is wrong.
+    #
+    # If somebody with an Accela developer account confirms the endpoint, this
+    # is a `pull_lookups` returning {"record_types": [...], "statuses": [...]}
+    # and adding "lookups" to `capabilities` -- nothing else has to change.
+
     # ---- Assets (Accela asset management API) ----
 
     async def pull_assets(self) -> List[Dict[str, Any]]:

@@ -26,10 +26,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '2.0'
+          memory: 2G
         reservations:
-          memory: 256M
+          memory: 512M
     ulimits:
       nproc: 1024
       nofile:
@@ -59,7 +59,7 @@ services:
     # one-second fsync bounds that to the last second of accepted work.
     command: >
       redis-server
-      --maxmemory 200mb
+      --maxmemory 400mb
       --maxmemory-policy noeviction
       --appendonly yes
       --appendfsync everysec
@@ -81,10 +81,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          cpus: '1.0'
+          memory: 512M
         reservations:
-          memory: 64M
+          memory: 128M
     security_opt:
       - no-new-privileges:true
 
@@ -157,10 +157,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1G
+          cpus: '2.0'
+          memory: 2G
         reservations:
-          memory: 256M
+          memory: 512M
     logging:
       driver: "json-file"
       options:
@@ -208,10 +208,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: 512M
+          cpus: '2.0'
+          memory: 2G
         reservations:
-          memory: 128M
+          memory: 512M
     logging:
       driver: "json-file"
       options:
@@ -240,8 +240,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1'
-          memory: 512M
+          cpus: '1.0'
+          memory: 1G
         reservations:
           memory: 128M
     security_opt:
@@ -272,10 +272,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 128M
+          cpus: '1.0'
+          memory: 512M
         reservations:
-          memory: 32M
+          memory: 64M
     security_opt:
       - no-new-privileges:true
 

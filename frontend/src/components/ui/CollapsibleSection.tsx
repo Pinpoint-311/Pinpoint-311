@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useId, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown } from 'lucide-react';
 
@@ -30,6 +30,10 @@ export function CollapsibleSection({
     title, icon: Icon, subtitle, badge, trailing, accent = 'neutral', defaultOpen = false, children,
 }: CollapsibleSectionProps) {
     const [open, setOpen] = useState(defaultOpen);
+    /* The `id` prop is spent on the outer <section> so the setup rail can
+     * scroll to it, so the panel gets its own generated id — aria-expanded on
+     * its own tells a screen reader that something opened but not what. */
+    const panelId = `${useId()}-panel`;
     const isPrimary = accent === 'primary';
     return (
         <section id={id} className={`rounded-2xl border overflow-hidden transition-colors ${isPrimary
@@ -40,6 +44,7 @@ export function CollapsibleSection({
                     type="button"
                     onClick={() => setOpen(o => !o)}
                     aria-expanded={open}
+                    aria-controls={panelId}
                     className="group flex items-center gap-3.5 flex-1 min-w-0 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
                 >
                     {Icon && (
@@ -66,6 +71,7 @@ export function CollapsibleSection({
             <AnimatePresence initial={false}>
                 {open && (
                     <motion.div
+                        id={panelId}
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}

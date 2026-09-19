@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { MapPin, Crosshair, Loader2 } from 'lucide-react';
+import { MapPin, Crosshair, Loader2, AlertTriangle } from 'lucide-react';
 import { MapLayer } from '../services/api';
 import {
     AddressSuggestion,
@@ -89,6 +89,9 @@ export default function LocationPicker({
     const [inputValue, setInputValue] = useState(value?.address || '');
     const [isLocating, setIsLocating] = useState(false);
     const [isOutOfBounds, setIsOutOfBounds] = useState(false);
+    // Why "Use my location" did not work, said in the page rather than in a
+    // native alert(). See handleUseMyLocation.
+    const [geoError, setGeoError] = useState<string | null>(null);
 
     // A map that could not load used to replace this whole component with a red
     // box -- no address field, so a resident hit by a rejected or capped key
@@ -503,8 +506,16 @@ export default function LocationPicker({
 
     // Handle "Use my location" button
     const handleUseMyLocation = () => {
+        /* An in-page message, not window.alert(). The native dialog steals
+           focus from whatever the resident was doing, cannot be translated with
+           the rest of the page, is dismissed before assistive tech can be asked
+           to repeat it, and leaves no record of what went wrong once it closes
+           (WCAG 3.3.1, 3.3.3). This region is rendered next to the button that
+           caused it and carries role="alert", so it is announced where it is
+           relevant and stays on screen to be re-read. */
+        setGeoError(null);
         if (!navigator.geolocation) {
-            alert("Geolocation is not supported by your browser");
+            setGeoError("This browser cannot share your location. Please type the address above.");
             return;
         }
 
@@ -529,7 +540,7 @@ export default function LocationPicker({
             },
             (error) => {
                 console.error('Geolocation error:', error);
-                alert("Unable to get your location. Please enter an address manually.");
+                setGeoError("We could not get your location. Please enter an address above instead.");
                 setIsLocating(false);
             },
             { enableHighAccuracy: true, timeout: 10000 }
@@ -652,8 +663,33 @@ export default function LocationPicker({
                     aria-expanded={needsOwnList ? suggestOpen : undefined}
                     aria-controls={needsOwnList ? 'location-suggestions' : undefined}
                     aria-autocomplete={needsOwnList ? 'list' : undefined}
+                    /* The highlighted option, named. Arrow keys moved a purely
+                       visual highlight and told a screen reader nothing, so
+                       arrowing through addresses was silent -- and a resident
+                       could press Enter on a suggestion they had never heard
+                       (WCAG 4.1.2). DOM focus stays in the text box; this is
+                       what makes the combobox pattern announce the option. */
+                    aria-activedescendant={
+                        needsOwnList && suggestOpen && activeSuggestion >= 0 && suggestions[activeSuggestion]
+                            ? `location-suggestion-${suggestions[activeSuggestion].id}`
+                            : undefined
+                    }
                     className="w-full h-12 pl-12 pr-14 rounded-xl bg-white/10 border border-white/20 text-white placeholder-white/40 focus:outline-none focus:border-primary-500/50 focus:ring-2 focus:ring-primary-500/20 transition-all"
-                    disabled={isLoading}
+                    /* Deliberately not disabled while the map SDK loads. The
+                       backend geocoder is attached before anything touches the
+                       provider (see the init effect), so the field works from
+                       first paint -- and disabling it removed it from the tab
+                       order underneath a resident who was already typing, then
+                       put it back (WCAG 2.4.3, 3.2.2). */
+                    /* Autofill is off here on purpose. This box asks where the
+                       *incident* is, not where the resident lives, so WCAG
+                       1.3.5 Identify Input Purpose does not ask for a token --
+                       and the browser's own saved-address dropdown drew on top
+                       of the suggestion listbox below, so a resident arrowing
+                       through our options with aria-activedescendant was
+                       choosing from a list they could no longer see. The plain
+                       address field on the report form has no popup and keeps
+                       autocomplete="street-address". */
                     autoComplete="off"
                 />
                 {/* Use my location button */}
@@ -681,27 +717,43 @@ export default function LocationPicker({
                         role="listbox"
                         className="absolute left-0 right-0 top-full mt-1 z-30 max-h-64 overflow-y-auto rounded-xl border border-white/15 bg-slate-900/95 backdrop-blur shadow-2xl py-1"
                     >
+                        {/* The option IS the <li>. It used to wrap a <button>, which
+                            is prohibited content for role="option" -- interactive
+                            descendants are not allowed, and the button was separately
+                            tabbable, so Tab walked into a list the resident was meant
+                            to be arrowing through. Each option now carries the id that
+                            aria-activedescendant points at. onMouseDown, not onClick:
+                            blur fires first and would close the list before a click
+                            could land. */}
                         {suggestions.map((s, i) => (
-                            <li key={s.id} role="option" aria-selected={i === activeSuggestion}>
-                                <button
-                                    type="button"
-                                    // onMouseDown, not onClick: blur fires first
-                                    // and would close the list before the click
-                                    // ever lands.
-                                    onMouseDown={(e) => { e.preventDefault(); void chooseSuggestion(s); }}
-                                    onMouseEnter={() => setActiveSuggestion(i)}
-                                    className={`w-full text-left px-4 py-2.5 transition-colors ${i === activeSuggestion ? 'bg-primary-500/25' : 'hover:bg-white/10'}`}
-                                >
-                                    <span className="block text-sm text-white truncate">{s.label}</span>
-                                    {s.secondaryLabel && (
-                                        <span className="block text-xs text-white/55 truncate">{s.secondaryLabel}</span>
-                                    )}
-                                </button>
+                            <li
+                                key={s.id}
+                                id={`location-suggestion-${s.id}`}
+                                role="option"
+                                aria-selected={i === activeSuggestion}
+                                onMouseDown={(e) => { e.preventDefault(); void chooseSuggestion(s); }}
+                                onMouseEnter={() => setActiveSuggestion(i)}
+                                className={`cursor-pointer px-4 py-2.5 transition-colors ${i === activeSuggestion ? 'bg-primary-500/25' : 'hover:bg-white/10'}`}
+                            >
+                                <span className="block text-sm text-white truncate">{s.label}</span>
+                                {s.secondaryLabel && (
+                                    <span className="block text-xs text-white/55 truncate">{s.secondaryLabel}</span>
+                                )}
                             </li>
                         ))}
                     </ul>
                 )}
             </div>
+
+            {geoError && (
+                <div
+                    role="alert"
+                    className="flex items-start gap-2 text-sm bg-amber-500/10 rounded-xl px-4 py-3 border border-amber-500/30 text-amber-200"
+                >
+                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
+                    <span>{geoError}</span>
+                </div>
+            )}
 
             {/* Map Container, or what is left when the provider will not draw
                 one. Same shape as the resident portal's no-provider fallback:
@@ -733,9 +785,18 @@ export default function LocationPicker({
             )}
 
             {/* Out of bounds warning */}
+            {/* role="alert": this appears in response to the resident dragging the
+                pin, with nothing else on screen moving, and it is the only thing
+                telling them the report can no longer be submitted (WCAG 4.1.3).
+                The icon is decorative -- as a bare emoji it was read out as
+                "warning sign", ahead of the sentence that says the same thing
+                (1.1.1). */}
             {isOutOfBounds && (
-                <div className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30">
-                    <span className="text-red-400">⚠️</span>
+                <div
+                    role="alert"
+                    className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30"
+                >
+                    <span className="text-red-400" aria-hidden="true">⚠️</span>
                     <span className="text-red-300">
                         This location is outside the municipality boundary. Please select a location within the jurisdiction.
                     </span>
@@ -745,7 +806,7 @@ export default function LocationPicker({
             {/* Instructions or Selected location info - shown BELOW the map */}
             {!value?.lat && !value?.lng && !isLoading && !mapUnavailable ? (
                 <div className="flex items-center justify-center gap-2 text-sm bg-white/5 rounded-xl px-4 py-3 border border-white/10">
-                    <span className="text-primary-400">📍</span>
+                    <span className="text-primary-400" aria-hidden="true">📍</span>
                     <span className="text-white/70">Tap the map to select a location, or search above</span>
                 </div>
             ) : value?.lat && value?.lng ? (
@@ -758,7 +819,7 @@ export default function LocationPicker({
                     </div>
                     <span className="hidden sm:block text-white/20">•</span>
                     <span className="text-primary-400 text-xs sm:text-sm font-medium">
-                        📍 Drag the pin to fine-tune
+                        <span aria-hidden="true">📍</span> Drag the pin to fine-tune
                     </span>
                 </div>
             ) : null}

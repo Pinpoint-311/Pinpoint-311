@@ -27,6 +27,10 @@ node server.js
 | `DEMO_TTL_HOURS` | `24` | Hours before auto-cleanup |
 | `BASE_PORT` | `9200` | Starting port for demo Caddy proxies |
 | `DEMO_HOST` | `localhost` | Hostname for demo URLs |
+| `PUBLIC_DOMAIN` | — | Public base domain for demo subdomains |
+| `BASE_DOMAIN` | — | Base domain for routing |
+| `CADDYFILE_PATH` | — | Path to external Caddy configuration |
+| `CADDY_CONTAINER` | — | Target Caddy container name for reloading |
 | `GOOGLE_CLOUD_PROJECT` | — | Passed to demo instances for AI features |
 | `GOOGLE_VERTEX_PROJECT` | — | Passed to demo instances for AI features |
 

@@ -111,13 +111,21 @@ describe('the module being on', () => {
         await answer('Much easier');
         expect(host.querySelector('[data-testid="platform-feedback-thanks"]')).toBeTruthy();
 
-        // A resident who files a second report is not asked a second time. The
-        // flag is browser-local and is never sent anywhere.
+        // A resident who files a second report is not asked a second time, and
+        // is not thanked a second time either: the control renders nothing at
+        // all. The flag is browser-local and is never sent anywhere.
+        //
+        // The thanks used to persist across mounts, which was tolerable in the
+        // footer and wrong once this moved to the confirmation screen -- it
+        // greeted somebody who had just filed an unrelated report with "Thank
+        // you for your feedback", before any question had been put to them on
+        // that visit.
         await act(async () => root.unmount());
         root = createRoot(host);
         await mount({ enabled: true });
         expect(host.querySelector('[data-testid="platform-feedback-open"]')).toBeNull();
-        expect(host.querySelector('[data-testid="platform-feedback-thanks"]')).toBeTruthy();
+        expect(host.querySelector('[data-testid="platform-feedback-thanks"]')).toBeNull();
+        expect(host.textContent).not.toContain('Thank you');
     });
 
     it('says so plainly when a submission fails, and does not ask again', async () => {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, FormEvent } from 'react';
+import React, { useState, useEffect, useRef, useId, FormEvent } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -34,7 +34,8 @@ import { CollapsibleSection } from '../components/ui';
 import { CapabilityTile, StatusPill, Action } from '../components/capabilityUI';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { api, ResearchAnalytics, ResearchCodeSnippets, ResearchDataDictionary, ResearchPackInfo } from '../services/api';
+import { useAnnounce } from '../context/AccessibilityContext';
+import { api,ResearchAnalytics, ResearchCodeSnippets, ResearchDataDictionary, ResearchPackInfo } from '../services/api';
 
 /* The glass card treatment the admin console and staff dashboard are built
  * from. One string, used for every panel on this page, so the lab reads as a
@@ -66,6 +67,12 @@ export const ResearchLab: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
     const { settings } = useSettings();
+    const announce = useAnnounce();
+    /* Stable ids for the Query Builder fields. The labels used to be bare
+     * `<label class="block">` next to an id-less `<input>` — visually adjacent,
+     * programmatically unrelated, so a screen reader announced three unnamed
+     * edit boxes (WCAG 1.3.1 / 3.3.2 / 4.1.2). */
+    const fieldIds = useId();
 
     // Check access
     useEffect(() => {
@@ -74,12 +81,20 @@ export const ResearchLab: React.FC = () => {
         }
     }, [user, navigate]);
 
-    // Set browser tab title
+    /* Browser tab title — WCAG 2.4.2 Page Titled.
+     *
+     * The restore is conditional on purpose. SettingsContext writes the
+     * document title asynchronously once settings load, so the snapshot taken
+     * when this page mounted can already be stale by the time it unmounts;
+     * restoring it unconditionally overwrote whatever the *next* page had just
+     * set, leaving the user on a page titled for the one they left. Only hand
+     * the title back if nothing else has claimed it since. */
     useEffect(() => {
         const previousTitle = document.title;
-        document.title = 'Research & Analytics Lab | ' + (settings?.township_name || '311');
+        const ourTitle = 'Research & Analytics Lab | ' + (settings?.township_name || '311');
+        document.title = ourTitle;
         return () => {
-            document.title = previousTitle;
+            if (document.title === ourTitle) document.title = previousTitle;
         };
     }, [settings?.township_name]);
 
@@ -100,6 +115,13 @@ export const ResearchLab: React.FC = () => {
     // UI state
     const [activeSnippet, setActiveSnippet] = useState<'python' | 'r'>('python');
     const [expandedPack, setExpandedPack] = useState<string | null>('social_equity');
+    /* Copy result, shown on the button itself. `null` is the resting state; the
+     * button used to give no feedback at all and swallow a rejected
+     * clipboard promise, so a blocked or unsupported copy looked identical to a
+     * successful one (WCAG 4.1.3). */
+    const [copyState, setCopyState] = useState<'copied' | 'failed' | null>(null);
+    const copyResetRef = useRef<number | null>(null);
+    const snippetTabRefs = useRef<Record<'python' | 'r', HTMLButtonElement | null>>({ python: null, r: null });
 
     // AI Chat state
     const [showChat, setShowChat] = useState(false);
@@ -151,9 +173,15 @@ export const ResearchLab: React.FC = () => {
         }
     };
 
+    /* Every long-running action on this page used to complete silently: the
+     * results simply appeared, which a sighted user notices and a screen reader
+     * user does not (WCAG 4.1.3 Status Messages). These route through the app's
+     * single live region rather than adding more aria-live nodes — two polite
+     * regions written in the same tick and neither is announced. */
     const loadAnalytics = async () => {
         setIsLoading(true);
         setError(null);
+        announce('Running query…');
         try {
             const data = await api.getResearchAnalytics({
                 start_date: startDate || undefined,
@@ -161,8 +189,12 @@ export const ResearchLab: React.FC = () => {
                 service_code: serviceCode || undefined,
             });
             setAnalytics(data);
+            announce(`Query complete. ${data.total_requests.toLocaleString()} requests matched.`);
         } catch (err: any) {
-            setError(err.message || 'Failed to load analytics');
+            const message = err.message || 'Failed to load analytics';
+            setError(message);
+            // Assertive: the query the user just asked for did not happen.
+            announce(message, 'assertive');
         } finally {
             setIsLoading(false);
         }
@@ -187,6 +219,7 @@ export const ResearchLab: React.FC = () => {
     };
 
     const handleExportCSV = async () => {
+        announce('Preparing CSV export…');
         try {
             const blob = await api.exportResearchCSV({
                 start_date: startDate || undefined,
@@ -200,12 +233,16 @@ export const ResearchLab: React.FC = () => {
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
             window.URL.revokeObjectURL(url);
+            announce('CSV export started. Check your downloads.');
         } catch (err: any) {
-            setError(err.message || 'Export failed');
+            const message = err.message || 'Export failed';
+            setError(message);
+            announce(`CSV export failed. ${message}`, 'assertive');
         }
     };
 
     const handleExportGeoJSON = async () => {
+        announce('Preparing GeoJSON export…');
         try {
             const blob = await api.exportResearchGeoJSON({
                 start_date: startDate || undefined,
@@ -219,12 +256,16 @@ export const ResearchLab: React.FC = () => {
             link.download = `research_export_${new Date().toISOString().slice(0, 10)}.geojson`;
             link.click();
             window.URL.revokeObjectURL(url);
+            announce('GeoJSON export started. Check your downloads.');
         } catch (err: any) {
-            setError(err.message || 'Export failed');
+            const message = err.message || 'Export failed';
+            setError(message);
+            announce(`GeoJSON export failed. ${message}`, 'assertive');
         }
     };
 
     const handleExportDataDictionary = async () => {
+        announce('Preparing data dictionary…');
         try {
             const blob = await api.exportDataDictionary();
             const url = window.URL.createObjectURL(blob);
@@ -233,13 +274,61 @@ export const ResearchLab: React.FC = () => {
             link.download = `data_dictionary_${new Date().toISOString().slice(0, 10)}.csv`;
             link.click();
             window.URL.revokeObjectURL(url);
+            announce('Data dictionary download started.');
         } catch (err: any) {
-            setError(err.message || 'Export failed');
+            const message = err.message || 'Export failed';
+            setError(message);
+            announce(`Data dictionary export failed. ${message}`, 'assertive');
         }
     };
 
-    const copyToClipboard = (text: string) => {
-        navigator.clipboard.writeText(text);
+    /* Clipboard writes reject routinely — no permission, no secure context, no
+     * `navigator.clipboard` at all — and this used to fire and forget, so a
+     * failed copy was indistinguishable from a successful one. Report both
+     * outcomes, on the button and to assistive tech. */
+    const copyToClipboard = async (text: string) => {
+        if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+        try {
+            // Absent on insecure origins; `?.` alone would resolve undefined and
+            // report a copy that never happened.
+            if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+            await navigator.clipboard.writeText(text);
+            setCopyState('copied');
+            announce('Code snippet copied to clipboard.');
+        } catch {
+            setCopyState('failed');
+            announce('Could not copy to clipboard. Select the code and copy it manually.', 'assertive');
+        }
+        copyResetRef.current = window.setTimeout(() => setCopyState(null), 3000);
+    };
+
+    useEffect(() => () => {
+        if (copyResetRef.current) window.clearTimeout(copyResetRef.current);
+    }, []);
+
+    /* Arrow-key navigation for the Python/R tablist.
+     *
+     * These were two plain buttons that looked like tabs and behaved like
+     * nothing in particular. Once they carry role="tab" the keyboard contract
+     * comes with them: exactly one tab in the tab sequence, arrows move between
+     * them, Home/End jump to the ends, and the panel is reached with a single
+     * further Tab. Focus follows selection, which is the right variant here
+     * because switching panels is instant and has no cost. */
+    const SNIPPET_LANGS = ['python', 'r'] as const;
+
+    const handleSnippetKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        const current = SNIPPET_LANGS.indexOf(activeSnippet);
+        let next = current;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % SNIPPET_LANGS.length;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + SNIPPET_LANGS.length) % SNIPPET_LANGS.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = SNIPPET_LANGS.length - 1;
+        else return;
+
+        event.preventDefault();
+        const lang = SNIPPET_LANGS[next];
+        setActiveSnippet(lang);
+        snippetTabRefs.current[lang]?.focus();
     };
 
     const getPackColorClasses = (color: string) => {
@@ -306,17 +395,20 @@ export const ResearchLab: React.FC = () => {
         <div className="min-h-screen">
             {/* Header */}
             <header className="glass-sidebar border-b border-white/10 sticky top-0 z-50">
-                <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-4">
+                {/* Wraps rather than overflowing: at 320px the identity block and
+                    the action cluster do not fit on one line, and the header is
+                    sticky, so anything that overflowed was unreachable (1.4.10). */}
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
+                    <div className="flex items-center gap-4 min-w-0">
                         <Action variant="ghost" onClick={() => navigate(-1)} title="Go back to previous page">
                             <ArrowLeft className="w-5 h-5" aria-hidden="true" />
                             <span className="sr-only">Go back to previous page</span>
                         </Action>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
                             <CapabilityTile icon={Microscope} size="md" />
-                            <div>
-                                <h1 className="text-xl font-bold text-white">Research &amp; Analytics Lab</h1>
-                                <p className="text-sm text-white/50">
+                            <div className="min-w-0">
+                                <h1 className="text-lg sm:text-xl font-bold text-white">Research &amp; Analytics Lab</h1>
+                                <p className="text-sm text-white/50 truncate">
                                     {settings?.township_name} • {totalFields} research fields available
                                 </p>
                             </div>
@@ -338,7 +430,11 @@ export const ResearchLab: React.FC = () => {
                 </div>
             </header>
 
-            <main className="max-w-7xl mx-auto px-6 py-8">
+            {/* The app-wide skip link targets #main-content; without the id it had
+                nothing to skip to on this route and silently did nothing. The
+                negative tabindex makes the landmark itself focusable so focus
+                actually moves, not just the scroll position (WCAG 2.4.1). */}
+            <main id="main-content" tabIndex={-1} className="max-w-7xl mx-auto px-4 sm:px-6 py-8 focus:outline-none">
                 {/* Hero Section */}
                 <motion.div
                     initial={{ opacity: 0, y: 20 }}
@@ -428,7 +524,18 @@ export const ResearchLab: React.FC = () => {
                                             >
                                                 <div className="px-4 sm:px-5 py-5 border-t border-white/10">
                                                     {/* Fields Table */}
-                                                    <div className="overflow-x-auto mb-4">
+                                                    {/* A scroll container that only responds to a
+                                                        mouse wheel or a drag is unreachable content for
+                                                        a keyboard-only user (2.1.1). tabIndex puts it in
+                                                        the tab order so the arrow keys scroll it; the
+                                                        group role and label stop it being announced as
+                                                        an unnamed focusable div. */}
+                                                    <div
+                                                        className="overflow-x-auto mb-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                                        tabIndex={0}
+                                                        role="group"
+                                                        aria-label={`${pack.label} fields, scrollable table`}
+                                                    >
                                                         <table className="w-full text-sm">
                                                             <thead>
                                                                 <tr className="text-left text-[11px] uppercase tracking-wider text-white/60 font-semibold border-b border-white/10">
@@ -506,8 +613,9 @@ export const ResearchLab: React.FC = () => {
                     <SectionLabel icon={Filter}>Query Builder</SectionLabel>
                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-sm text-white/60 mb-2">Start Date</label>
+                            <label htmlFor={`${fieldIds}-start`} className="block text-sm text-white/60 mb-2">Start Date</label>
                             <input
+                                id={`${fieldIds}-start`}
                                 type="date"
                                 value={startDate}
                                 onChange={(e) => setStartDate(e.target.value)}
@@ -515,8 +623,9 @@ export const ResearchLab: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-white/60 mb-2">End Date</label>
+                            <label htmlFor={`${fieldIds}-end`} className="block text-sm text-white/60 mb-2">End Date</label>
                             <input
+                                id={`${fieldIds}-end`}
                                 type="date"
                                 value={endDate}
                                 onChange={(e) => setEndDate(e.target.value)}
@@ -524,8 +633,9 @@ export const ResearchLab: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label className="block text-sm text-white/60 mb-2">Service Category</label>
+                            <label htmlFor={`${fieldIds}-service`} className="block text-sm text-white/60 mb-2">Service Category</label>
                             <input
+                                id={`${fieldIds}-service`}
                                 type="text"
                                 value={serviceCode}
                                 onChange={(e) => setServiceCode(e.target.value)}
@@ -554,8 +664,14 @@ export const ResearchLab: React.FC = () => {
                                 </p>
                             </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        {/* aria-pressed, because "which mode am I in" was carried
+                            entirely by the green/amber fill — no information at all
+                            without colour (1.4.1) and nothing exposed to assistive
+                            tech (4.1.2). */}
+                        <div className="flex items-center gap-2 flex-wrap">
                             <button
+                                type="button"
+                                aria-pressed={privacyMode === 'fuzzed'}
                                 onClick={() => setPrivacyMode('fuzzed')}
                                 className={`px-4 py-2 rounded-2xl border text-sm font-semibold inline-flex items-center gap-1.5 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${privacyMode === 'fuzzed'
                                     ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-300 border-emerald-500/30 shadow-md shadow-emerald-950/40'
@@ -566,6 +682,8 @@ export const ResearchLab: React.FC = () => {
                                 Fuzzed
                             </button>
                             <button
+                                type="button"
+                                aria-pressed={privacyMode === 'exact'}
                                 onClick={() => setPrivacyMode('exact')}
                                 disabled={user?.role !== 'admin'}
                                 className={`px-4 py-2 rounded-2xl border text-sm font-semibold inline-flex items-center gap-1.5 transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${privacyMode === 'exact'
@@ -574,8 +692,19 @@ export const ResearchLab: React.FC = () => {
                                     } ${user?.role !== 'admin' ? 'opacity-50 cursor-not-allowed' : ''}`}
                             >
                                 <MapPin className="w-4 h-4" aria-hidden="true" />
-                                Exact {user?.role !== 'admin' && '(Admin)'}
+                                Exact
                             </button>
+                            {/* The reason this control is disabled lives OUTSIDE it.
+                                It used to be the trailing "(Admin)" inside the
+                                button's own label, and a disabled button is skipped
+                                by several screen readers' browse modes — so the one
+                                sentence explaining why the control cannot be used
+                                was the one sentence the user could not reach. */}
+                            {user?.role !== 'admin' && (
+                                <p className="text-xs text-white/60 basis-full sm:basis-auto">
+                                    Exact locations are available to administrators only.
+                                </p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -647,7 +776,10 @@ export const ResearchLab: React.FC = () => {
                         <p className="text-white/50 text-sm mb-4">
                             Download all {totalFields} fields for offline analysis. Exports apply PII redaction, coordinate grid-snapping, and small-cell suppression (census-tract fields are withheld for tracts with fewer than 5 records). Review before external release.
                         </p>
-                        <div className="grid grid-cols-2 gap-4 mb-4 [&_button]:w-full [&_button]:justify-center">
+                        {/* Single column until there is room for two: at 320px each
+                            cell was ~130px and "Export GeoJSON" plus its icon
+                            overflowed the button (1.4.10 Reflow). */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4 [&_button]:w-full [&_button]:justify-center">
                             <Action variant="primary" onClick={handleExportCSV}>
                                 <FileText className="w-5 h-5" aria-hidden="true" />
                                 Export CSV
@@ -672,34 +804,47 @@ export const ResearchLab: React.FC = () => {
                     {/* Code Snippets */}
                     <div className={`${GLASS_CARD} p-6`}>
                         <SectionLabel icon={Code}>API Code Snippets</SectionLabel>
-                        <div className="flex gap-2 mb-4">
-                            <button
-                                onClick={() => setActiveSnippet("python")}
-                                className={`px-3 py-1.5 rounded-2xl border text-xs font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${activeSnippet === 'python'
-                                    ? 'bg-primary-500/20 text-primary-200 border-primary-400/30'
-                                    : 'bg-white/[0.08] text-white/70 border-white/15 hover:bg-white/[0.15] hover:text-white'
-                                    }`}
-                            >
-                                Python
-                            </button>
-                            <button
-                                onClick={() => setActiveSnippet("r")}
-                                className={`px-3 py-1.5 rounded-2xl border text-xs font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${activeSnippet === 'r'
-                                    ? 'bg-primary-500/20 text-primary-200 border-primary-400/30'
-                                    : 'bg-white/[0.08] text-white/70 border-white/15 hover:bg-white/[0.15] hover:text-white'
-                                    }`}
-                            >
-                                R
-                            </button>
+                        <div className="flex gap-2 mb-4" role="tablist" aria-label="Snippet language">
+                            {SNIPPET_LANGS.map(lang => {
+                                const selected = activeSnippet === lang;
+                                return (
+                                    <button
+                                        key={lang}
+                                        type="button"
+                                        role="tab"
+                                        id={`snippet-tab-${lang}`}
+                                        aria-selected={selected}
+                                        aria-controls={`snippet-panel-${lang}`}
+                                        // Roving tabindex: the tablist is one stop, not two.
+                                        tabIndex={selected ? 0 : -1}
+                                        ref={node => { snippetTabRefs.current[lang] = node; }}
+                                        onClick={() => setActiveSnippet(lang)}
+                                        onKeyDown={handleSnippetKeyDown}
+                                        className={`px-3 py-1.5 rounded-2xl border text-xs font-semibold transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${selected
+                                            ? 'bg-primary-500/20 text-primary-200 border-primary-400/30'
+                                            : 'bg-white/[0.08] text-white/70 border-white/15 hover:bg-white/[0.15] hover:text-white'
+                                            }`}
+                                    >
+                                        {lang === 'python' ? 'Python' : 'R'}
+                                    </button>
+                                );
+                            })}
                         </div>
                         {codeSnippets && (
                             <div className="relative">
-                                <pre className="bg-slate-950/60 border border-white/10 rounded-xl p-4 text-sm text-emerald-300 overflow-x-auto max-h-48" tabIndex={0} aria-label="Code snippet">
+                                <pre
+                                    id={`snippet-panel-${activeSnippet}`}
+                                    role="tabpanel"
+                                    aria-labelledby={`snippet-tab-${activeSnippet}`}
+                                    className="bg-slate-950/60 border border-white/10 rounded-xl p-4 text-sm text-emerald-300 overflow-x-auto max-h-48 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                    tabIndex={0}
+                                >
                                     {activeSnippet === 'python'
                                         ? codeSnippets.python
                                         : codeSnippets.r}
                                 </pre>
                                 <button
+                                    type="button"
                                     onClick={() =>
                                         copyToClipboard(
                                             activeSnippet === 'python'
@@ -707,9 +852,12 @@ export const ResearchLab: React.FC = () => {
                                                 : codeSnippets.r
                                         )
                                     }
-                                    className="absolute top-2 right-2 px-2.5 py-1 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-xs font-medium text-white/70 hover:text-white transition-colors"
+                                    className="absolute top-2 right-2 px-2.5 py-1 rounded-xl bg-white/[0.08] hover:bg-white/[0.15] border border-white/15 text-xs font-medium text-white/70 hover:text-white transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                                 >
-                                    Copy
+                                    {/* The outcome is in the button's own label, so it
+                                        reaches a screen reader on the next visit to the
+                                        control as well as through the live region. */}
+                                    {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
                                 </button>
                             </div>
                         )}
@@ -833,7 +981,15 @@ export const ResearchLab: React.FC = () => {
                                                             const headerCells = parseCells(dataRows[0]);
                                                             const bodyRows = dataRows.slice(1);
                                                             parts.push(
-                                                                <div key={`tbl-${si}-${ti}`} className="my-2 overflow-x-auto rounded-lg border border-white/10">
+                                                                // tabIndex so the horizontal scroll is
+                                                                // reachable without a pointer (2.1.1).
+                                                                <div
+                                                                    key={`tbl-${si}-${ti}`}
+                                                                    className="my-2 overflow-x-auto rounded-lg border border-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                                                    tabIndex={0}
+                                                                    role="group"
+                                                                    aria-label="Scrollable table from the assistant"
+                                                                >
                                                                     <table className="w-full text-xs">
                                                                         <thead><tr className="bg-white/10">{headerCells.map((c, ci) => <th key={ci} className="px-3 py-1.5 text-left text-white font-semibold border-b border-white/10">{c}</th>)}</tr></thead>
                                                                         <tbody>{bodyRows.map((row, ri) => {
@@ -891,11 +1047,17 @@ export const ResearchLab: React.FC = () => {
                             {chatLoading && (
                                 <div className="flex justify-start">
                                     <div className="bg-white/5 border border-white/10 rounded-2xl rounded-bl-md px-4 py-3">
-                                        <div className="flex gap-1.5">
+                                        {/* The three dots were the entire message: no text
+                                            alternative (1.1.1), and under reduced motion
+                                            they stop bouncing and become three grey dots
+                                            that say nothing at all. The words carry the
+                                            meaning; the dots are now decoration. */}
+                                        <div className="flex gap-1.5" aria-hidden="true">
                                             <span className="w-2 h-2 bg-primary-300/70 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                                             <span className="w-2 h-2 bg-primary-300/70 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
                                             <span className="w-2 h-2 bg-primary-300/70 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                                         </div>
+                                        <span className="sr-only">The assistant is writing a reply…</span>
                                     </div>
                                 </div>
                             )}
@@ -905,7 +1067,15 @@ export const ResearchLab: React.FC = () => {
                         {/* Input */}
                         <form onSubmit={sendResearchChat} className="px-4 py-3 border-t border-white/10 bg-slate-950/80">
                             <div className="flex gap-2">
+                                {/* A placeholder is not a label: it disappears the moment
+                                    the user types, and several screen readers never
+                                    announce it at all, so this field had no accessible
+                                    name (3.3.2 / 4.1.2). Real label, visually hidden. */}
+                                <label htmlFor={`${fieldIds}-chat`} className="sr-only">
+                                    Ask the Data Assistant a question
+                                </label>
                                 <input
+                                    id={`${fieldIds}-chat`}
                                     type="text"
                                     value={chatInput}
                                     onChange={(e) => setChatInput(e.target.value)}

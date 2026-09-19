@@ -239,6 +239,8 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "AZURE_TENANT_ID", "label": "Directory (tenant) ID", "required": True},
             {"key": "AZURE_KEYVAULT_CLIENT_ID", "label": "Application (client) ID", "required": True},
             {"key": "AZURE_KEYVAULT_CLIENT_SECRET", "label": "Client secret", "secret": True, "required": True},
+            {"key": "AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES", "label": "Client secret expires (optional)",
+             "secret": False, "required": False},
         ],
     },
     "aws": {

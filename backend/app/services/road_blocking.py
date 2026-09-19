@@ -62,8 +62,18 @@ async def _corridor_metres(db: AsyncSession) -> float:
         status = (await db.execute(select(RoadDataStatus).limit(1))).scalar_one_or_none()
         if status and status.corridor_metres:
             return float(status.corridor_metres)
-    except Exception:
-        pass
+    except Exception as exc:
+        # Said out loud. This was a bare `except Exception: pass`, and what it
+        # silently discarded is the town's own corridor width -- so a failure
+        # here quietly substitutes DEFAULT_CORRIDOR_METRES and changes which
+        # residents get redirected to the county instead of filing a report. A
+        # town that widened its corridor because the default was turning people
+        # away would see the default come back, with nothing in the log at any
+        # level to connect the two.
+        logger.warning(
+            "[Roads] could not read the town's corridor width (%s); falling back to "
+            "the %sm default, which may change block/allow decisions",
+            str(exc)[:200], DEFAULT_CORRIDOR_METRES)
     return float(DEFAULT_CORRIDOR_METRES)
 
 

@@ -129,10 +129,47 @@ def test_redaction_passes_when_the_chosen_detector_works(monkeypatch):
     async def _effective(p):
         return "google", None
 
+    # The detector answers. `detect` has to be stubbed as well as the two
+    # resolvers: `_test_redaction` deliberately puts a one-pixel probe through
+    # the REAL detector -- which is the point of it, since a key that is present
+    # and rejected passes every credentials-only check -- so without this the
+    # test called Google Vision for real. It passed only on a machine holding
+    # application default credentials and failed everywhere else. Nobody saw
+    # that: CI installed no google-cloud libraries and skipped the whole file,
+    # and in the production image the run was aborting at collection.
+    async def _detect(provider, data, width, height, faces, plates):
+        return []
+
     monkeypatch.setattr(ir, "resolve_provider", _resolve)
     monkeypatch.setattr(ir, "effective_provider", _effective)
+    monkeypatch.setattr(ir, "detect", _detect)
 
     assert _run(system._test_redaction())["ok"] is True
+
+
+def test_redaction_fails_when_the_detector_rejects_the_credentials(monkeypatch):
+    """The case the probe image exists for. AWS and Azure can only be checked
+    for the *presence* of a key, so one that is present and rejected passed
+    every test on this page while every resident photo went out unblurred.
+    `detect` returning None is the detector refusing."""
+    from app.services import image_redaction as ir
+
+    async def _resolve():
+        return "azure"
+
+    async def _effective(p):
+        return "azure", None
+
+    async def _detect(provider, data, width, height, faces, plates):
+        return None
+
+    monkeypatch.setattr(ir, "resolve_provider", _resolve)
+    monkeypatch.setattr(ir, "effective_provider", _effective)
+    monkeypatch.setattr(ir, "detect", _detect)
+
+    result = _run(system._test_redaction())
+    assert result["ok"] is False
+    assert "rejected" in result["detail"].lower()
 
 
 def test_redaction_fails_when_it_has_quietly_degraded(monkeypatch):
@@ -660,3 +697,490 @@ def test_the_email_check_never_reaches_DATA():
     src = _source(system._test_delivery)
     assert "server.data(" not in src and ".sendmail(" not in src
     assert "server.rset()" in src, "the envelope is abandoned explicitly"
+
+
+# ---------------------------------------------------------------------------
+# Esri: a key restricted to the website is not a broken key
+# ---------------------------------------------------------------------------
+#
+# Esri answers "Invalid Token" (code 498) for a perfectly good key when the
+# caller sends no Referer, which a server never does. Relaying that verbatim put
+# "ArcGIS: Invalid Token" directly beside the browser check's "the map drew in
+# this browser, so it will draw for residents" -- two true sentences that read
+# as a contradiction, about a key that was working.
+
+
+class _FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class _EsriClient:
+    """Answers the way ArcGIS answers a website-restricted key: 498 with no
+    Referer, the real candidates with one."""
+
+    seen_headers = []
+
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):
+        return False
+
+    async def get(self, url, params=None, headers=None):
+        _EsriClient.seen_headers.append(headers or {})
+        # Measured against the live key: the geocoding service answers 498
+        # whether or not a Referer is sent. Only the portal accepts the token.
+        if "portals/self" in url:
+            if headers and headers.get("Referer"):
+                return _FakeResponse({"name": "Pinpoint 311"})
+            return _FakeResponse({"error": {"code": 498, "message": "Invalid token."}})
+        return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
+
+
+class _DeadKeyClient(_EsriClient):
+    """A key that is genuinely wrong is refused by the portal as well."""
+
+    async def get(self, url, params=None, headers=None):
+        return _FakeResponse({"error": {"code": 498, "message": "Invalid Token", "details": []}})
+
+
+def _esri_secrets():
+    return _secrets(MAP_PROVIDER="esri", ARCGIS_API_KEY="AAPTxxxxxxxxxxxxxxxx")
+
+
+def test_a_website_restricted_arcgis_key_is_not_reported_as_invalid(monkeypatch):
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    _EsriClient.seen_headers = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    result = _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    # Not a failure, and not a green tick either: it cannot be checked here.
+    assert result.get("recorded") is False
+    assert "Invalid Token" not in result["detail"]
+    assert "restricted to your website" in result["detail"]
+
+
+def test_the_website_restricted_verdict_names_the_second_key_needed(monkeypatch):
+    """Placing a submitted address on the map runs on the server, so the same
+    key in both boxes leaves reports arriving with no location. Saying only
+    "the map is fine" would hide that."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    detail = _run(system._test_maps(None, "https://demo.pinpoint311.org"))["detail"]
+
+    assert "Server API key" in detail
+
+
+def test_a_genuinely_bad_arcgis_key_still_fails(monkeypatch):
+    """The classification must not turn every rejection into "cannot check"."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _DeadKeyClient)
+
+    result = _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    assert result["ok"] is False
+    assert "Invalid Token" in result["detail"]
+
+
+def test_the_diagnostic_referer_is_never_used_for_the_real_request(monkeypatch):
+    """The retry exists to tell two cases apart. A server borrowing a browser's
+    referrer to actually reach a browser-only key would be working around the
+    restriction the town deliberately chose."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    _EsriClient.seen_headers = []
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    _run(system._test_maps(None, "https://demo.pinpoint311.org"))
+
+    # First request goes out as a server: no borrowed referrer. The borrowed one
+    # only ever reaches the portal, which is a question, not a geocode.
+    assert not (_EsriClient.seen_headers[0] or {}).get("Referer")
+    borrowed = [h for h in _EsriClient.seen_headers if (h or {}).get("Referer")]
+    assert borrowed, "the diagnostic never ran"
+
+
+def test_without_a_known_origin_the_key_is_not_excused(monkeypatch):
+    """No origin means no way to tell the two cases apart, and guessing in the
+    forgiving direction would excuse a key that really is wrong."""
+    import httpx
+
+    from app.services import secret_manager
+    monkeypatch.setattr(secret_manager, "get_secret", _esri_secrets())
+    monkeypatch.setattr(httpx, "AsyncClient", _EsriClient)
+
+    result = _run(system._test_maps(None, None))
+
+    assert result["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# A model id belongs to the provider it was chosen from
+# ---------------------------------------------------------------------------
+
+def test_azure_names_the_deployment_it_could_not_find():
+    """Azure's own DeploymentNotFound body never contains the name asked for.
+
+    Live, that name was `gemini-3.6-flash` -- a Google model id left behind when
+    the town switched provider. Reading Azure's raw error, an operator sees
+    Azure losing a deployment they are sure they created, rather than Pinpoint
+    asking for one that was never theirs."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import AzureOpenAIProvider
+
+    provider = AzureOpenAIProvider(
+        endpoint="https://example.openai.azure.com",
+        api_key="k",
+        deployment="gemini-3.6-flash",
+        api_version="2024-06-01",
+    )
+
+    class Resp:
+        status_code = 404
+        text = '{"error": {"code": "DeploymentNotFound", "message": "..."}}'
+
+    detail = provider._explain(Resp())
+
+    assert "gemini-3.6-flash" in detail
+    assert "Deployment name" in detail
+
+
+def test_a_non_404_azure_error_is_still_reported_verbatim():
+    """The explanation must not swallow every other failure into one guess."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import AzureOpenAIProvider
+
+    provider = AzureOpenAIProvider(
+        endpoint="https://example.openai.azure.com", api_key="k",
+        deployment="triage", api_version="2024-06-01")
+
+    class Resp:
+        status_code = 429
+        text = '{"error": {"code": "429", "message": "rate limited"}}'
+
+    detail = provider._explain(Resp())
+
+    assert "429" in detail
+    assert "rate limited" in detail
+
+
+def test_a_pasted_azure_target_uri_is_reduced_to_the_endpoint():
+    """The portal shows a complete sample request beside the key, and that is
+    what gets copied. Appending our own path to it produced a bare 404
+    "Resource not found" that said nothing about the URL."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+
+    pasted = ("https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com"
+              "/openai/responses?api-version=2025-04-01-preview")
+
+    assert normalise_azure_endpoint(pasted) == (
+        "https://pinpoint311-openai-3b7eeuxuhnsby.openai.azure.com")
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("https://x.openai.azure.com", "https://x.openai.azure.com"),
+    ("https://x.openai.azure.com/", "https://x.openai.azure.com"),
+    # Government cloud.
+    ("https://x.openai.azure.us/openai/deployments/foo/chat/completions",
+     "https://x.openai.azure.us"),
+    # A query string on a base URL is never right.
+    ("https://x.openai.azure.com/?api-version=2024-06-01", "https://x.openai.azure.com"),
+    ("", ""),
+])
+def test_endpoint_normalisation_cases(value, expected):
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+    assert normalise_azure_endpoint(value) == expected
+
+
+def test_a_proxy_path_prefix_is_left_alone():
+    """Unusual, but not wrong. Rewriting it would break a working deployment to
+    fix somebody else's typo."""
+    pytest.importorskip("httpx")
+    from app.services.ai.azure_openai import normalise_azure_endpoint
+    assert normalise_azure_endpoint("https://gateway.town.gov/ai-proxy") == (
+        "https://gateway.town.gov/ai-proxy")
+
+
+def test_the_explicit_deployment_field_beats_the_shared_model_key():
+    """AI_MODEL is one key across every provider, so a stale id from another one
+    used to override the box labelled Deployment name on the Azure card --
+    with the right answer already typed into the form."""
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.routing")
+    from app.services.ai.registry import build_ai_provider
+
+    provider = build_ai_provider("azure", "gemini-3.6-flash", {
+        "AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com",
+        "AZURE_OPENAI_API_KEY": "k",
+        "AZURE_OPENAI_DEPLOYMENT": "gpt-5.4-mini",
+    })
+
+    assert provider.model == "gpt-5.4-mini"
+
+
+def test_the_shared_model_key_still_applies_when_no_deployment_is_typed():
+    pytest.importorskip("httpx")
+    pytest.importorskip("fastapi.routing")
+    from app.services.ai.registry import build_ai_provider
+
+    provider = build_ai_provider("azure", "my-deployment", {
+        "AZURE_OPENAI_ENDPOINT": "https://x.openai.azure.com",
+        "AZURE_OPENAI_API_KEY": "k",
+    })
+
+    assert provider.model == "my-deployment"
+
+
+class TestAzureTokenParameter:
+    """Newer Azure models reject `max_tokens` and want `max_completion_tokens`.
+
+    Which models is not knowable from here and moves over time. This codebase
+    has already been bitten by a hardcoded model list going stale, so the switch
+    is driven by Azure's own rejection rather than a list we maintain.
+    """
+
+    def _provider(self, deployment="gpt-5.4-mini"):
+        pytest.importorskip("httpx")
+        from app.services.ai import azure_openai as mod
+        mod._TOKEN_PARAM.clear()
+        return mod, mod.AzureOpenAIProvider(
+            endpoint="https://x.openai.azure.com", api_key="k",
+            deployment=deployment, api_version="2024-06-01")
+
+    def _client(self, mod, calls, reject_max_tokens):
+        class Resp:
+            def __init__(self, status, payload_text, data=None):
+                self.status_code = status
+                self.text = payload_text
+                self._data = data or {}
+
+            def json(self):
+                return self._data
+
+        class Client:
+            async def __aenter__(self_inner):
+                return self_inner
+
+            async def __aexit__(self_inner, *a):
+                return False
+
+            async def post(self_inner, url, headers=None, json=None):
+                calls.append(json)
+                if reject_max_tokens and "max_tokens" in json:
+                    return Resp(400, '{"error": {"message": "Unsupported parameter: '
+                                     "'max_tokens' is not supported with this model. "
+                                     'Use \'max_completion_tokens\' instead."}}')
+                return Resp(200, "", {"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+        mod.httpx.AsyncClient = lambda *a, **k: Client()
+        return Client
+
+    def test_it_retries_with_the_parameter_azure_asked_for(self, monkeypatch):
+        mod, provider = self._provider()
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, True)())
+
+        result = _run(provider.complete_json("hello"))
+
+        assert len(calls) == 2, "did not retry"
+        assert "max_tokens" in calls[0]
+        assert "max_completion_tokens" in calls[1]
+        assert result.get("ok") is True
+
+    def test_the_second_report_does_not_pay_for_the_first_one_s_rejection(self, monkeypatch):
+        """Remembered per deployment, or every report costs a wasted round trip."""
+        mod, provider = self._provider()
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, True)())
+
+        _run(provider.complete_json("one"))
+        calls.clear()
+        _run(provider.complete_json("two"))
+
+        assert len(calls) == 1
+        assert "max_completion_tokens" in calls[0]
+
+    def test_a_model_that_accepts_max_tokens_is_left_alone(self, monkeypatch):
+        mod, provider = self._provider(deployment="gpt-4.1-mini")
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, False)())
+
+        _run(provider.complete_json("hello"))
+
+        assert len(calls) == 1
+        assert "max_tokens" in calls[0]
+
+
+# ---------------------------------------------------------------------------
+# "(optional" is not a suffix
+# ---------------------------------------------------------------------------
+
+class TestOptionalFieldsAreNotRequired:
+    """Whether a credential is required falls back to reading its label when the
+    catalog carries no `required` flag. That test was `endswith("(optional)")`,
+    which misses every optional field that qualifies the word -- and an optional
+    field is exactly the one that tends to. Three providers reported "Not set
+    up" while working, and the advice on that badge is to go and re-enter
+    credentials that were already correct."""
+
+    def _f(self):
+        pytest.importorskip("fastapi.routing")
+        from app.api.system import _field_required
+        return _field_required
+
+    @pytest.mark.parametrize("label", [
+        "Authority host (optional; Gov = login.microsoftonline.us)",
+        "Endpoint (optional; .us for Gov)",
+        "Access Key ID (optional with instance role)",
+        "API version (optional)",
+        "Port (optional, defaults to 587)",
+    ])
+    def test_a_qualified_optional_is_still_optional(self, label):
+        assert self._f()({"key": "X", "label": label}) is False
+
+    @pytest.mark.parametrize("label", [
+        "Client Secret",
+        "Directory (tenant) ID",
+        "Azure OpenAI Endpoint",
+    ])
+    def test_a_required_field_stays_required(self, label):
+        assert self._f()({"key": "X", "label": label}) is True
+
+    def test_an_explicit_flag_still_wins_over_the_label(self):
+        assert self._f()({"key": "X", "label": "Thing (optional)", "required": True}) is True
+        assert self._f()({"key": "X", "label": "Thing", "required": False}) is False
+
+
+def test_entra_with_no_authority_host_counts_as_configured():
+    """ENTRA_AUTHORITY defaults to the commercial cloud and is left blank by
+    every town not on Azure Government. Live, that single blank field was why
+    a working Entra sign-in reported "Not set up"."""
+    pytest.importorskip("fastapi.routing")
+    from app.api.system import _field_required
+    from app.services.identity import IDENTITY_CATALOG
+
+    fields = IDENTITY_CATALOG["entra"]["credential_fields"]
+    required = [f["key"] for f in fields if _field_required(f)]
+
+    assert "ENTRA_AUTHORITY" not in required
+    # The three that genuinely are needed stay needed.
+    for key in ("ENTRA_TENANT_ID", "ENTRA_CLIENT_ID", "ENTRA_CLIENT_SECRET"):
+        assert key in required
+
+
+def test_aws_translate_on_an_instance_role_counts_as_configured():
+    """Leaving the key boxes empty is the recommended setup on AWS compute, so
+    following the recommendation was what made the card call itself
+    unconfigured."""
+    pytest.importorskip("fastapi.routing")
+    from app.api.system import _field_required
+    from app.services.translation_providers import TRANSLATION_CATALOG
+
+    fields = TRANSLATION_CATALOG["aws"]["credential_fields"]
+    required = [f["key"] for f in fields if _field_required(f)]
+
+    assert "AWS_ACCESS_KEY_ID" not in required
+    assert "AWS_SECRET_ACCESS_KEY" not in required
+
+
+# ---------------------------------------------------------------------------
+# A wrap that failed is not a wrap done by somebody else
+# ---------------------------------------------------------------------------
+
+class TestKmsFailureIsExplained:
+    """"A test key was wrapped with unknown" described a mystery backend, when
+    what had happened was that the wrap failed outright. Live, the cause was a
+    flat 403 from Key Vault -- the app registration had never been granted
+    crypto rights on the key -- and none of that reached the screen."""
+
+    def _reason(self, status):
+        pytest.importorskip("httpx")
+        from app.core.pii_crypto import _probe_reason
+
+        class Resp:
+            status_code = status
+
+        class Err(Exception):
+            response = Resp()
+
+        return _probe_reason(Err("boom"))
+
+    def test_a_403_names_the_role_that_is_missing(self):
+        reason = self._reason(403)
+        assert "403" in reason
+        assert "Key Vault Crypto User" in reason
+        # The credentials being fine is the confusing part; say it.
+        assert "valid" in reason
+
+    def test_a_401_points_at_the_credentials_instead(self):
+        reason = self._reason(401)
+        assert "client id" in reason or "secret" in reason
+        assert "Crypto User" not in reason
+
+    def test_a_404_points_at_the_key_name(self):
+        assert "key name" in self._reason(404)
+
+    def test_a_failure_with_no_status_still_says_something(self):
+        pytest.importorskip("httpx")
+        from app.core.pii_crypto import _probe_reason
+        assert "TimeoutError" in _probe_reason(TimeoutError("slow"))
+
+    def test_the_card_reports_the_reason_rather_than_unknown(self, monkeypatch):
+        pytest.importorskip("fastapi.routing")
+        from app.core import pii_crypto
+        from app.core import encryption
+
+        monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
+        monkeypatch.setattr(pii_crypto, "probe_wrap", lambda: {
+            "backend": "unknown", "wrapped_len": 0, "peek": "",
+            "error": "the key service refused the request (HTTP 403).",
+        })
+
+        result = _run(system._test_kms())
+
+        assert result["ok"] is False
+        assert "403" in result["detail"]
+        assert "wrapped with unknown" not in result["detail"]
+
+    def test_a_genuine_backend_mismatch_still_says_which_one(self, monkeypatch):
+        """The other failure is real and must not be folded into the new one:
+        a wrap that succeeded on the wrong service."""
+        pytest.importorskip("fastapi.routing")
+        from app.core import pii_crypto
+        from app.core import encryption
+
+        monkeypatch.setattr(encryption, "_kms_provider", lambda: "azure")
+        monkeypatch.setattr(pii_crypto, "probe_wrap", lambda: {
+            "backend": "local", "wrapped_len": 60, "peek": "aabb",
+        })
+
+        detail = _run(system._test_kms())["detail"]
+
+        assert "local" in detail

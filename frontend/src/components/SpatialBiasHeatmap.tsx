@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { MapPin, Users, FileText, AlertTriangle, Eye } from 'lucide-react';
 import { HeatmapData, HeatmapPoint, HotspotData } from '../types';
 import {
@@ -32,33 +32,51 @@ interface SpatialBiasHeatmapProps {
 
 type HeatmapMode = 'reports' | 'reporters' | 'bias';
 
-// Color gradients per mode (low → white-hot). Index 0 is transparent.
+/* Color gradients per mode (low → white-hot). Index 0 is transparent.
+ *
+ * WCAG 1.4.11 Non-text Contrast. Every stop is composited at `stop alpha ×
+ * HEATMAP_OPACITY` over the #1a1a2e basemap, and the old low and mid stops came
+ * out below the 3:1 floor — indigo@.4 measured 1.52:1, emerald@.3 1.56:1,
+ * purple@.6 1.99:1, green@.5 2.37:1, pink@.7 2.48:1, red@.8 2.72:1. Only the
+ * top of each ramp was visible, which means the map answered "where is it
+ * busiest" and was blank for everything below that: the low-to-mid range, where
+ * most of a town's reports actually sit, was information the surface claimed to
+ * show and did not.
+ *
+ * Rebuilt from the 300/400 tints at higher alpha, so each ramp now climbs
+ * monotonically and every stop clears 3:1 against the basemap:
+ *
+ *   reports   3.38 → 4.11 → 4.63 → 4.80 → 7.66 → 12.58
+ *   reporters 3.34 → 4.42 → 5.42 → 6.72 → 7.63 → 12.58
+ *
+ * The hues are unchanged in family (cool→hot for reports, green→warm for
+ * reporters) so the two modes still read as different pictures. */
 const GRADIENTS: Record<HeatmapMode, string[]> = {
     reports: [
         'rgba(0, 0, 0, 0)',
-        'rgba(99, 102, 241, 0.4)',   // indigo
-        'rgba(139, 92, 246, 0.6)',    // purple
-        'rgba(236, 72, 153, 0.7)',    // pink
-        'rgba(239, 68, 68, 0.8)',     // red
-        'rgba(245, 158, 11, 0.9)',    // amber
-        'rgba(255, 255, 255, 1)',     // white hot
+        'rgba(129, 140, 248, 0.80)',  // indigo-400  3.38:1
+        'rgba(167, 139, 250, 0.88)',  // purple-400  4.11:1
+        'rgba(244, 114, 182, 0.95)',  // pink-400    4.63:1
+        'rgba(248, 113, 113, 1)',     // red-400     4.80:1
+        'rgba(251, 191, 36, 1)',      // amber-400   7.66:1
+        'rgba(255, 255, 255, 1)',     // white hot  12.58:1
     ],
     reporters: [
         'rgba(0, 0, 0, 0)',
-        'rgba(16, 185, 129, 0.3)',    // emerald
-        'rgba(34, 197, 94, 0.5)',     // green
-        'rgba(132, 204, 22, 0.6)',    // lime
-        'rgba(234, 179, 8, 0.7)',     // yellow
-        'rgba(249, 115, 22, 0.8)',    // orange
+        'rgba(52, 211, 153, 0.62)',   // emerald-400 3.34:1
+        'rgba(74, 222, 128, 0.72)',   // green-400   4.42:1
+        'rgba(163, 230, 53, 0.76)',   // lime-400    5.42:1
+        'rgba(250, 204, 21, 0.88)',   // yellow-400  6.72:1
+        'rgba(253, 186, 116, 1)',     // orange-300  7.63:1
         'rgba(255, 255, 255, 1)',
     ],
     bias: [
         'rgba(0, 0, 0, 0)',
-        'rgba(99, 102, 241, 0.4)',
-        'rgba(139, 92, 246, 0.6)',
-        'rgba(236, 72, 153, 0.7)',
-        'rgba(239, 68, 68, 0.8)',
-        'rgba(245, 158, 11, 0.9)',
+        'rgba(129, 140, 248, 0.80)',
+        'rgba(167, 139, 250, 0.88)',
+        'rgba(244, 114, 182, 0.95)',
+        'rgba(248, 113, 113, 1)',
+        'rgba(251, 191, 36, 1)',
         'rgba(255, 255, 255, 1)',
     ],
 };
@@ -186,8 +204,84 @@ function fallbackDensityMarkers(points: HeatmapPoint[], gradient: string[]): Mar
     });
 }
 
-const BIAS_FILL = { high: '#ef4444', moderate: '#f59e0b', low: '#22c55e' } as const;
-const BIAS_STROKE = { high: '#fca5a5', moderate: '#fcd34d', low: '#86efac' } as const;
+/* Hotspot severity.
+ *
+ * The three fills sat at 1.75:1 (high↔moderate) and 1.06:1 (moderate↔low)
+ * against each other, so on the map they were three shades of "warm" — and
+ * severity was encoded in nothing but that shade (1.4.1). Brightening them
+ * cannot fix it: three colours that are each ≥3:1 against a near-black basemap
+ * are all bright, and bright colours cannot also be ≥3:1 from each other. The
+ * luminance range simply is not there.
+ *
+ * So colour becomes the redundant channel, not the carrying one:
+ *
+ *   - `hollow` gives a donut for a balanced cluster and a filled puck for a
+ *     flagged one, which survives greyscale and colour-blind simulation;
+ *   - the ring weight steps up with severity;
+ *   - `BIAS_LABEL` puts the level in words into the marker's `title` (its
+ *     accessible name and its native tooltip) and into the on-page legend.
+ *
+ * The fills are still lifted for 1.4.11 — each is now ≥6:1 against #1a1a2e,
+ * where high was 4.53:1 before. */
+/**
+ * Text alternative for the heat surface — WCAG 1.1.1.
+ *
+ * The surface is a `<canvas>`: to assistive technology it is a blank rectangle,
+ * by definition, and nothing else on the panel filled the gap. The summary
+ * boxes give three totals and the legend lists at most five clusters, out of up
+ * to 400 occupied cells, so the honest answer was that a screen-reader user
+ * could not find out where reports concentrate at all.
+ *
+ * This describes the same accumulation the canvas draws — points summed onto
+ * the grid, ranked — in the terms the picture is read for: how spread out it
+ * is, and how much of the total the busiest areas hold.
+ */
+function describeDensity(points: HeatmapPoint[], mode: HeatmapMode): string {
+    const noun = mode === 'reporters' ? 'reporter locations' : 'reports';
+    if (!points.length) return `No ${noun} to map for the current filters.`;
+
+    const cells = new Map<string, number>();
+    for (const p of points) {
+        const key = `${Math.round(p.lat / FALLBACK_CELL_DEGREES)}:${Math.round(p.lng / FALLBACK_CELL_DEGREES)}`;
+        cells.set(key, (cells.get(key) || 0) + intensityOf(p));
+    }
+
+    const weights = [...cells.values()].sort((a, b) => b - a);
+    const total = weights.reduce((sum, w) => sum + w, 0);
+    const share = (n: number) => Math.round((weights.slice(0, n).reduce((s, w) => s + w, 0) / total) * 100);
+
+    // How concentrated the picture is, in the words a reader would use for it.
+    const topShare = share(Math.max(1, Math.ceil(weights.length * 0.1)));
+    const spread = topShare >= 60 ? 'highly concentrated'
+        : topShare >= 40 ? 'concentrated'
+            : 'fairly evenly spread';
+
+    return `Heat map of ${points.length.toLocaleString()} ${noun} across ` +
+        `${weights.length.toLocaleString()} neighbourhood-sized areas of roughly 150 metres. ` +
+        `Density is ${spread}: the busiest tenth of areas holds ${topShare}% of the total, ` +
+        `and the single busiest area holds ${share(1)}%. ` +
+        `Warmer colours mark denser areas; white is the densest.`;
+}
+
+const BIAS_FILL = { high: '#f87171', moderate: '#fbbf24', low: '#34d399' } as const;
+const BIAS_STROKE = { high: '#fee2e2', moderate: '#fef3c7', low: '#d1fae5' } as const;
+const BIAS_LABEL = { high: 'High bias', moderate: 'Moderate bias', low: 'Balanced' } as const;
+/** Ring weight, so severity is legible with colour removed. */
+const BIAS_STROKE_WIDTH = { high: 4, moderate: 3, low: 2 } as const;
+
+/* The same three levels again, for the popup — which has a white ground, where
+ * the marker fills are unreadable text colours: #f87171 is 2.77:1 there,
+ * #fbbf24 1.67:1 and the old "BALANCED" green 2.28:1. These are the 700 tints,
+ * 5.0–6.5:1 (1.4.3). */
+const BIAS_TEXT_ON_LIGHT = { high: '#b91c1c', moderate: '#b45309', low: '#047857' } as const;
+
+type BiasLevel = keyof typeof BIAS_FILL;
+
+/** The one place the ratio→level rule lives; it was inlined in four. */
+function biasLevelOf(count: number, reporters: number): BiasLevel {
+    const ratio = count / (reporters || 1);
+    return ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+}
 
 // Google's style array. Deliberately routed through vendorOptions rather than
 // modelled generically: MapLibre wants a style URL and Esri a basemap id, so
@@ -203,20 +297,28 @@ const DARK_MAP_STYLE = [
     { featureType: 'transit', stylers: [{ visibility: 'off' }] },
 ];
 
+/** The two selectable heat layers, in radio-group order. */
+const MODE_OPTIONS = [
+    { mode: 'reports' as const, label: 'All Reports', icon: FileText, selectedClass: 'bg-indigo-500/30 text-indigo-200 border border-indigo-500/40' },
+    { mode: 'reporters' as const, label: 'Unique Reporters', icon: Users, selectedClass: 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/40' },
+];
+
 const STAT_BOX = 'background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;';
 
 /** Hotspot popup as DOM. Every untrusted value is set as text, never markup. */
 function hotspotPopup(hs: HotspotData): HTMLElement {
     const reporters = hs.unique_reporters || 1;
     const ratio = hs.count / reporters;
-    const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+    const level = biasLevelOf(hs.count, reporters);
     const biased = ratio > 2;
 
     const stat = (value: number, label: string) => el('div', {
         style: STAT_BOX,
         children: [
             el('div', { style: 'font-size: 20px; font-weight: 700;', text: value }),
-            el('div', { style: 'font-size: 10px; color: #9ca3af;', text: label }),
+            // #9ca3af on the popup's white ground was 2.54:1 — a 10px label at a
+            // third of the required contrast. #4b5563 is 7.56:1 (1.4.3).
+            el('div', { style: 'font-size: 10px; color: #4b5563;', text: label }),
         ],
     });
 
@@ -233,7 +335,7 @@ function hotspotPopup(hs: HotspotData): HTMLElement {
                 style: 'font-size: 12px; margin-bottom: 6px;',
                 children: [
                     el('span', {
-                        style: `color: ${biased ? BIAS_FILL[level] : '#22c55e'}; font-weight: 600;`,
+                        style: `color: ${BIAS_TEXT_ON_LIGHT[level]}; font-weight: 600;`,
                         text: biased ? `${level.toUpperCase()} BIAS` : 'BALANCED',
                     }),
                     ` (${ratio.toFixed(1)} reports/reporter)`,
@@ -277,6 +379,26 @@ export default function SpatialBiasHeatmap({
     // the graduated-marker fallback and the note shown under the map, so the
     // degradation is visible rather than silently different.
     const [canDrawHeat, setCanDrawHeat] = useState(true);
+
+    /* Roving-tabindex plumbing for the mode radio group. In a radio group the
+     * arrow keys both move focus and change the selection, and the group is a
+     * single tab stop — otherwise Tab walks every option, which is the one thing
+     * radios exist to avoid. */
+    const modeRefs = useRef<Record<'reports' | 'reporters', HTMLButtonElement | null>>({ reports: null, reporters: null });
+
+    const handleModeKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+        const order = MODE_OPTIONS.map(o => o.mode);
+        const current = order.indexOf(mode as 'reports' | 'reporters');
+        let next = current;
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (current + 1) % order.length;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') next = (current - 1 + order.length) % order.length;
+        else return;
+
+        event.preventDefault();
+        const target = order[next];
+        setMode(target);
+        modeRefs.current[target]?.focus();
+    };
 
     useEffect(() => {
         let cancelled = false;
@@ -366,7 +488,7 @@ export default function SpatialBiasHeatmap({
         layer.setMarkers(hotspots.map(hs => {
             const reporters = hs.unique_reporters || 1;
             const ratio = hs.count / reporters;
-            const level = ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+            const level = biasLevelOf(hs.count, reporters);
             return {
                 position: { lat: hs.lat, lng: hs.lng },
                 // Through the shared puck routine, so a hotspot on this page has
@@ -377,9 +499,16 @@ export default function SpatialBiasHeatmap({
                     fill: BIAS_FILL[level],
                     stroke: BIAS_STROKE[level],
                     size: Math.min(8 + hs.count, 20) * 2,
-                    strokeWidth: 2,
+                    strokeWidth: BIAS_STROKE_WIDTH[level],
+                    // Donut for a balanced cluster, solid for a flagged one:
+                    // the flag survives greyscale, which the fill alone did not.
+                    hollow: level === 'low',
                 }),
-                title: `${hs.count} reports / ${reporters} reporters`,
+                // The level in words. The tooltip used to give the two counts and
+                // leave the reader to infer the severity from the marker's colour
+                // — the one thing a colour-blind or screen-reader user could not
+                // do (1.4.1). This string is also the marker's accessible name.
+                title: `${BIAS_LABEL[level]}: ${hs.count} reports from ${reporters} reporter${reporters === 1 ? '' : 's'} (${ratio.toFixed(1)} per reporter)${hs.sample_address ? ` near ${hs.sample_address}` : ''}`,
                 zIndex: 100,
                 onClick: (_event, marker) => {
                     const popup = popupRef.current;
@@ -400,7 +529,7 @@ export default function SpatialBiasHeatmap({
         return (
             <div className="h-full flex items-center justify-center bg-slate-900/50 rounded-lg border border-white/10">
                 <div className="text-center p-4">
-                    <MapPin className="w-8 h-8 mx-auto mb-2 text-white/30" />
+                    <MapPin className="w-8 h-8 mx-auto mb-2 text-white/30" aria-hidden="true" />
                     <p className="text-white/50 text-sm">Maps not configured</p>
                 </div>
             </div>
@@ -417,25 +546,35 @@ export default function SpatialBiasHeatmap({
         return hs.count / reporters > 2;
     });
 
+    const activePoints = (mode === 'reporters' ? heatmapData?.reporter_points : heatmapData?.report_points) || [];
+    const densitySummary = describeDensity(activePoints, mode);
+
     return (
         <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
             {/* Header */}
             <div className="p-4 sm:p-6 pb-3">
-                <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center justify-between gap-3 flex-wrap mb-1">
                     <h3 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <AlertTriangle className="w-5 h-5 text-amber-400" />
+                        <AlertTriangle className="w-5 h-5 text-amber-400" aria-hidden="true" />
                         Spatial Bias Detector
                     </h3>
+                    {/* aria-pressed, because on/off was carried entirely by a
+                        white/10-vs-white/5 fill: no state exposed to assistive tech
+                        (4.1.2) and none visible without colour (1.4.1). The `title`
+                        stays as a tooltip but is no longer the accessible name —
+                        the button's own text is. */}
                     <button
+                        type="button"
+                        aria-pressed={showHotspotOverlay}
                         onClick={() => setShowHotspotOverlay(!showHotspotOverlay)}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition ${
+                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
                             showHotspotOverlay
                                 ? 'bg-white/10 text-white/80'
-                                : 'bg-white/5 text-white/40'
+                                : 'bg-white/5 text-white/70'
                         }`}
                         title="Toggle hotspot cluster markers"
                     >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5" aria-hidden="true" />
                         Clusters
                     </button>
                 </div>
@@ -454,8 +593,10 @@ export default function SpatialBiasHeatmap({
                     </p>
                 )}
 
-                {/* Summary stats */}
-                <div className="grid grid-cols-3 gap-2 mb-4">
+                {/* Summary stats. One column until there is room for three: at
+                    320px each cell was ~82px for a two-word 10px caption, which
+                    wrapped to three lines or clipped (1.4.10 Reflow). */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4">
                     <div className="bg-white/5 rounded-lg p-2 text-center">
                         <div className="text-lg font-bold text-white">{totalReports}</div>
                         <div className="text-[10px] text-white/40">Total Reports</div>
@@ -472,35 +613,44 @@ export default function SpatialBiasHeatmap({
                     </div>
                 </div>
 
-                {/* Mode toggle */}
-                <div className="flex gap-1 bg-white/5 rounded-lg p-1">
-                    <button
-                        onClick={() => setMode('reports')}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                            mode === 'reports'
-                                ? 'bg-indigo-500/30 text-indigo-300 border border-indigo-500/40'
-                                : 'text-white/50 hover:text-white/70'
-                        }`}
-                    >
-                        <FileText className="w-3.5 h-3.5" />
-                        All Reports
-                    </button>
-                    <button
-                        onClick={() => setMode('reporters')}
-                        className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition ${
-                            mode === 'reporters'
-                                ? 'bg-emerald-500/30 text-emerald-300 border border-emerald-500/40'
-                                : 'text-white/50 hover:text-white/70'
-                        }`}
-                    >
-                        <Users className="w-3.5 h-3.5" />
-                        Unique Reporters
-                    </button>
+                {/* Mode toggle.
+                  *
+                  * This is a choice of one from two, which is a radio group; it was
+                  * two buttons whose selected state existed only as an indigo or
+                  * emerald fill (1.4.1) and was announced to nobody (4.1.2). Marked
+                  * up as radios with the roving tabindex and arrow keys that pattern
+                  * requires, so it is one tab stop and the arrows move within it. */}
+                <div className="flex gap-1 bg-white/5 rounded-lg p-1" role="radiogroup" aria-label="Heat map layer">
+                    {MODE_OPTIONS.map(option => {
+                        const selected = mode === option.mode;
+                        const Icon = option.icon;
+                        return (
+                            <button
+                                key={option.mode}
+                                type="button"
+                                role="radio"
+                                aria-checked={selected}
+                                tabIndex={selected ? 0 : -1}
+                                ref={node => { modeRefs.current[option.mode] = node; }}
+                                onClick={() => setMode(option.mode)}
+                                onKeyDown={handleModeKeyDown}
+                                className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${
+                                    selected
+                                        ? option.selectedClass
+                                        : 'text-white/70 hover:text-white'
+                                }`}
+                            >
+                                <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                                {option.label}
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
-            {/* Map */}
-            <div className="relative" style={{ height: '400px' }}>
+            {/* Map. A hard 400px box could not grow with zoomed text; clamped
+                instead so it still has a floor but reflows at 320px (1.4.10). */}
+            <div className="relative" style={{ height: 'clamp(260px, 55vh, 400px)' }}>
                 {(isLoading || externalLoading) && (
                     <div className="absolute inset-0 flex items-center justify-center bg-slate-900 z-10">
                         <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
@@ -509,35 +659,62 @@ export default function SpatialBiasHeatmap({
                 <div ref={mapRef} className="w-full h-full" />
             </div>
 
+            {/* The heat surface in words — WCAG 1.1.1.
+              *
+              * A `<canvas>` has no accessible content, so without this the whole
+              * answer the panel exists to give is available only to people who can
+              * see it. Deliberately visible rather than sr-only: it is as useful
+              * read as it is seen, and a summary nobody can check drifts from the
+              * picture it claims to describe.
+              *
+              * Not a live region. The app has exactly one pair of those, and a
+              * second polite region updating alongside them means neither is
+              * announced. The note above it is the existing role="status", and one
+              * is the limit here. */}
+            <p className="px-4 sm:px-6 py-3 text-xs text-white/70 border-t border-white/10">
+                {densitySummary}
+            </p>
+
             {/* Bias hotspot legend */}
             {biasedHotspots.length > 0 && showHotspotOverlay && (
                 <div className="p-4 border-t border-white/10">
                     <div className="text-xs font-medium text-white/50 uppercase tracking-wider mb-2">
                         Bias-Flagged Clusters ({biasedHotspots.length})
                     </div>
-                    <div className="space-y-1.5">
+                    <ul className="space-y-1.5">
                         {biasedHotspots.slice(0, 5).map((hs, idx) => {
                             const reporters = hs.unique_reporters || 1;
                             const ratio = hs.count / reporters;
+                            const level = biasLevelOf(hs.count, reporters);
                             return (
-                                <div key={idx} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg">
-                                    <div
+                                <li key={idx} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg flex-wrap">
+                                    {/* The dot was #ef4444 on this ground: 2.31:1, under
+                                        the 3:1 floor for a meaningful graphic (1.4.11) —
+                                        and it was the ONLY thing saying which level this
+                                        row was (1.4.1). Now it is decorative, and the
+                                        level is a word, matched to the marker's shape
+                                        on the map: filled for flagged, ring for
+                                        balanced. */}
+                                    <span
+                                        aria-hidden="true"
                                         className="w-3 h-3 rounded-full flex-shrink-0"
-                                        style={{ backgroundColor: ratio > 4 ? '#ef4444' : '#f59e0b' }}
+                                        style={{ backgroundColor: BIAS_FILL[level] }}
                                     />
-                                    <span className="text-sm text-white/80 flex-1 truncate">
+                                    <span className="text-sm text-white/80 flex-1 min-w-0 truncate">
                                         {hs.sample_address || `Area ${idx + 1}`}
                                     </span>
-                                    <span className="text-xs text-white/50">
+                                    <span className="text-xs text-white/70">
                                         {hs.count} reports / {reporters} reporter{reporters !== 1 ? 's' : ''}
                                     </span>
-                                    <span className={`text-xs font-semibold ${ratio > 4 ? 'text-red-400' : 'text-amber-400'}`}>
-                                        {ratio.toFixed(1)}x
+                                    {/* text-red-400 was 3.14:1 here, below 4.5:1 for
+                                        small text; the 200 tints are 6.0:1 (1.4.3). */}
+                                    <span className={`text-xs font-semibold ${level === 'high' ? 'text-red-200' : 'text-amber-200'}`}>
+                                        {BIAS_LABEL[level]}, {ratio.toFixed(1)}x
                                     </span>
-                                </div>
+                                </li>
                             );
                         })}
-                    </div>
+                    </ul>
                     <p className="text-[10px] text-white/30 mt-2">
                         Clusters where reports-per-reporter exceeds 2x may indicate repeat reporting bias rather than widespread community concern.
                     </p>

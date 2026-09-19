@@ -12,16 +12,26 @@ from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog,
 from app.schemas import (
     ServiceRequestCreate, ServiceRequestResponse, ServiceRequestDetailResponse,
     ServiceRequestUpdate, ServiceRequestDelete, ManualIntakeCreate, RequestAuditLogResponse,
-    PublicArchiveUpdate
+    PublicArchiveUpdate, Open311CreatedRequestResponse
 )
 from app.core.auth import get_current_staff
+from app.api.scoping import department_scope_filters, scoped_request
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from app.core.client_ip import rate_limit_key
 
-limiter = Limiter(key_func=get_remote_address)
+# Keyed on the resolved caller, not slowapi's get_remote_address: behind Caddy
+# that is one container address for the whole town, so "5 comments a minute"
+# and "10 reports a minute" were town-wide budgets one script could spend on
+# everybody's behalf. See app/core/client_ip.py.
+limiter = Limiter(key_func=rate_limit_key)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# Assignment fields where an explicit null means "nobody", not "unchanged".
+# See the loop in update_request_status.
+CLEARABLE_ASSIGNMENT_FIELDS = {"assigned_department_id", "assigned_to"}
 
 
 def generate_request_id() -> str:
@@ -67,10 +77,20 @@ async def resolve_is_public(db: AsyncSession, requested_is_public) -> bool:
         enabled = modules.get("unlisted_reports", modules.get("private_reports", False))
         return not bool(enabled)
     except Exception as e:
-        # Fail toward the town's configured default (public) rather than
-        # silently hiding a report because a settings read hiccuped.
-        logger.warning(f"unlisted_reports module check failed, defaulting to public: {e}")
-        return True
+        # FAIL CLOSED. This used to return True "toward the town's configured
+        # default", which meant a transient settings-read error published a
+        # report the resident had explicitly asked to keep unlisted -- onto the
+        # public map, with its description, address and photos, leaving nothing
+        # behind but a warning line. Publishing is not undoable: the moment it
+        # is listed it can be read, scraped and cached, and honouring the
+        # resident's answer costs nothing but a report missing from a listing
+        # until an admin looks. Only reached when the resident asked for
+        # unlisted, so the town's default is unaffected.
+        logger.error(
+            "unlisted_reports module check failed; keeping the report unlisted "
+            "because the resident asked for it: %s", e
+        )
+        return False
 
 
 async def read_settings_row(db: AsyncSession):
@@ -107,14 +127,76 @@ def direct_link_filters():
     Two of the four by-id endpoints were also missing the soft-delete clause, so
     a deleted request still served its comments. Folded in here so there is one
     rule rather than four inline copies of most of it.
+
+    NOT for staff by-id endpoints. This helper spread from the public routes it
+    was written for into six staff ones (restore, delete, both audit-log reads,
+    accept-ai-priority, public-archive), where `deleted_at IS NULL` is exactly
+    wrong: `restore_request` could never find the row it exists to restore, so
+    it answered 404 every time and the `if not request.deleted_at` check below
+    it was unreachable, and a clerk who deleted the wrong report could neither
+    put it back nor read the audit entry naming who deleted it. Staff by-id
+    lookups go through app/api/scoping.scoped_request, which decides the
+    soft-delete clause per endpoint and applies department scoping.
     """
     return (ServiceRequest.deleted_at.is_(None),)
 
 
+# GeoReport v2 defines `status`, `service_code` and `service_request_id` as
+# comma-delimited lists on GET Service Requests -- "can be declared multiple
+# times, comma delimited" -- and this API read all of them as one opaque
+# string. So `?status=open,closed`, the example a client copies straight out of
+# the spec, compared the literal text "open,closed" against a column that only
+# ever holds one word and returned an empty array. Not an error: an empty
+# array, which an integrator reads as "this town has no open or closed
+# reports". Two of the three filters below are fixed here; see the report for
+# service_request_id, which this API does not accept at all.
+VALID_REQUEST_STATUSES = ("open", "in_progress", "closed")
+
+
+def parse_csv_filter(raw: Optional[str]) -> Optional[List[str]]:
+    """Split a spec-style comma-delimited filter into values, or None.
+
+    Whitespace around a value is trimmed (`open, closed` is what a human types)
+    and empty segments are dropped, so a trailing comma is not a filter for the
+    empty string. Returns None when there is nothing left to filter on, which
+    the callers treat the same as the parameter being absent -- `?status=` and
+    `?status=,,` mean "no status filter", not "no results".
+    """
+    if raw is None:
+        return None
+    values = [v.strip() for v in raw.split(",")]
+    values = [v for v in values if v]
+    return values or None
+
+
+def validated_statuses(raw: Optional[str]) -> Optional[List[str]]:
+    """`parse_csv_filter` plus a 400 that names what it did not recognise.
+
+    A misspelt status is worth an error rather than an empty list for the same
+    reason the comma bug was worth fixing: silence is indistinguishable from a
+    town with no matching reports, and the caller has no way to tell which
+    happened. The valid set is closed and small, so the message can just say
+    it.
+    """
+    values = parse_csv_filter(raw)
+    if not values:
+        return None
+    unknown = [v for v in values if v not in VALID_REQUEST_STATUSES]
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unknown status value(s): {', '.join(unknown)}. "
+                f"Valid values are: {', '.join(VALID_REQUEST_STATUSES)}."
+            ),
+        )
+    return values
+
+
 @router.get("/public/requests")
 async def list_public_requests(
-    status: Optional[str] = Query(None, description="Filter by status"),
-    service_code: Optional[str] = Query(None, description="Filter by service category"),
+    status: Optional[str] = Query(None, description="Filter by status (comma-delimited, e.g. open,closed)"),
+    service_code: Optional[str] = Query(None, description="Filter by service category (comma-delimited)"),
     limit: Optional[int] = Query(None, ge=1, description="Max number of results (no limit by default)"),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_db)
@@ -124,11 +206,19 @@ async def list_public_requests(
     # changes the number expects the map to change, not to change in up to a
     # minute, and a cached list built under the old policy is exactly the wrong
     # thing to serve back. One indexed singleton row.
+    # Parsed before the cache is touched. A 400 for a misspelt status must not
+    # depend on whether some earlier caller warmed a key, and the normalised
+    # lists are what belongs in the key anyway -- `?status=open,closed` and
+    # `?status=closed, open` are the same query and should share one entry.
+    statuses = validated_statuses(status)
+    service_codes = parse_csv_filter(service_code)
+
     settings_row = await read_settings_row(db)
     archive_days = getattr(settings_row, "public_archive_days", None) or 0
 
     cache_key = (
-        f"public_requests:{status or 'all'}:{service_code or 'all'}:{limit}:{offset}"
+        f"public_requests:{','.join(sorted(statuses)) if statuses else 'all'}"
+        f":{','.join(sorted(service_codes)) if service_codes else 'all'}:{limit}:{offset}"
         f":arch{archive_days}"
     )
 
@@ -147,11 +237,11 @@ async def list_public_requests(
     # staff. See app/services/public_visibility.py.
     query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row))
 
-    if status:
-        query = query.where(ServiceRequest.status == status)
-    if service_code:
-        query = query.where(ServiceRequest.service_code == service_code)
-    
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+
     query = query.order_by(ServiceRequest.requested_datetime.desc())
     if limit:
         query = query.limit(limit)
@@ -222,6 +312,13 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
         "updated_datetime": request.updated_datetime.isoformat() if request.updated_datetime else None,
         "closed_substatus": request.closed_substatus,
         "media_urls": request.media_urls or [],  # Full array of photo data for detail view
+        # The COUNT of photos held back for a staff check -- never the photos,
+        # which are unredacted by definition and live on the staff-only detail
+        # schema. Without this the resident who attached one sees a report with
+        # no photo and no explanation, which reads as "it was lost"; the tracker
+        # says "waiting to be checked" instead. See
+        # models.ServiceRequest.photos_pending_review.
+        "photos_pending_review": request.photos_pending_review,
         "completion_message": request.completion_message,
         "completion_photo_url": request.completion_photo_url,  # Full completion photo
         "assigned_department_name": request.assigned_department.name if request.assigned_department else None,
@@ -229,12 +326,23 @@ async def get_public_request_detail(request_id: str, db: AsyncSession = Depends(
 
 
 from app.models import RequestComment
-from app.schemas import RequestCommentResponse
+# Only the narrowed model here. `RequestCommentResponse` still exists and is
+# still correct -- app/api/comments.py serves it behind get_current_staff and
+# the dashboard reads user_id and visibility off it -- but it is no longer in
+# scope in this module, so a public route added to this file cannot reach for
+# it by autocomplete.
+from app.schemas import PublicRequestCommentResponse
 
 
-@router.get("/public/requests/{request_id}/comments", response_model=List[RequestCommentResponse])
+@router.get("/public/requests/{request_id}/comments",
+            response_model=List[PublicRequestCommentResponse])
 async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db)):
-    """Get external/public comments for a request - no auth required"""
+    """Get external/public comments for a request - no auth required.
+
+    Staff identity is redacted, the same way the public audit log below
+    redacts its actor to "Staff". This returned the employee's real username
+    and internal user id to anyone who opened the report.
+    """
     # Find the request
     result = await db.execute(
         select(ServiceRequest).where(
@@ -251,10 +359,13 @@ async def get_public_comments(request_id: str, db: AsyncSession = Depends(get_db
         .where(RequestComment.visibility == 'external')
         .order_by(RequestComment.created_at.asc())
     )
-    return comments_result.scalars().all()
+    return [
+        PublicRequestCommentResponse.redacted(c)
+        for c in comments_result.scalars().all()
+    ]
 
 
-@router.post("/public/requests/{request_id}/comments", response_model=RequestCommentResponse)
+@router.post("/public/requests/{request_id}/comments", response_model=PublicRequestCommentResponse)
 @limiter.limit("5/minute")
 async def add_public_comment(
     request: Request,
@@ -283,6 +394,12 @@ async def add_public_comment(
                    "Please rephrase without offensive content.",
         )
     if mod.flagged:
+        # Moderation only. This endpoint is unauthenticated by design, and
+        # `flagged` used to double as the legal-hold marker retention read --
+        # so mild profanity in a comment on somebody else's report exempted
+        # that reporter's PII from the town's retention policy permanently.
+        # `sr.legal_hold` is deliberately untouched here; only the admin path
+        # in update_request_status writes it.
         sr.flagged = True
         sr.flag_reason = (mod.reason() + " (public comment)")[:255]
 
@@ -328,7 +445,7 @@ async def add_public_comment(
     from app.tasks.service_requests import notify_staff_of_activity
     enqueue(notify_staff_of_activity, sr.id, "comments", actor="Resident")
 
-    return comment
+    return PublicRequestCommentResponse.redacted(comment)
 
 
 # ============ Audit Log Endpoints ============
@@ -339,12 +456,15 @@ async def get_audit_log(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Get audit log for a request (staff only - full history)"""
-    result = await db.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    """Get audit log for a request (staff only - full history)
+
+    `include_deleted`: the entry recording who deleted a report, and why, is
+    the entry most likely to be asked for. Refusing to serve it once the delete
+    lands is the opposite of an audit trail.
+    """
+    request = await scoped_request(
+        db, current_user, service_request_id=request_id, include_deleted=True
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
     
@@ -372,11 +492,9 @@ async def verify_audit_log(
     much of the trail carries the stronger guarantee.
     """
     from app.models import compute_request_audit_hash, compute_request_audit_hash_legacy
-    result = await db.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    request = await scoped_request(
+        db, current_user, service_request_id=request_id, include_deleted=True
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -687,6 +805,21 @@ async def list_open311_services(db: AsyncSession = Depends(get_db)):
             "service_code": s.service_code,
             "service_name": s.service_name,
             "description": s.description,
+            # GeoReport v2 makes `metadata` the flag that tells a client
+            # whether GET /services/{code}.json is worth calling for this
+            # service. It was missing here while the definition endpoint
+            # hardcoded True, so the list said "no extended attributes" by
+            # omission about services that have nine of them, and a
+            # conformant client built its intake form without asking.
+            #
+            # True for every service, matching what that endpoint actually
+            # does: it serves the same attribute set for any active service,
+            # derived from the intake form rather than from per-service
+            # configuration. If service definitions ever become optional, this
+            # is the line that has to learn the difference -- and the test
+            # pins the two endpoints to each other so it cannot drift quietly
+            # again.
+            "metadata": True,
             "type": "realtime",
             "keywords": s.service_name.lower(),
             "group": "municipal"
@@ -821,8 +954,14 @@ async def screen_photo(
             "handle": handle,
             "status": "needs_review",
             "reason": reason,
-            "message": "We couldn't check this photo automatically. It will be attached "
-                       "for a staff member to review before it appears publicly.",
+            # Not "a staff member will review this photo". Nothing here queues
+            # a person: this photo goes inline with the report and is screened
+            # AGAIN at submit, and a human is only involved if that second pass
+            # also fails to clear it. Promising a review that the submit path
+            # routinely makes unnecessary is how a photo came to be published
+            # under a message saying it would not be.
+            "message": "We couldn't check this photo automatically. It's attached, and "
+                       "it won't appear publicly until it has been checked.",
         }
 
     if batch.media[0] == media:
@@ -839,8 +978,14 @@ async def screen_photo(
             "handle": handle,
             "status": "needs_review",
             "reason": "unprocessed",
-            "message": "We couldn't check this photo automatically. It will be attached "
-                       "for a staff member to review before it appears publicly.",
+            # Not "a staff member will review this photo". Nothing here queues
+            # a person: this photo goes inline with the report and is screened
+            # AGAIN at submit, and a human is only involved if that second pass
+            # also fails to clear it. Promising a review that the submit path
+            # routinely makes unnecessary is how a photo came to be published
+            # under a message saying it would not be.
+            "message": "We couldn't check this photo automatically. It's attached, and "
+                       "it won't appear publicly until it has been checked.",
         }
 
     handle = await photo_handles.mint(
@@ -859,7 +1004,8 @@ async def screen_photo(
     }
 
 
-@router.post("/requests.json", response_model=ServiceRequestResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/requests.json", response_model=Open311CreatedRequestResponse,
+             status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_request(
     request: Request,
@@ -1134,8 +1280,10 @@ async def _finalize_new_request(
 
 @router.get("/requests.json", response_model=List[ServiceRequestResponse])
 async def list_requests(
-    status_filter: Optional[str] = Query(None, alias="status"),
-    service_code: Optional[str] = None,
+    status_filter: Optional[str] = Query(
+        None, alias="status", description="Filter by status (comma-delimited, e.g. open,closed)"),
+    service_code: Optional[str] = Query(
+        None, description="Filter by service code (comma-delimited)"),
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     include_deleted: bool = False,
@@ -1153,27 +1301,21 @@ async def list_requests(
     # department they belong to, or assigned to them by name — plus unrouted
     # requests (no department yet), which still need someone to triage. Admins
     # see everything.
-    if current_user.role != "admin":
-        from app.models import user_departments
-        dept_rows = await db.execute(
-            select(user_departments.c.department_id)
-            .where(user_departments.c.user_id == current_user.id)
-        )
-        my_dept_ids = [row[0] for row in dept_rows.all()]
-        scope = [
-            ServiceRequest.assigned_to == current_user.username,
-            ServiceRequest.assigned_department_id.is_(None),
-        ]
-        if my_dept_ids:
-            scope.append(ServiceRequest.assigned_department_id.in_(my_dept_ids))
-        query = query.where(or_(*scope))
+    # One definition, shared with every by-id endpoint (app/api/scoping.py).
+    # It was inlined here, which is how the by-id endpoints ended up with no
+    # scoping at all and nothing noticed.
+    for clause in await department_scope_filters(db, current_user):
+        query = query.where(clause)
 
-    if status_filter:
-        query = query.where(ServiceRequest.status == status_filter)
-    
-    if service_code:
-        query = query.where(ServiceRequest.service_code == service_code)
-    
+    statuses = validated_statuses(status_filter)
+    if statuses:
+        query = query.where(ServiceRequest.status.in_(statuses))
+
+    service_codes = parse_csv_filter(service_code)
+    if service_codes:
+        query = query.where(ServiceRequest.service_code.in_(service_codes))
+
+
     if start_date:
         query = query.where(ServiceRequest.requested_datetime >= start_date)
     
@@ -1188,15 +1330,20 @@ async def list_requests(
 async def get_request(
     request_id: str,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_staff)
 ):
-    """Get service request details (staff only)"""
-    result = await db.execute(
-        select(ServiceRequest)
-        .options(selectinload(ServiceRequest.assigned_department))
-        .where(ServiceRequest.service_request_id == request_id)
+    """Get service request details (staff only, own departments)
+
+    This response carries the reporter's first name, last name, email, phone,
+    the staff notes and the moderation flag reason. Every request id is printed
+    on the public map, so without the department scope any staffer could read
+    an id off the map and pull the full PII of a Police complaint.
+    """
+    request = await scoped_request(
+        db, current_user,
+        service_request_id=request_id,
+        options=(selectinload(ServiceRequest.assigned_department),),
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -1238,11 +1385,12 @@ async def update_request_status(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Update service request status (staff only)"""
-    result = await db.execute(
-        select(ServiceRequest).options(selectinload(ServiceRequest.assigned_department)).where(ServiceRequest.service_request_id == request_id)
+    """Update service request status (staff only, own departments)"""
+    request = await scoped_request(
+        db, current_user,
+        service_request_id=request_id,
+        options=(selectinload(ServiceRequest.assigned_department),),
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
     
@@ -1251,15 +1399,42 @@ async def update_request_status(
     # Restrict flagged (legal hold) to admin only
     if "flagged" in update_dict and current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Only administrators can toggle legal hold status")
+    if "legal_hold" in update_dict and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Only administrators can toggle legal hold status")
     
     # Track old values for audit log
     old_status = request.status
     old_department_id = request.assigned_department_id
     old_assigned_to = request.assigned_to
     old_department_name = request.assigned_department.name if request.assigned_department else None
-    old_flagged = request.flagged
+    old_legal_hold = bool(request.legal_hold)
+
+    # The legal hold this endpoint sets is `legal_hold`, which retention reads.
+    # `flagged` is written alongside it only so the existing admin control --
+    # which posts `flagged` and renders the same field back -- keeps working
+    # unchanged; the important half is that this is the ONLY path that writes
+    # `legal_hold`, and it is admin-gated. The unauthenticated public-comment
+    # moderation path sets `flagged` alone and can no longer create a hold.
+    if "flagged" in update_dict and "legal_hold" not in update_dict:
+        update_dict["legal_hold"] = update_dict["flagged"]
+    elif "legal_hold" in update_dict and "flagged" not in update_dict:
+        update_dict["flagged"] = update_dict["legal_hold"]
     
     for field, value in update_dict.items():
+        # A null used to be skipped for EVERY field, so "Department..." (i.e.
+        # un-route this, nobody owns it yet) returned 200 and changed nothing,
+        # with no audit entry -- the staffer watched the dropdown snap back and
+        # had no way to undo a misrouting. These two fields are assignments, and
+        # "nobody" is a legitimate value for an assignment; the rest keep
+        # skipping nulls, because a null status or a null enum is a malformed
+        # update rather than an instruction.
+        #
+        # The frontend half is still open: StaffDashboard.tsx sends `?? undefined`
+        # for assigned_department_id, so the field never leaves the browser and
+        # `exclude_unset=True` drops it here. Whoever merges the frontend branch
+        # needs to send an explicit null. The backend no longer refuses it.
+        if value is None and field not in CLEARABLE_ASSIGNMENT_FIELDS:
+            continue
         if value is not None:
             if field == "status":
                 value = value.value
@@ -1270,7 +1445,7 @@ async def update_request_status(
             # Special handling for boolean flagged field
             if field == "flagged":
                 logger.debug(f"[LEGAL HOLD] Setting flagged from {request.flagged} to {value} for request {request.service_request_id}")
-            setattr(request, field, value)
+        setattr(request, field, value)
     
     request.updated_datetime = datetime.now(timezone.utc)
     
@@ -1332,12 +1507,12 @@ async def update_request_status(
             db.add(audit_entry)
     
     # Legal hold change
-    if "flagged" in update_dict and update_dict["flagged"] != old_flagged:
+    if "legal_hold" in update_dict and bool(update_dict["legal_hold"]) != old_legal_hold:
         audit_entry = RequestAuditLog(
             service_request_id=request.id,
             action="legal_hold",
-            old_value="enabled" if old_flagged else "disabled",
-            new_value="enabled" if update_dict["flagged"] else "disabled",
+            old_value="enabled" if old_legal_hold else "disabled",
+            new_value="enabled" if update_dict["legal_hold"] else "disabled",
             actor_type="admin",
             actor_name=current_user.username
         )
@@ -1395,13 +1570,15 @@ async def set_public_archived(
     question, and a report they asked to keep unlisted stays unlisted whatever
     is done here.
     """
-    result = await db.execute(
-        select(ServiceRequest).options(selectinload(ServiceRequest.assigned_department)).where(
-            ServiceRequest.service_request_id == request_id,
-            *direct_link_filters(),
-        )
+    # include_deleted: a report can be soft-deleted and still be sitting on the
+    # public map from before, and taking it off is the one thing left to do
+    # about that. Refusing because it is deleted leaves it published.
+    request = await scoped_request(
+        db, current_user,
+        service_request_id=request_id,
+        include_deleted=True,
+        options=(selectinload(ServiceRequest.assigned_department),),
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -1615,12 +1792,14 @@ async def delete_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Soft delete a service request with justification (staff/admin)"""
-    result = await db.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    """Soft delete a service request with justification (staff/admin, own departments)
+
+    `include_deleted` so an already-deleted request is answered with the "already
+    deleted" 400 below rather than a 404 that reads as "no such report".
+    """
+    request = await scoped_request(
+        db, current_user, service_request_id=request_id, include_deleted=True
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
     
@@ -1655,12 +1834,17 @@ async def restore_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Restore a soft-deleted service request (staff/admin)"""
-    result = await db.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    """Restore a soft-deleted service request (staff/admin, own departments)
+
+    `include_deleted=True` is the entire point of this endpoint. It looked the
+    request up with `direct_link_filters()`, whose `deleted_at IS NULL` clause
+    excluded every row it could ever be asked about -- so restore answered 404
+    unconditionally, the "is not deleted" check below was unreachable, and a
+    clerk who deleted the wrong report had no way back.
+    """
+    request = await scoped_request(
+        db, current_user, service_request_id=request_id, include_deleted=True
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
     
@@ -1695,12 +1879,14 @@ async def accept_ai_priority(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Accept AI-suggested priority score (copies to manual_priority_score)"""
-    result = await db.execute(
-        select(ServiceRequest).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    """Accept AI-suggested priority score (staff, own departments)
+
+    `include_deleted`: triage on a restored report should not depend on whether
+    it happens to have been deleted and put back.
+    """
+    request = await scoped_request(
+        db, current_user, service_request_id=request_id, include_deleted=True
     )
-    request = result.scalar_one_or_none()
     if not request:
         raise HTTPException(status_code=404, detail="Request not found")
     
@@ -1738,9 +1924,9 @@ async def get_asset_related_requests(
     asset_id: str,
     exclude_request_id: Optional[str] = Query(None, description="Request ID to exclude from results"),
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_staff)
 ):
-    """Get all requests that matched to the same asset (staff only)"""
+    """Get all requests that matched to the same asset (staff, own departments)"""
     from sqlalchemy import text
     
     # Query using PostgreSQL JSON extraction - matched_asset->>'asset_id'
@@ -1749,6 +1935,10 @@ async def get_asset_related_requests(
         ServiceRequest.deleted_at.is_(None),
         text("matched_asset->>'asset_id' = :asset_id")
     ).params(asset_id=asset_id).order_by(ServiceRequest.requested_datetime.desc())
+    # Same department rule as everywhere else: "other reports about this
+    # streetlight" must not become a way to read another department's queue.
+    for clause in await department_scope_filters(db, current_user):
+        query = query.where(clause)
     
     result = await db.execute(query)
     requests = result.scalars().all()

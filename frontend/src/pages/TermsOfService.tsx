@@ -1,3 +1,5 @@
+import { useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, FileText, AlertTriangle } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
@@ -93,11 +95,85 @@ For questions about this service or these terms, please contact your municipal c
 *By submitting a service request, you acknowledge that you have read and agree to these terms.*
 `;
 
+/* Consecutive "- " lines become one <ul>.
+ *
+ * The renderer emitted bare <li> elements with no list parent at all, which is
+ * not just invalid markup: a screen reader has nothing to announce as a list,
+ * so there is no "list, 6 items", no item numbering, and no way to skip past it
+ * (WCAG 1.3.1 Info and Relationships). Grouping happens before rendering, so
+ * every item keeps exactly the markup it had.
+ */
+function renderTerms(content: string): ReactNode[] {
+    const out: ReactNode[] = [];
+    let items: ReactNode[] = [];
+
+    const flushList = () => {
+        if (items.length === 0) return;
+        out.push(<ul key={`list-${out.length}`} className="my-3">{items}</ul>);
+        items = [];
+    };
+
+    content.split('\n').forEach((line, i) => {
+        if (line.startsWith('- ')) {
+            const match = line.match(/- \*\*(.+?)\*\*: (.+)/);
+            items.push(match ? (
+                <li key={i} className="text-white/70 ml-4 my-1">
+                    <strong className="text-white">{match[1]}:</strong> {match[2]}
+                </li>
+            ) : (
+                <li key={i} className="text-white/70 ml-4 my-1">{line.replace('- ', '')}</li>
+            ));
+            return;
+        }
+
+        flushList();
+
+        if (line.startsWith('## ⚠️')) {
+            // The emergency callout keeps its box, and the emoji stays out of
+            // the accessible name -- the heading already says it in words.
+            out.push(
+                <div key={i} className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6">
+                    <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
+                        <AlertTriangle className="w-6 h-6" aria-hidden="true" />
+                        {line.replace('## ⚠️ ', '')}
+                    </h2>
+                </div>
+            );
+        } else if (line.startsWith('## ')) {
+            out.push(<h2 key={i} className="text-xl font-bold text-white mt-8 mb-4">{line.replace('## ', '')}</h2>);
+        } else if (line.startsWith('### ')) {
+            out.push(<h3 key={i} className="text-lg font-semibold text-white/90 mt-6 mb-3">{line.replace('### ', '')}</h3>);
+        } else if (line.startsWith('**') && line.endsWith('**')) {
+            out.push(<p key={i} className="text-white font-semibold my-2">{line.replace(/\*\*/g, '')}</p>);
+        } else if (line.startsWith('*') && line.endsWith('*')) {
+            out.push(<p key={i} className="text-white/50 italic text-sm my-4">{line.replace(/\*/g, '')}</p>);
+        } else if (line === '---') {
+            out.push(<hr key={i} className="border-white/10 my-8" />);
+        } else if (line.trim()) {
+            out.push(<p key={i} className="text-white/70 my-3">{line}</p>);
+        }
+    });
+
+    flushList();
+    return out;
+}
+
 export default function TermsOfService() {
     const { settings } = useSettings();
 
     const content = settings?.terms_of_service || DEFAULT_TERMS_OF_SERVICE;
     const townshipName = settings?.township_name || 'Your Municipality';
+
+    /* Every one of the static pages kept index.html's default title, so a
+     * screen-reader user tabbing through browser tabs, and anyone reading their
+     * history or bookmarks, saw the same string on four different pages (WCAG
+     * 2.4.2 Page Titled). Restored on unmount so the portal's own title logic
+     * takes over again. */
+    useEffect(() => {
+        const previousTitle = document.title;
+        document.title = `Terms of Service | ${settings?.township_name || 'Municipality 311'}`;
+        return () => { document.title = previousTitle; };
+    }, [settings?.township_name]);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
@@ -134,54 +210,10 @@ export default function TermsOfService() {
             </div>
 
             {/* Content */}
-            <main className="max-w-4xl mx-auto px-4 py-8">
+            <main id="main-content" className="max-w-4xl mx-auto px-4 py-8">
                 <div className="glass-card rounded-2xl p-8">
                     <div className="prose prose-invert prose-sm max-w-none">
-                        {/* Simple markdown-like rendering */}
-                        {content.split('\n').map((line, i) => {
-                            if (line.startsWith('## ⚠️')) {
-                                return (
-                                    <div key={i} className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 mb-6">
-                                        <h2 className="text-xl font-bold text-red-400 flex items-center gap-2">
-                                            <AlertTriangle className="w-6 h-6" />
-                                            {line.replace('## ⚠️ ', '')}
-                                        </h2>
-                                    </div>
-                                );
-                            }
-                            if (line.startsWith('## ')) {
-                                return <h2 key={i} className="text-xl font-bold text-white mt-8 mb-4">{line.replace('## ', '')}</h2>;
-                            }
-                            if (line.startsWith('### ')) {
-                                return <h3 key={i} className="text-lg font-semibold text-white/90 mt-6 mb-3">{line.replace('### ', '')}</h3>;
-                            }
-                            if (line.startsWith('- **')) {
-                                const match = line.match(/- \*\*(.+?)\*\*: (.+)/);
-                                if (match) {
-                                    return (
-                                        <li key={i} className="text-white/70 ml-4 my-1">
-                                            <strong className="text-white">{match[1]}:</strong> {match[2]}
-                                        </li>
-                                    );
-                                }
-                            }
-                            if (line.startsWith('- ')) {
-                                return <li key={i} className="text-white/70 ml-4 my-1">{line.replace('- ', '')}</li>;
-                            }
-                            if (line.startsWith('**') && line.endsWith('**')) {
-                                return <p key={i} className="text-white font-semibold my-2">{line.replace(/\*\*/g, '')}</p>;
-                            }
-                            if (line.startsWith('*') && line.endsWith('*')) {
-                                return <p key={i} className="text-white/50 italic text-sm my-4">{line.replace(/\*/g, '')}</p>;
-                            }
-                            if (line === '---') {
-                                return <hr key={i} className="border-white/10 my-8" />;
-                            }
-                            if (line.trim()) {
-                                return <p key={i} className="text-white/70 my-3">{line}</p>;
-                            }
-                            return null;
-                        })}
+                        {renderTerms(content)}
                     </div>
                 </div>
 

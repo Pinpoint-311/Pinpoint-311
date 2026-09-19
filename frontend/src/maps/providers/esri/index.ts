@@ -21,9 +21,14 @@
  *                                may receive tokens.
  *   options.corsEnabledServers   string[] — older on-prem servers needing an
  *                                explicit CORS allowance.
- *   options.geocodeServiceUrl    Locator base URL. Defaults to Esri's World
+ *   options.locatorUrl           Locator base URL. Defaults to Esri's World
  *                                GeocodeServer. Point this at the county's own
- *                                composite locator.
+ *                                composite locator. This is the name the
+ *                                backend puts in `map_credentials` (from the
+ *                                ARCGIS_LOCATOR_URL secret), so it is the one
+ *                                that actually arrives.
+ *   options.geocodeServiceUrl    Accepted as an alias for the above, for a
+ *                                caller that builds its own config.
  *   options.geocodeToken         Token for that locator, if it differs from
  *                                apiKey. Defaults to apiKey.
  *   options.geocodeCountries     string[] of ISO-3166-1 alpha-2 codes.
@@ -78,7 +83,15 @@ export const esriMapProvider: MapProviderFactory = {
 
     createGeocoder(config: MapProviderConfig): GeocodingProvider {
         return createEsriGeocoder({
-            serviceUrl: str(config.options, 'geocodeServiceUrl'),
+            // `locatorUrl` is what the backend emits, and reading only the
+            // alias meant the browser silently ignored a town's own locator and
+            // asked Esri's world service instead -- while geocode_dispatch.py
+            // honoured the same setting server-side. So the county address
+            // locator, the single biggest local accuracy win this adapter
+            // exists for, reached everything *except* the address box residents
+            // type into.
+            serviceUrl:
+                str(config.options, 'locatorUrl') ?? str(config.options, 'geocodeServiceUrl'),
             token: str(config.options, 'geocodeToken') ?? config.apiKey ?? null,
             countryCodes: strList(config.options, 'geocodeCountries') ?? ['USA'],
             category: str(config.options, 'geocodeCategory') ?? null,

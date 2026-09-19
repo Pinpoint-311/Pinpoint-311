@@ -303,12 +303,17 @@ class TestLegalHoldOverridesThePolicy:
         service = (ROOT / "app/services/retention_service.py").read_text()
         selection = service[service.index("async def get_records_for_archival"):]
         selection = selection[:selection.index("\nasync def ")]
-        assert "ServiceRequest.flagged == False" in selection
+        # `legal_hold`, not `flagged`. They used to be the same column, which
+        # meant the unauthenticated public-comment endpoint could place a
+        # permanent hold on somebody else's report by tripping content
+        # moderation -- exempting that reporter's PII from this policy forever.
+        assert "ServiceRequest.legal_hold == False" in selection
+        assert "ServiceRequest.flagged" not in selection
 
         archive = service[service.index("async def archive_record"):]
         archive = archive[:archive.index("\nasync def ")]
-        assert "if record.flagged:" in archive
-        assert archive.index("if record.flagged:") < archive.index("apply_scrub(")
+        assert "if record.legal_hold:" in archive
+        assert archive.index("if record.legal_hold:") < archive.index("apply_scrub(")
 
 
 # --------------------------------------------------------------------------- #

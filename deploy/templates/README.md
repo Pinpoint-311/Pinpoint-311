@@ -88,10 +88,8 @@ gated by the provider rather than by permissions:
   will sit in soft-delete for its retention period and, with purge protection on,
   cannot be wiped early. That is the setting working as intended.
 
-## Publishing
+## Publishing & In-App Template Serving
 
-A deploy button hands the cloud provider a public URL and the provider fetches
-the template itself. Until these files are published somewhere publicly readable,
-the buttons on the setup page do not resolve. The URL lives in a single constant,
-`TEMPLATE_BASE_URL`, in `frontend/src/components/setupStepsContent.tsx`; moving
-hosts is a one-line change there.
+A deploy button hands the cloud provider a public URL and the provider fetches the template itself. In live deployments, templates are served dynamically by the instance's backend at `/api/deploy-templates/...` (with custom capability default rewriting to fit the town's configured cloud choices).
+
+When running on local or private networks without a public hostname, the app falls back to the published template URL configured in `frontend/src/components/deployTemplateUrls.ts` (`PUBLISHED_TEMPLATE_BASE_URL`).

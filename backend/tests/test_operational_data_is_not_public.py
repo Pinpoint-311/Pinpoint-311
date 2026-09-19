@@ -41,8 +41,20 @@ INTERNAL_FIELDS = {
 }
 
 
-def _public_list_payload() -> set:
-    """The dict literal `list_public_requests` builds, as a set of keys.
+# Every attribute of the row the public payload is allowed to read. The keys
+# are only half the control: `"description": r.staff_notes` renames a leak and
+# a key check waves it through, and `**{...}` contributes no key at all.
+ALLOWED_ROW_ATTRS = {
+    "service_request_id", "service_code", "service_name", "description",
+    "status", "address", "lat", "long", "requested_datetime",
+    "updated_datetime", "closed_substatus", "media_urls",
+    "completion_message", "completion_photo_url",
+}
+
+
+def _public_list_dict() -> ast.Dict:
+    """The dict node `list_public_requests` builds one element of the response
+    from.
 
     Parsed rather than grepped: the endpoint sits in a 1500-line module and a
     substring search for "assigned_to" matches the staff endpoints below it.
@@ -52,8 +64,69 @@ def _public_list_payload() -> set:
         if isinstance(node, ast.AsyncFunctionDef) and node.name == "list_public_requests":
             for dict_node in ast.walk(node):
                 if isinstance(dict_node, ast.Dict) and len(dict_node.keys) > 5:
-                    return {k.value for k in dict_node.keys if isinstance(k, ast.Constant)}
+                    return dict_node
     pytest.fail("could not find the payload built by list_public_requests")
+
+
+def _public_list_payload() -> set:
+    """The payload's keys -- but only once the dict is known to be all literal
+    keys. `_public_list_dict` plus `test_..._is_built_only_from_literal_keys`
+    is what makes this set trustworthy; on its own a key set is not, which is
+    the bug this file had."""
+    return {k.value for k in _public_list_dict().keys if isinstance(k, ast.Constant)}
+
+
+def test_the_public_payload_is_built_only_from_literal_keys():
+    """No `**spread`, no computed key.
+
+    This is the hole that was here. `_public_list_payload` collected
+    `ast.Constant` keys and quietly dropped everything else, so inserting
+
+        **{c.name: getattr(r, c.name) for c in r.__table__.columns}
+
+    into the unauthenticated list endpoint published reporter names, emails,
+    phones and staff notes to anyone -- and every test in this file passed. A
+    spread has a `None` key in the AST: it contributed no key to the set the
+    "internal fields" check ran against, and no key to the `len(keys) < 25`
+    size check either, so the payload could grow to every column while
+    measuring as fourteen.
+    """
+    node = _public_list_dict()
+    spreads = [i for i, k in enumerate(node.keys) if k is None]
+    assert not spreads, (
+        "the public request payload contains a `**` spread. Whatever it "
+        "expands to is served unauthenticated, and no key-based check in this "
+        "file can see it. List the fields."
+    )
+    computed = [ast.dump(k) for k in node.keys
+                if not (isinstance(k, ast.Constant) and isinstance(k.value, str))]
+    assert not computed, (
+        f"the public request payload has non-literal keys: {computed}. The "
+        f"explicit dict is the access control; a computed key is not reviewable."
+    )
+
+
+def test_the_public_payload_reads_only_the_fields_it_names():
+    """The values, not just the keys.
+
+    `"description": r.staff_notes` passes every key check in this file. So does
+    `"lat": r.__dict__`. What the payload is allowed to *read off the row* is
+    pinned here.
+    """
+    node = _public_list_dict()
+    read = set()
+    for value in node.values:
+        for sub in ast.walk(value):
+            # Only attribute access directly on a name (`r.description`).
+            # `r.requested_datetime.isoformat()` yields the inner one, which is
+            # the access that matters.
+            if isinstance(sub, ast.Attribute) and isinstance(sub.value, ast.Name):
+                read.add(sub.attr)
+    unexpected = read - ALLOWED_ROW_ATTRS
+    assert not unexpected, (
+        f"the public request payload reads {sorted(unexpected)} off the row. "
+        f"Add it to ALLOWED_ROW_ATTRS only if a resident is meant to see it."
+    )
 
 
 def test_the_public_map_is_not_told_who_is_handling_a_report():

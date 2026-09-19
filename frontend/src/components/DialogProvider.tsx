@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, createContext, useContext, ReactNode } from 'react';
+import { useState, useCallback, useEffect, useRef, useId, createContext, useContext, ReactNode } from 'react';
 import { X, AlertTriangle, Info, CheckCircle2, Rocket, Trash2, Shield, Download } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -83,6 +83,35 @@ interface DialogProps {
     showCancel?: boolean;
 }
 
+/**
+ * The focusable children of the dialog, in tab order.
+ *
+ * Disabled and hidden controls are filtered out for the same reason ui/Modal
+ * filters them: `.focus()` on a disabled element silently does nothing, and
+ * the Confirm button here starts disabled on every type-to-confirm dialog, so
+ * an unfiltered list would open the dialog with focus still on <body> —
+ * outside the dialog, with the page behind it fully tabbable.
+ */
+function getFocusable(root: HTMLElement | null): HTMLElement[] {
+    if (!root) return [];
+    const candidates = root.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    return Array.from(candidates).filter(el =>
+        !el.hasAttribute('disabled') &&
+        el.getAttribute('aria-hidden') !== 'true' &&
+        (el.offsetParent !== null || el.getClientRects().length > 0)
+    );
+}
+
+/* Deliberately NOT rendered through ui/Modal, even though it duplicates that
+ * component's focus handling: confirmations here are routinely raised from
+ * inside an already-open ui/Modal (delete a user from the user editor, purge
+ * from the retention modal). Two Modals would mean two document-level Escape
+ * and Tab handlers fighting, and one Escape closing both. The handler below
+ * instead runs in the CAPTURE phase and stops propagation, so while a confirm
+ * is open it wins over any Modal underneath it, and Escape dismisses only the
+ * confirmation. The z-index above ui/Modal's z-50 is part of the same story. */
 const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: DialogProps) => {
     /* Cleared whenever the dialog opens, so the word typed to authorise one
      * deletion is never sitting in the box pre-approving the next. */
@@ -91,6 +120,72 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
 
     const variant = config.variant || 'default';
     const styles = variantStyles[variant];
+
+    const panelRef = useRef<HTMLDivElement>(null);
+    const typedInputRef = useRef<HTMLInputElement>(null);
+    const previouslyFocused = useRef<HTMLElement | null>(null);
+    const baseId = useId();
+    const titleId = `${baseId}-title`;
+    const descId = `${baseId}-desc`;
+    const typedInputId = `${baseId}-typed`;
+    const typedHintId = `${baseId}-typed-hint`;
+
+    const typedSatisfied = !config.requireTyped || typed.trim() === config.requireTyped;
+
+    /* Focus in on open, focus back out on close. Without the restore, cancelling
+     * a delete drops focus to <body> and a keyboard user restarts at the top of
+     * the console instead of on the row they came from. */
+    useEffect(() => {
+        if (!isOpen) return;
+        previouslyFocused.current = document.activeElement as HTMLElement | null;
+        const timer = window.setTimeout(() => {
+            const focusable = getFocusable(panelRef.current);
+            // The type-to-confirm box, when present, is the thing the person has
+            // to act on; otherwise the first control (Close) carries focus in.
+            (typedInputRef.current || focusable[0] || panelRef.current)?.focus();
+        }, 30);
+        return () => {
+            window.clearTimeout(timer);
+            previouslyFocused.current?.focus?.();
+        };
+    }, [isOpen]);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                event.stopPropagation();
+                onCancel();
+                return;
+            }
+            if (event.key !== 'Tab' || !panelRef.current) return;
+            const focusable = getFocusable(panelRef.current);
+            if (focusable.length === 0) {
+                event.preventDefault();
+                return;
+            }
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            const active = document.activeElement as HTMLElement | null;
+            // Focus starting outside the panel (or on the panel itself) has to be
+            // pulled back in, otherwise Tab walks the page underneath the confirm.
+            if (!active || !panelRef.current.contains(active) || active === panelRef.current) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+                return;
+            }
+            if (event.shiftKey && active === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && active === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+        document.addEventListener('keydown', onKeyDown, true);
+        return () => document.removeEventListener('keydown', onKeyDown, true);
+    }, [isOpen, onCancel]);
 
     return (
         <AnimatePresence>
@@ -103,6 +198,7 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={onCancel}
+                        aria-hidden="true"
                     />
 
                     {/* Dialog */}
@@ -113,32 +209,40 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                         exit={{ opacity: 0 }}
                     >
                         <motion.div
+                            ref={panelRef}
                             className="bg-slate-800 backdrop-blur-xl border border-slate-600/40 rounded-3xl shadow-2xl max-w-xl w-full overflow-hidden"
                             initial={{ scale: 0.9, y: 20 }}
                             animate={{ scale: 1, y: 0 }}
                             exit={{ scale: 0.9, y: 20 }}
                             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                             onClick={(e) => e.stopPropagation()}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby={titleId}
+                            aria-describedby={descId}
+                            tabIndex={-1}
                         >
                             {/* Header */}
                             <div className="p-8 pb-6">
                                 <div className="flex items-start gap-5">
-                                    {/* Icon */}
-                                    <div className={`p-4 rounded-2xl ${styles.iconBg}`}>
+                                    {/* Icon — decorative; the variant is already carried by the title and message */}
+                                    <div className={`p-4 rounded-2xl ${styles.iconBg}`} aria-hidden="true">
                                         {config.icon || styles.icon}
                                     </div>
 
                                     {/* Title & Close */}
                                     <div className="flex-1 min-w-0 pt-1">
                                         <div className="flex items-center justify-between">
-                                            <h3 className="text-xl font-semibold text-white">
+                                            <h2 id={titleId} className="text-xl font-semibold text-white">
                                                 {config.title}
-                                            </h3>
+                                            </h2>
                                             <button
+                                                type="button"
                                                 onClick={onCancel}
-                                                className="p-2.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-4"
+                                                aria-label="Close dialog"
+                                                className="p-2.5 text-slate-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors ml-4 focus-visible:ring-2 focus-visible:ring-amber-400"
                                             >
-                                                <X size={22} />
+                                                <X size={22} aria-hidden="true" />
                                             </button>
                                         </div>
                                     </div>
@@ -147,21 +251,31 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
 
                             {/* Content */}
                             <div className="px-8 pb-8">
-                                <div className="text-slate-300 text-base leading-relaxed whitespace-pre-wrap">
+                                <div id={descId} className="text-slate-300 text-base leading-relaxed whitespace-pre-wrap">
                                     {config.message}
                                 </div>
                                 {config.requireTyped && (
                                     <div className="mt-5">
-                                        <label className="block text-sm text-slate-300 mb-2">
+                                        <label htmlFor={typedInputId} className="block text-sm text-slate-300 mb-2">
                                             Type <code className="px-1.5 py-0.5 rounded bg-slate-700 text-white font-semibold">{config.requireTyped}</code> to continue
                                         </label>
                                         <input
-                                            autoFocus
+                                            ref={typedInputRef}
+                                            id={typedInputId}
                                             value={typed}
                                             onChange={(e) => setTyped(e.target.value)}
-                                            className="w-full rounded-xl bg-slate-900 border border-slate-600 px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-400"
+                                            aria-describedby={typedHintId}
+                                            className="w-full rounded-xl bg-slate-900 border border-slate-600 px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-red-400 focus-visible:ring-2 focus-visible:ring-amber-400"
                                             placeholder={config.requireTyped}
                                         />
+                                        {/* Says out loud why Confirm is unavailable. A disabled button
+                                          * announces nothing and cannot carry a description of its own,
+                                          * so the explanation has to live on the input the person is in. */}
+                                        <p id={typedHintId} className="mt-2 text-sm text-slate-300">
+                                            {typedSatisfied
+                                                ? `${config.confirmText || 'Confirm'} is now available.`
+                                                : `${config.confirmText || 'Confirm'} stays unavailable until you type ${config.requireTyped} exactly.`}
+                                        </p>
                                     </div>
                                 )}
                             </div>
@@ -170,6 +284,7 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                             <div className="px-8 py-6 flex gap-4 justify-end bg-slate-900/50 border-t border-slate-700/50">
                                 {showCancel && (
                                     <button
+                                        type="button"
                                         onClick={onCancel}
                                         className="px-8 py-3.5 text-base font-medium text-slate-200 hover:text-white bg-slate-700 hover:bg-slate-600 border border-slate-500/50 rounded-xl transition-all"
                                     >
@@ -177,8 +292,10 @@ const Dialog = ({ isOpen, config, onConfirm, onCancel, showCancel = true }: Dial
                                     </button>
                                 )}
                                 <button
+                                    type="button"
                                     onClick={onConfirm}
-                                    disabled={!!config.requireTyped && typed.trim() !== config.requireTyped}
+                                    disabled={!typedSatisfied}
+                                    aria-describedby={config.requireTyped ? typedHintId : undefined}
                                     className={`px-8 py-3.5 text-base font-medium text-white rounded-xl transition-all disabled:opacity-40 disabled:cursor-not-allowed ${styles.confirmBtn}`}
                                 >
                                     {config.confirmText || 'Confirm'}

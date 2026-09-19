@@ -3,6 +3,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from typing import Optional
 import secrets
 import logging
 import os
@@ -15,9 +16,20 @@ import secrets as pysecrets
 from app.core.auth import create_access_token, decode_token, get_current_user
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
+# Login state tokens live in Redis (app/services/login_state.py) so that a
+# backend restart mid-login does not invalidate the round-trip already in flight.
+from app.services import login_state
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# A strict ceiling on the first-run admin-password endpoints, on top of the
+# lockout below. Keyed per caller (app/core/client_ip.py), so one attacker
+# cannot spend the whole town's budget.
+from slowapi import Limiter
+from app.core.client_ip import rate_limit_key
+
+limiter = Limiter(key_func=rate_limit_key)
 
 
 def _sanitize_redirect_uri(redirect_uri: str) -> str:
@@ -32,11 +44,162 @@ def _sanitize_redirect_uri(redirect_uri: str) -> str:
             return parsed_uri.path or "/"
     return redirect_uri
 
-# Store state tokens temporarily (in production, use Redis)
-_pending_states: dict = {}
 
 # One-time bootstrap tokens (only work until Auth0 is configured)
 _bootstrap_tokens: dict = {}
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap brute-force defence
+# ---------------------------------------------------------------------------
+#
+# /bootstrap and /bootstrap/verify accept a password and mint an ADMIN session
+# on a match. The gate is open on any deployment with no identity provider,
+# which is every town between install and SSO setup -- and both live demo
+# instances right now. The comparison is constant-time and a weak default is
+# refused, but nothing bounded how many guesses an anonymous caller could make:
+# the endpoint was an unthrottled admin-password oracle answering as fast as the
+# process could reply.
+#
+# Two tiers, pulling deliberately in opposite directions:
+#
+#   HARD TIER, per caller address. Consecutive failures from one address earn an
+#   escalating lockout. It bites hard because an attacker can only ever lock out
+#   *themselves*: with the client address now resolved through the trusted-proxy
+#   rule (app/core/client_ip.py) it cannot be forged into somebody else's
+#   bucket, and a success clears it.
+#
+#   SOFT TIER, deployment-wide. A distributed attacker spreads guesses across
+#   addresses and never trips the hard tier, so failures are also counted across
+#   all callers. This tier is CAPPED AND NEVER RE-ARMS: once it engages it makes
+#   every attempt cost a fixed short pause and it stops there, expiring on its
+#   own. It must not escalate and must not refuse, because anything that did
+#   would hand any anonymous caller on the internet a way to lock the town's
+#   legitimate administrator out of their own first-run setup -- turning a
+#   brute-force defence into a denial-of-service weapon aimed at the one person
+#   it exists to protect. Making a distributed attack expensive is worth having;
+#   making first-run setup blockable by strangers is not.
+#
+# In-memory, like `_bootstrap_tokens` above, and for the same reason: a town
+# runs one backend process, and bootstrap is a minutes-long window at install
+# time. A restart clears the counters, which costs an attacker far more than it
+# costs an admin (they would have to be watching for it).
+
+_BOOTSTRAP_FREE_ATTEMPTS = 3       # guesses before the hard tier starts locking
+_BOOTSTRAP_BASE_LOCKOUT = 5.0      # seconds, doubling per failure past the free ones
+_BOOTSTRAP_MAX_LOCKOUT = 900.0     # 15 minutes; long enough to be useless to a script
+_BOOTSTRAP_FAILURE_TTL = 3600.0    # a quiet hour forgets an address entirely
+
+_BOOTSTRAP_GLOBAL_WINDOW = 900.0   # rolling 15 minutes
+_BOOTSTRAP_GLOBAL_TRIGGER = 20     # failures across all addresses before the soft tier
+_BOOTSTRAP_GLOBAL_PAUSE = 1.0      # fixed, never escalates, never refuses
+
+# address -> (consecutive_failures, locked_until, last_seen)
+_bootstrap_failures: dict = {}
+# timestamps of recent failures from any address
+_bootstrap_global_failures: list = []
+
+
+def _bootstrap_client(request: Optional[Request]) -> str:
+    """Which bucket this attempt counts against."""
+    if request is None:
+        return "unknown-client"
+    from app.core.client_ip import client_ip
+
+    return client_ip(request) or "unknown-client"
+
+
+def _bootstrap_prune(now: float) -> None:
+    for key, (_fails, _until, last_seen) in list(_bootstrap_failures.items()):
+        if now - last_seen > _BOOTSTRAP_FAILURE_TTL:
+            _bootstrap_failures.pop(key, None)
+    cutoff = now - _BOOTSTRAP_GLOBAL_WINDOW
+    while _bootstrap_global_failures and _bootstrap_global_failures[0] < cutoff:
+        _bootstrap_global_failures.pop(0)
+
+
+def bootstrap_lockout_seconds(client: str, now: Optional[float] = None) -> float:
+    """Seconds this address must wait, or 0. Pure read — never records."""
+    import time as _time
+
+    now = _time.time() if now is None else now
+    _bootstrap_prune(now)
+    entry = _bootstrap_failures.get(client)
+    if not entry:
+        return 0.0
+    _fails, locked_until, _last = entry
+    return max(0.0, locked_until - now)
+
+
+def note_bootstrap_failure(client: str, now: Optional[float] = None) -> None:
+    """Record one wrong password and extend this address's lockout."""
+    import time as _time
+
+    now = _time.time() if now is None else now
+    _bootstrap_prune(now)
+    fails, _locked_until, _last = _bootstrap_failures.get(client, (0, 0.0, now))
+    fails += 1
+    if fails > _BOOTSTRAP_FREE_ATTEMPTS:
+        penalty = min(
+            _BOOTSTRAP_BASE_LOCKOUT * (2 ** (fails - _BOOTSTRAP_FREE_ATTEMPTS - 1)),
+            _BOOTSTRAP_MAX_LOCKOUT,
+        )
+    else:
+        penalty = 0.0
+    _bootstrap_failures[client] = (fails, now + penalty, now)
+    _bootstrap_global_failures.append(now)
+
+
+def note_bootstrap_success(client: str) -> None:
+    """A correct password clears this address. The soft tier is left alone."""
+    _bootstrap_failures.pop(client, None)
+
+
+def bootstrap_global_pause(now: Optional[float] = None) -> float:
+    """The soft tier's fixed pause, or 0. Capped by construction."""
+    import time as _time
+
+    now = _time.time() if now is None else now
+    _bootstrap_prune(now)
+    if len(_bootstrap_global_failures) >= _BOOTSTRAP_GLOBAL_TRIGGER:
+        return _BOOTSTRAP_GLOBAL_PAUSE
+    return 0.0
+
+
+def _reset_bootstrap_throttle() -> None:
+    """Test hook. Nothing in the request path calls this."""
+    _bootstrap_failures.clear()
+    _bootstrap_global_failures.clear()
+
+
+async def _guard_bootstrap_attempt(request: Optional[Request]) -> str:
+    """Raise 429 if this address is locked out; apply the capped global pause.
+
+    Returns the caller key so the handler can record the outcome.
+    """
+    import asyncio
+
+    client = _bootstrap_client(request)
+    wait = bootstrap_lockout_seconds(client)
+    if wait > 0:
+        from app.core.sanitize import sanitize_for_log
+
+        logger.warning(
+            "Bootstrap attempt refused, address locked out: %s",
+            sanitize_for_log(client),
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"Too many incorrect setup passwords from this address. "
+                f"Try again in {int(wait) + 1} seconds."
+            ),
+            headers={"Retry-After": str(int(wait) + 1)},
+        )
+    pause = bootstrap_global_pause()
+    if pause:
+        await asyncio.sleep(pause)
+    return client
 
 
 async def _bootstrap_gate_open(db: AsyncSession) -> bool:
@@ -68,8 +231,10 @@ def _verify_bootstrap_password(supplied: str) -> None:
 
 
 @router.post("/bootstrap")
+@limiter.limit("5/minute")
 async def generate_bootstrap_token(
-    password: str = Query(..., description="INITIAL_ADMIN_PASSWORD to authorize bootstrap"),
+    request: Request,
+    password: str = Form(..., description="INITIAL_ADMIN_PASSWORD to authorize bootstrap"),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -80,14 +245,27 @@ async def generate_bootstrap_token(
     returns an error.
 
     Requires the INITIAL_ADMIN_PASSWORD from environment to authorize.
+
+    The password is a FORM FIELD, not a query parameter. It was a query
+    parameter, which put the deployment's admin password in plaintext in every
+    uvicorn access line, in the proxy's log, and in anything that ships those
+    logs onward -- a secret that has to be rotated after anyone reads a log
+    file. Its sibling /bootstrap/verify already took a form field; this now
+    matches it.
     """
+    client = await _guard_bootstrap_attempt(request)
     # Fail-closed: only when Auth0 has never been configured
     if not await _bootstrap_gate_open(db):
         raise HTTPException(
             status_code=403,
             detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
         )
-    _verify_bootstrap_password(password)
+    try:
+        _verify_bootstrap_password(password)
+    except HTTPException:
+        note_bootstrap_failure(client)
+        raise
+    note_bootstrap_success(client)
 
     # Find admin user
     result = await db.execute(
@@ -165,11 +343,23 @@ async def auto_bootstrap(
 
 
 @router.post("/bootstrap/verify")
+@limiter.limit("5/minute")
 async def verify_bootstrap(
+    request: Request,
     password: str = Form(...),
     db: AsyncSession = Depends(get_db)
 ):
     """Validate the setup password and mint the initial admin session."""
+    try:
+        client = await _guard_bootstrap_attempt(request)
+    except HTTPException as e:
+        # This path renders HTML: the form at /bootstrap/auto posts here from a
+        # browser, and a JSON body would be shown to a human as raw text.
+        return _bootstrap_html_message(
+            "Too many attempts",
+            f'<h2>Too many attempts</h2><p>{e.detail}</p>',
+            e.status_code,
+        )
     if not await _bootstrap_gate_open(db):
         return _bootstrap_html_message(
             "Setup Complete",
@@ -179,12 +369,14 @@ async def verify_bootstrap(
     try:
         _verify_bootstrap_password(password)
     except HTTPException as e:
+        note_bootstrap_failure(client)
         return _bootstrap_html_message(
             "Setup",
             f'<h2>Could not continue</h2><p>{e.detail}</p>'
             '<a href="/api/auth/bootstrap/auto" style="color:#6366f1">Try again</a>',
             e.status_code,
         )
+    note_bootstrap_success(client)
 
     result = await db.execute(
         select(User).where(User.role == "admin", User.is_active == True).limit(1)
@@ -301,12 +493,12 @@ async def initiate_login(
     if status_info["status"] != "configured":
         raise HTTPException(
             status_code=503,
-            detail="Authentication not configured. Please configure Auth0 in Admin Console."
+            detail="Authentication not configured. Please configure your identity provider in the Admin Console."
         )
     
     # Generate state token for CSRF protection
     state = secrets.token_urlsafe(32)
-    _pending_states[state] = redirect_uri
+    await login_state.remember(state, redirect_uri)
     
     # Build callback URL (backend receives the code)
     callback_url = redirect_uri.rsplit("/", 1)[0] + "/api/auth/callback"
@@ -336,9 +528,12 @@ async def auth0_callback(
     Logs all authentication events for audit trail.
     """
     # Verify state token
-    redirect_uri = _pending_states.pop(state, None)
+    redirect_uri = await login_state.consume(state)
     if not redirect_uri:
-        raise HTTPException(status_code=400, detail="Invalid or expired state token")
+        raise HTTPException(
+            status_code=400,
+            detail="This sign-in link is no longer valid. Please start signing in again."
+        )
         
     # Handle Auth0 errors (user cancellation, access denied, etc.)
     if error or not code:
@@ -573,13 +768,22 @@ async def auth_status(db: AsyncSession = Depends(get_db)):
     """
     Get authentication configuration status.
     """
+    from app.services.identity import IDENTITY_CATALOG
+
     status_info = await Auth0Service.check_status(db)
     configured = status_info["status"] == "configured"
-    
+
+    # `provider` was the literal "auth0" regardless of what was configured, so
+    # a town on Entra was still told -- and still showed staff -- Auth0.
+    provider = status_info.get("provider") or "auth0"
+    label = IDENTITY_CATALOG.get(provider, {}).get("name", provider)
+
     return {
+        # Kept under its original name: the login page and older clients read it.
         "auth0_configured": configured,
-        "provider": "auth0" if configured else None,
-        "message": "Ready" if configured else "Auth0 not configured"
+        "provider": provider if configured else None,
+        "provider_name": label if configured else None,
+        "message": "Ready" if configured else f"{label} not configured"
     }
 
 

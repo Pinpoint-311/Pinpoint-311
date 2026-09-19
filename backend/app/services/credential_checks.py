@@ -76,10 +76,26 @@ def _auth0_domain(v: str) -> Optional[str]:
 
 
 def _arcgis_key(v: str) -> Optional[str]:
+    """Positively wrong only.
+
+    This required a JWT, and ArcGIS issues more than one shape: the developer
+    dashboard's API keys are opaque tokens beginning AAPK or AAPT with no dots
+    in them at all. A working trial key was reported as "does not look like one"
+    while the map it had just drawn sat on the screen beside the message --
+    which teaches an operator to disregard these checks, including the ones that
+    are right.
+
+    So this only speaks when the value is positively something else. That is the
+    rule this file already states for itself: refusing a credential that would
+    have worked is a worse failure than accepting one that will not, because the
+    second is discoverable and the first is a dead end.
+    """
     if v.startswith("AIza"):
         return "This is a Google Maps key, not an ArcGIS one."
-    if not _JWT.match(v):
-        return "ArcGIS keys are long tokens in three dot-separated parts. This does not look like one."
+    if _URLISH.match(v):
+        return "This is a web address. Paste the API key itself."
+    if len(v) < 20:
+        return f"ArcGIS keys are long tokens; this is {len(v)} characters."
     return None
 
 
@@ -151,9 +167,27 @@ def inspect_value(key: str, value: str) -> Optional[Finding]:
     return None
 
 
+# Credentials that run out on a date the provider will not remind anybody about,
+# and the name to use when saying so. See credential_expiry.
+EXPIRING_CREDENTIALS = {
+    "AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES": "The Key Vault client secret",
+}
+
+
 def inspect_settings(settings: dict) -> List[Finding]:
     """Every finding across a save, worst first."""
     findings = [f for f in (inspect_value(k, v) for k, v in (settings or {}).items()) if f]
+
+    # A recorded expiry is worth acting on the moment it is typed: somebody
+    # pasting a date that has already gone has just explained why decryption
+    # stopped, and saying so here beats waiting for the next health sweep.
+    from app.services.credential_expiry import check_expiry
+
+    for key, label in EXPIRING_CREDENTIALS.items():
+        status = check_expiry((settings or {}).get(key), label=label)
+        if status is not None and status.severity != SEVERITY_INFO:
+            findings.append(Finding(key, status.severity, status.message))
+
     order = {SEVERITY_ERROR: 0, SEVERITY_WARN: 1, SEVERITY_INFO: 2}
     return sorted(findings, key=lambda f: (order.get(f.severity, 9), f.key))
 

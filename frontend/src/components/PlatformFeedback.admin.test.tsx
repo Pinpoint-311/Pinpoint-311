@@ -88,12 +88,32 @@ describe('the resident entry point', () => {
         expect(portal).toContain('feedbackEmail={settings?.platform_feedback_email}');
     });
 
-    it('sits in the footer and does not interrupt filing a report', () => {
-        const footer = portal.slice(portal.indexOf('{/* Footer */}'));
-        expect(footer).toContain('<PlatformFeedback');
-        // The component is mounted exactly once, in the footer -- not over the
-        // report form, and not on the success screen as a second interruption.
+    it('is asked on the confirmation screen, and nowhere a report is being filed', () => {
+        /* It used to live in the footer, in the smallest type on the page, so
+         * that it could not compete with somebody mid-report. That rationale
+         * survives the move: the confirmation screen is the one place where the
+         * job is finished and there is nothing left to interrupt, so the
+         * question can be asked properly instead of hidden.
+         *
+         * What must not change is that it is mounted exactly ONCE and never
+         * over the form. */
         expect(portal.match(/<PlatformFeedback\b/g)).toHaveLength(1);
+
+        const success = portal.slice(portal.indexOf("step === 'success'"));
+        expect(success).toContain('<PlatformFeedback');
+
+        // Not in the footer any more, and not above the success block either.
+        const beforeSuccess = portal.slice(0, portal.indexOf("step === 'success'"));
+        expect(beforeSuccess).not.toContain('<PlatformFeedback');
+    });
+
+    it('offers to track the request that was just filed', () => {
+        /* The reference id is in hand at exactly this moment and nowhere else;
+         * without this the resident had to notice a link elsewhere and retype
+         * it. Deep-links to the one request rather than the list. */
+        const success = portal.slice(portal.indexOf("step === 'success'"));
+        expect(success).toMatch(/updateHash\(`track\/\$\{submittedId\}`\)/);
+        expect(success).toContain('Track this request');
     });
 });
 

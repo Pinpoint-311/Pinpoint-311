@@ -11,6 +11,7 @@ import {
 import { Button, Modal, CollapsibleSection } from './ui';
 import SecretField from './SecretField';
 import { useDialog } from './DialogProvider';
+import { useOptionalAnnounce } from './liveAnnounce';
 import {
     api, IntegrationPlatform, IntegrationConfig, IntegrationSyncLog, IntegrationTestResult,
 } from '../services/api';
@@ -32,7 +33,9 @@ import {
 // pill said "Connected" off `enabled && last_sync_status !== 'error'`, which is
 // the credentials-are-stored question this whole health system exists to stop
 // badges from answering.
-import { StatusPill, CapabilityTile, Action, hasAlert } from './capabilityUI';
+import {
+    StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert,
+} from './capabilityUI';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -62,6 +65,11 @@ type WizardStep = 'intro' | 'details' | 'finish';
 
 export default function GovtechIntegrations() {
     const dialog = useDialog();
+    /* Every status message on this screen, through the provider's live regions.
+     * Not capabilityUI's announceStatus: that writes to a `#aria-live-region`
+     * element the town app's index.html does not declare, so in this app it
+     * found nothing and returned, and none of these were ever spoken. */
+    const announce = useOptionalAnnounce();
     const [catalog, setCatalog] = useState<IntegrationPlatform[]>([]);
     const [configs, setConfigs] = useState<IntegrationConfig[]>([]);
     // Keyed by integration id. One global string meant every card's controls
@@ -276,9 +284,13 @@ export default function GovtechIntegrations() {
         setTesting(true);
         setTestResult(null);
         setShowTechnical(false);
+        announce(`Checking the connection to ${platform.name}…`);
         try {
             const result = await api.testIntegration(existing.id);
             setTestResult(result);
+            announce(result.ok
+                ? `${platform.name} connected. ${result.detail || ''}`
+                : `${platform.name} is not connected yet. ${result.friendly || result.detail || ''}`);
             if (result.ok && !existing.enabled) {
                 const updated = await api.updateIntegration(existing.id, { enabled: true });
                 setConfigs(prev => [...prev.filter(c => c.platform !== platform.platform), updated]);
@@ -407,6 +419,7 @@ export default function GovtechIntegrations() {
         setBusyFor(existing.id, 'toggle');
         try {
             await api.updateIntegration(existing.id, { enabled: !existing.enabled });
+            announce(`${name} connection turned ${existing.enabled ? 'off' : 'on'}.`);
             await load();
         } catch (err: any) {
             setError(err?.message || 'Could not update the connection.');
@@ -415,8 +428,13 @@ export default function GovtechIntegrations() {
         }
     };
 
-    const handleCardTest = async (existing: IntegrationConfig) => {
+    const handleCardTest = async (existing: IntegrationConfig, name: string) => {
         setBusyFor(existing.id, 'test');
+        // Through the page's one live region, so somebody who cannot see the
+        // pill change colour is told the check finished and what it found. The
+        // result also renders on the card; this is the same words, not a
+        // second, separate channel.
+        announce(`Checking the connection to ${name}…`);
         // A fresh verdict supersedes "update check started…" — leaving the old
         // notice next to it reads as two answers to one question.
         setCardNotice(prev => {
@@ -427,20 +445,28 @@ export default function GovtechIntegrations() {
         try {
             const result = await api.testIntegration(existing.id);
             setCardResult(prev => ({ ...prev, [existing.platform]: result }));
+            announce(result.ok
+                ? `${name} check passed. ${result.detail || ''}`
+                : `${name} check failed. ${result.friendly || result.detail || ''}`);
             await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Test failed' } }));
+            const detail = err?.message || 'Test failed';
+            setCardResult(prev => ({ ...prev, [existing.platform]: { ok: false, detail } }));
+            announce(`${name} check failed. ${detail}`);
         } finally {
             setBusyFor(existing.id, null);
         }
     };
 
-    const handleSync = async (existing: IntegrationConfig) => {
+    const handleSync = async (existing: IntegrationConfig, name: string) => {
         setBusyFor(existing.id, 'sync');
         try {
             const response = await api.syncIntegration(existing.id);
             const partly = response.started
                 && Object.values(response.started).some(started => !started);
+            announce(partly
+                ? `${name}: ${response.message}`
+                : `${name}: update check started.`);
             setCardNotice(prev => ({
                 ...prev,
                 [existing.platform]: {
@@ -455,20 +481,26 @@ export default function GovtechIntegrations() {
             }));
             await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the update check.' } }));
+            const detail = err?.message || 'Could not start the update check.';
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail } }));
+            announce(`${name}: ${detail}`);
         } finally {
             setBusyFor(existing.id, null);
         }
     };
 
-    const handleSyncAssets = async (existing: IntegrationConfig) => {
+    const handleSyncAssets = async (existing: IntegrationConfig, name: string) => {
         setBusyFor(existing.id, 'assets');
         try {
             await api.syncIntegrationAssets(existing.id);
-            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail: 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.' } }));
+            const detail = 'Copying their asset list (hydrants, lights, signs…) onto your map. This can take a few minutes.';
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: true, detail } }));
+            announce(`${name}: ${detail}`);
             await refreshAfterAction(existing);
         } catch (err: any) {
-            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail: err?.message || 'Could not start the asset copy.' } }));
+            const detail = err?.message || 'Could not start the asset copy.';
+            setCardNotice(prev => ({ ...prev, [existing.platform]: { ok: false, detail } }));
+            announce(`${name}: ${detail}`);
         } finally {
             setBusyFor(existing.id, null);
         }
@@ -583,7 +615,7 @@ export default function GovtechIntegrations() {
                             Will be cleared when you save.
                             <button
                                 type="button"
-                                className="underline hover:text-amber-200"
+                                className="underline underline-offset-2 hover:text-amber-200 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
                                 onClick={() => setCleared(prev => {
                                     const next = new Set(prev);
                                     next.delete(field.key);
@@ -596,7 +628,7 @@ export default function GovtechIntegrations() {
                     ) : (
                         <button
                             type="button"
-                            className="text-[11px] text-white/45 hover:text-white/70 mt-1 underline"
+                            className="text-[11px] text-white/55 hover:text-white/85 mt-1 underline underline-offset-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                             onClick={() => {
                                 setValues(p => ({ ...p, [field.key]: '' }));
                                 setCleared(prev => new Set(prev).add(field.key));
@@ -646,22 +678,32 @@ export default function GovtechIntegrations() {
             return rank(a) - rank(b);
         });
 
+    const visibleCount = visibleCatalog.length;
+    useEffect(() => {
+        if (!q) return;
+        announce(visibleCount === 0
+            ? `No platforms match ${query}.`
+            : `${visibleCount} platform${visibleCount === 1 ? '' : 's'} match ${query}.`);
+    }, [visibleCount, q, query, announce]);
+
     // ---------- UI ----------
 
     return (
         <>
-        {/* id so the setup page's status rail can link here, the way it does for
-            every other section. Without it the rail's "town systems" entry had
-            nowhere to scroll to. */}
-        <div id="sec-town-systems">
         <CollapsibleSection
+            /* id so the setup page's status rail can link here, the way it does
+               for every other section. On the section itself, through the prop
+               CollapsibleSection offers, rather than on a wrapper div: the rail
+               scrolls to and focuses this element, and a wrapper meant it landed
+               on a box one level out from the one it highlights. */
+            id="sec-town-systems"
             title="Connect Your Other Town Systems"
             icon={Landmark}
             // Counts the catalog, not the filtered view. It read off
             // `visibleCatalog`, so typing in the search box rewrote the heading
             // to "1 platforms available" -- which reads as the town only having
             // one option rather than as a filter being applied.
-            subtitle={`${(catalog || []).length} platforms available — Accela, Tyler, CivicPlus, Open311, or a generic connector for anything else`}
+            subtitle={`${(catalog || []).length} platforms available — Accela, Tyler, Open311, or a generic connector for anything else`}
             defaultOpen={true}
             /* No connected-count badge. It counted `enabled` rows, and an
              * enabled row is a fact about our database, not about a working
@@ -677,22 +719,29 @@ export default function GovtechIntegrations() {
             </p>
 
             {error && (
-                <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+                <div role="alert" className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200 flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" /> {error}
                 </div>
             )}
 
             {/* Search — with 10+ platforms, let staff jump straight to theirs */}
             {(catalog || []).length > 4 && (
-                <div className="relative mb-4 max-w-md">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/35" aria-hidden="true" />
-                    <input
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        placeholder="Search — e.g. Accela, permitting, SeeClickFix…"
-                        aria-label="Search platforms"
-                        className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm pl-9 pr-3 py-2.5 placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
-                    />
+                <div className="mb-4 max-w-md">
+                    {/* A real label rather than aria-label-over-placeholder, and
+                        the same box treatment SecretField uses so the one input
+                        in this section is not the odd one out. */}
+                    <label htmlFor="town-systems-search" className="sr-only">Search platforms</label>
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/35" aria-hidden="true" />
+                        <input
+                            id="town-systems-search"
+                            type="search"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="e.g. Accela, permitting, work orders…"
+                            className="w-full rounded-xl bg-white/[0.04] border border-white/10 text-white text-sm pl-9 pr-3 py-2.5 placeholder:text-white/40 transition-all focus:outline-none focus:border-primary-400/50 focus:bg-white/[0.06] focus:shadow-[0_0_0_3px_rgba(99,102,241,0.15)]"
+                        />
+                    </div>
                 </div>
             )}
 
@@ -713,7 +762,14 @@ export default function GovtechIntegrations() {
                 </div>
             )}
 
-            <div className="relative space-y-2.5">
+            {/* The same grid the provider cards above sit in, at the same gap
+                and the same breakpoints. These were a full-width stack of thin
+                rows while the capability cards were a three-column grid of
+                tiles, so one page had two ideas of what a connector card is --
+                and a card that moved between them (open it, and it needs the
+                room) had nowhere to go. Open, or failing, it takes the whole
+                row, exactly as a spotlit provider card does. */}
+            <div className="relative grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 items-start">
                 {visibleCatalog.map((platform, idx) => {
                     const existing = configFor(platform.platform);
                     const mode = MODE_LABELS[platform.integration_mode] || MODE_LABELS.partner_api;
@@ -728,6 +784,10 @@ export default function GovtechIntegrations() {
                     const row = existing ? healthRows[healthKey(platform.platform)] : undefined;
                     const state = connectionState(existing, row, result);
                     const needsAttention = state === 'failing';
+                    // Same rule the provider grid uses: a card that is open, or
+                    // one that is broken, gets the full row. Anything else is a
+                    // bubble in the three-column flow.
+                    const wide = isOpen || needsAttention;
                     const muteKey = healthKey(platform.platform);
                     const mutedUntil = muteKey in muted
                         ? muted[muteKey]
@@ -739,42 +799,61 @@ export default function GovtechIntegrations() {
                             initial={{ opacity: 0, y: 14 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ delay: Math.min(idx, 8) * 0.03, duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-                            className={`relative rounded-xl border p-4 transition-colors ${needsAttention
-                                ? 'border-amber-500/40 bg-amber-500/[0.04]'
-                                : existing?.enabled
-                                    ? 'border-primary-400/30 bg-primary-500/[0.06]'
-                                    : 'border-white/10 bg-white/[0.03] hover:bg-white/[0.05]'}`}
+                            /* Card template shared with the capability cards:
+                               the quiet bubble while it is collapsed and
+                               nothing is wrong, the spotlight shell once it is
+                               open or once a check has failed. Same radius,
+                               same gradient, same blur, same shadow -- these
+                               used to be a flat `rounded-xl border p-4` row,
+                               which is why the section read as a different
+                               product bolted under the page. */
+                            className={`${wide ? 'sm:col-span-2 lg:col-span-3 ' : ''}${!isOpen && !needsAttention
+                                ? 'group relative h-full px-4 py-4 rounded-3xl bg-gradient-to-br from-white/[0.06] via-white/[0.02] to-indigo-950/40 border border-white/10 backdrop-blur-2xl hover:border-primary-400/40 hover:-translate-y-0.5 transition-all duration-300'
+                                : `relative overflow-hidden p-5 sm:p-6 rounded-3xl border backdrop-blur-2xl shadow-[0_14px_40px_rgba(0,0,0,0.4)] ${needsAttention
+                                    ? 'bg-gradient-to-br from-red-500/[0.14] via-white/[0.02] to-indigo-950/40 border-red-400/30'
+                                    : 'bg-gradient-to-br from-white/[0.08] via-white/[0.02] to-indigo-950/40 border-white/15'}`}`}
                         >
                             <button
                                 type="button"
                                 onClick={() => toggleCard(platform.platform)}
                                 aria-expanded={isOpen}
                                 aria-controls={`conn-body-${platform.platform}`}
-                                className="relative w-full flex items-center justify-between gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-xl"
+                                className="relative w-full flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded-2xl"
                             >
-                                <div className="flex items-center gap-3.5 min-w-0">
+                                <span className="flex items-center gap-3.5 min-w-0 flex-1 basis-40">
                                     <CapabilityTile
                                         icon={Plug}
+                                        size={wide ? 'lg' : 'md'}
                                         tone={needsAttention ? 'alert' : state === 'working' ? 'done' : 'normal'}
                                     />
-                                    <div className="min-w-0">
-                                        <h3 className="font-semibold text-white tracking-tight">{platform.name}</h3>
-                                        <p className="text-white/60 text-xs truncate">{platform.category}</p>
-                                    </div>
-                                </div>
-                                <div className="shrink-0 flex items-center gap-2">
+                                    <span className="min-w-0">
+                                        <h3 className="font-semibold text-white tracking-tight truncate">{platform.name}</h3>
+                                        <span className="block text-white/60 text-xs truncate">{platform.category}</span>
+                                    </span>
+                                </span>
+                                {/* Always the pill, never a bare coloured glyph, and always
+                                    named -- this list is long and every row carries one of
+                                    these, so an unnamed "Not working" says a connector broke
+                                    and leaves somebody to work out which one.
+                                    The word is the status; the icon inside the
+                                    pill repeats it for anyone who cannot tell
+                                    the greens from the reds. The basis above lets
+                                    this whole group drop to its own line in a
+                                    one-column bubble rather than squeezing the
+                                    platform's name down to two letters. */}
+                                <span className="shrink-0 flex items-center gap-2 ml-auto">
                                     {state && (
-                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} />
+                                        <StatusPill state={state} label={connectionStateLabel(existing, state)} name={platform.name} />
                                     )}
                                     <motion.span animate={{ rotate: isOpen ? 180 : 0 }} transition={{ duration: 0.3 }} aria-hidden="true" className="text-white/60">
                                         <ChevronDown className="w-4 h-4" />
                                     </motion.span>
-                                </div>
+                                </span>
                             </button>
 
-                            {/* Collapsed preview: quiet mode label so the row stays calm */}
+                            {/* Collapsed preview: quiet mode label so the bubble stays calm */}
                             {!isOpen && (
-                                <p className="relative text-[11px] text-white/60 mt-1.5 ml-[3.75rem]">{mode.label}</p>
+                                <p className="relative text-[11px] text-white/60 mt-2.5">{mode.label}</p>
                             )}
 
                             <div id={`conn-body-${platform.platform}`} className={isOpen ? 'block' : 'hidden'}>
@@ -864,12 +943,12 @@ export default function GovtechIntegrations() {
                                 )
                             )}
 
+                            {/* The verdict, in the shared banner the provider
+                                cards use -- icon, screen-reader word, and the
+                                text -- rather than a local copy whose only
+                                signal was the border colour. */}
                             {result && (
-                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${!result.ok
-                                    ? 'bg-amber-500/10 border-amber-500/25 text-amber-200'
-                                    : result.verified === false
-                                        ? 'bg-sky-500/10 border-sky-500/25 text-sky-200'
-                                        : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'}`}>
+                                <ResultNote tone={!result.ok ? 'bad' : result.verified === false ? 'unknown' : 'ok'}>
                                     {/* A pass that verified nothing is not a pass in the sense a
                                         clerk reads "Connected" as. Open311 has no authenticated
                                         endpoint at all, so saying so is the only honest option. */}
@@ -877,7 +956,7 @@ export default function GovtechIntegrations() {
                                         <span className="font-semibold block mb-0.5">Reachable — credentials not checked</span>
                                     )}
                                     {result.ok ? result.detail : (result.friendly || result.detail)}
-                                </div>
+                                </ResultNote>
                             )}
 
                             {/* Action feedback (sync enqueued, address reissued).
@@ -885,25 +964,18 @@ export default function GovtechIntegrations() {
                                 same state: this never reaches connectionState, so
                                 enqueueing a job cannot repaint the pill. */}
                             {notice && (
-                                <div className={`relative mt-2 rounded-lg px-3 py-2 text-xs border ${notice.ok
-                                    ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-200'
-                                    : 'bg-amber-500/10 border-amber-500/25 text-amber-200'}`}>
-                                    {notice.detail}
-                                </div>
+                                <ResultNote tone={notice.ok ? 'ok' : 'bad'}>{notice.detail}</ResultNote>
                             )}
 
                             {/* A connection can sign in fine and still be unable to file a
                                 report. That gap is invisible until a resident's report is
                                 rejected, so it gets its own line rather than a green tick. */}
                             {(result?.warnings || []).length > 0 && (
-                                <div className="relative mt-2 rounded-lg px-3 py-2 text-xs border bg-amber-500/10 border-amber-500/25 text-amber-200 space-y-1.5">
-                                    {result!.warnings!.map((w, i) => (
-                                        <p key={i} className="flex items-start gap-1.5">
-                                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" aria-hidden="true" />
-                                            <span>{w}</span>
-                                        </p>
-                                    ))}
-                                </div>
+                                <ResultNote tone="bad">
+                                    <span className="block space-y-1.5">
+                                        {result!.warnings!.map((w, i) => <span key={i} className="block">{w}</span>)}
+                                    </span>
+                                </ResultNote>
                             )}
 
                             {/* The inbound address and the vendor email were reachable
@@ -931,7 +1003,7 @@ export default function GovtechIntegrations() {
                                                     type="button"
                                                     onClick={() => handleRegenerateToken(existing, platform.name)}
                                                     disabled={busyOf(existing) !== null}
-                                                    className="text-[10px] text-white/40 hover:text-white/70 underline mt-1.5 disabled:opacity-50"
+                                                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 mt-1.5 disabled:opacity-50 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                                                 >
                                                     {busyOf(existing) === 'rotate' ? 'Issuing…' : 'Issue a new address'}
                                                 </button>
@@ -952,18 +1024,19 @@ export default function GovtechIntegrations() {
 
                             <div className="relative flex flex-wrap items-center gap-2 mt-4">
                                 {!existing ? (
-                                    <button
-                                        className="shimmer-sweep inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-400 to-primary-600 hover:from-primary-300 hover:to-primary-500 border border-primary-300/40 shadow-lg shadow-primary-900/60 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                                        onClick={() => openWizard(platform, 'intro')}
-                                    >
-                                        <Plug className="w-4 h-4" /> Set up — about 10 minutes
-                                    </button>
+                                    /* The provider cards' "Set up" button, not a
+                                       shimmering one-off. Two primaries drawn
+                                       differently on one page read as two
+                                       different weights of action. */
+                                    <Action size="sm" variant="primary" onClick={() => openWizard(platform, 'intro')}>
+                                        Set up — about 10 minutes
+                                    </Action>
                                 ) : (
                                     <>
                                         <Action size="sm" variant="primary" onClick={() => openWizard(platform, 'details')} chevron>
                                             Settings
                                         </Action>
-                                        <Action size="sm" onClick={() => handleCardTest(existing)}
+                                        <Action size="sm" onClick={() => handleCardTest(existing, platform.name)}
                                             busy={busyOf(existing) === 'test'} disabled={busyOf(existing) !== null}>
                                             {busyOf(existing) === 'test' ? 'Checking…' : 'Check connection'}
                                         </Action>
@@ -982,7 +1055,7 @@ export default function GovtechIntegrations() {
                                             </Action>
                                         )}
                                         {existing.enabled && platform.capabilities.includes('pull') && (
-                                            <Action size="sm" onClick={() => handleSync(existing)}
+                                            <Action size="sm" onClick={() => handleSync(existing, platform.name)}
                                                 busy={busyOf(existing) === 'sync'} disabled={busyOf(existing) !== null}>
                                                 {/* The only button here that never said it was
                                                     working, so pressing it looked like nothing
@@ -992,36 +1065,47 @@ export default function GovtechIntegrations() {
                                             </Action>
                                         )}
                                         {existing.enabled && platform.capabilities.includes('assets') && (
-                                            <Action size="sm" onClick={() => handleSyncAssets(existing)}
+                                            <Action size="sm" onClick={() => handleSyncAssets(existing, platform.name)}
                                                 busy={busyOf(existing) === 'assets'} disabled={busyOf(existing) !== null}>
                                                 {busyOf(existing) === 'assets' ? 'Copying…' : 'Copy their assets to my map'}
                                             </Action>
                                         )}
-                                        <Action size="sm" onClick={() => toggleLogs(existing)} chevron>
+                                        <Action size="sm" onClick={() => toggleLogs(existing)} chevron
+                                            expanded={logsOpen === platform.platform}
+                                            aria-controls={`conn-logs-${platform.platform}`}>
                                             Activity
                                         </Action>
-                                        <label className="flex items-center gap-2 ml-auto text-[11px] text-white/60 cursor-pointer select-none">
-                                            {existing.enabled ? 'On' : 'Off'}
-                                            <button
-                                                onClick={() => handleToggle(existing, platform.name)}
+                                        {/* Not a <label> any more. A label whose
+                                            content is a button labels nothing --
+                                            clicking the word "On" did not reach
+                                            the switch, and the switch's own
+                                            aria-label was doing all the work
+                                            regardless. The shared Switch, at the
+                                            size the rest of the console uses. */}
+                                        <span className="flex items-center gap-2 ml-auto text-[11px] text-white/60 select-none">
+                                            <span aria-hidden="true">{existing.enabled ? 'On' : 'Off'}</span>
+                                            <Switch
+                                                on={existing.enabled}
+                                                busy={busyOf(existing) === 'toggle'}
                                                 disabled={busyOf(existing) !== null}
-                                                role="switch"
-                                                aria-checked={existing.enabled}
-                                                aria-label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
-                                                className={`relative inline-flex h-[18px] w-[30px] shrink-0 items-center rounded-full transition-colors duration-300 disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${existing.enabled ? 'bg-primary-500' : 'bg-white/20'}`}
-                                            >
-                                                <span
-                                                    aria-hidden="true"
-                                                    className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform duration-300 ${existing.enabled ? 'translate-x-[14px]' : 'translate-x-0.5'}`}
-                                                />
-                                            </button>
-                                        </label>
+                                                onChange={() => handleToggle(existing, platform.name)}
+                                                label={`Turn ${platform.name} connection ${existing.enabled ? 'off' : 'on'}`}
+                                            />
+                                        </span>
                                     </>
                                 )}
                             </div>
 
                             {logsOpen === platform.platform && platformLogs && (
-                                <div className="relative mt-3 rounded-lg border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto">
+                                <div
+                                    id={`conn-logs-${platform.platform}`}
+                                    /* Focusable, because it scrolls: a scroll
+                                       container nothing can put focus into
+                                       cannot be scrolled from the keyboard. */
+                                    tabIndex={0}
+                                    role="group"
+                                    aria-label={`${platform.name} activity`}
+                                    className="relative mt-3 rounded-xl border border-white/10 divide-y divide-white/5 max-h-48 overflow-y-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60">
                                     {/* The current error in full, pinned above the history.
                                         Somebody who opened this drawer opened it to read the
                                         message, and the card only had room to clip it. */}
@@ -1055,7 +1139,6 @@ export default function GovtechIntegrations() {
                 })}
             </div>
         </CollapsibleSection>
-        </div>
 
         {/* ---------- Setup wizard ---------- */}
         {wizard && (
@@ -1139,12 +1222,9 @@ export default function GovtechIntegrations() {
                                 <a href={wizard.docs_url} target="_blank" rel="noopener noreferrer" className="text-indigo-300 text-xs hover:underline inline-flex items-center gap-1 self-center sm:self-auto">
                                     {wizard.vendor} website <ExternalLink className="w-3 h-3" />
                                 </a>
-                                <button
-                                    className="shimmer-sweep w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                                    onClick={() => setStep('details')}
-                                >
+                                <Action variant="primary" onClick={() => setStep('details')}>
                                     I have these — continue
-                                </button>
+                                </Action>
                             </div>
                         </div>
                     )}
@@ -1198,16 +1278,18 @@ export default function GovtechIntegrations() {
                                                 <ShieldCheck className="w-4 h-4 text-indigo-300 shrink-0" /> Sign in — no password to type here
                                             </p>
                                             <p className="text-white/60 text-xs mt-1 leading-relaxed">{wizard.oauth.explainer}</p>
-                                            <button
-                                                type="button"
-                                                onClick={() => startVendorSignIn(wizard)}
-                                                disabled={oauthBusy || saving || requiredMissing(wizard).length > 0}
-                                                className="mt-3 inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
-                                            >
-                                                {oauthBusy
-                                                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Waiting for {wizard.name}…</>
-                                                    : <><LogIn className="w-4 h-4" /> {wizard.oauth.button_label}</>}
-                                            </button>
+                                            <span className="block mt-3">
+                                                <Action
+                                                    variant="primary"
+                                                    onClick={() => startVendorSignIn(wizard)}
+                                                    busy={oauthBusy}
+                                                    disabled={saving || requiredMissing(wizard).length > 0}
+                                                >
+                                                    {oauthBusy
+                                                        ? `Waiting for ${wizard.name}…`
+                                                        : <><LogIn className="w-4 h-4" aria-hidden="true" /> {wizard.oauth.button_label}</>}
+                                                </Action>
+                                            </span>
                                             {requiredMissing(wizard).length > 0 && (
                                                 <p className="text-white/60 text-[11px] mt-2">
                                                     Fill in the fields above first — we need them to open the right sign-in page.
@@ -1226,13 +1308,17 @@ export default function GovtechIntegrations() {
                                         <button
                                             type="button"
                                             onClick={() => setShowPasswordFallback(v => !v)}
-                                            className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                            aria-expanded={showPasswordFallback}
+                                            aria-controls="wizard-password-fallback"
+                                            className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                                         >
-                                            {showPasswordFallback ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                                            <KeyRound className="w-3 h-3" /> {wizard.oauth.fallback_label}
+                                            {showPasswordFallback
+                                                ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
+                                                : <ChevronDown className="w-3 h-3" aria-hidden="true" />}
+                                            <KeyRound className="w-3 h-3" aria-hidden="true" /> {wizard.oauth.fallback_label}
                                         </button>
                                         {showPasswordFallback && (
-                                            <div className="space-y-3 mt-3">
+                                            <div id="wizard-password-fallback" className="space-y-3 mt-3">
                                                 <p className="text-white/50 text-xs leading-relaxed">
                                                     Only if your {wizard.name} administrator would rather issue a service
                                                     account. This stores that account's password in your credential vault,
@@ -1248,14 +1334,19 @@ export default function GovtechIntegrations() {
                             {wizard.config_fields.some(f => !f.required) && (
                                 <div>
                                     <button
+                                        type="button"
                                         onClick={() => setShowAdvanced(v => !v)}
-                                        className="text-white/60 text-xs hover:text-white/70 inline-flex items-center gap-1"
+                                        aria-expanded={showAdvanced}
+                                        aria-controls="wizard-optional-settings"
+                                        className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
                                     >
-                                        {showAdvanced ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                        {showAdvanced
+                                            ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
+                                            : <ChevronDown className="w-3 h-3" aria-hidden="true" />}
                                         Optional settings — most towns skip these
                                     </button>
                                     {showAdvanced && (
-                                        <div className="space-y-3 mt-3">
+                                        <div id="wizard-optional-settings" className="space-y-3 mt-3">
                                             {wizard.config_fields.filter(f => !f.required).map(f => renderField(wizard, f, false))}
                                         </div>
                                     )}
@@ -1271,7 +1362,10 @@ export default function GovtechIntegrations() {
                                 return (
                             <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4">
                                 <h4 className="text-white font-semibold text-sm mb-3">How should the two systems work together?</h4>
-                                <div className="space-y-2" role="radiogroup" aria-label="Sync direction">
+                                {/* Was role="radiogroup"/role="radio" with no roving
+                                    tabIndex and no arrow keys: announced as a radio
+                                    group, operated as nothing of the sort. */}
+                                <div className="space-y-2" role="group" aria-label="Sync direction">
                                     {syncOptions
                                         .map(choice => {
                                             const isSel = syncChoice === choice.value;
@@ -1280,8 +1374,7 @@ export default function GovtechIntegrations() {
                                                 <button
                                                     key={choice.value}
                                                     type="button"
-                                                    role="radio"
-                                                    aria-checked={isSel}
+                                                    aria-pressed={isSel}
                                                     onClick={() => setSyncChoice(choice.value)}
                                                     className={`w-full text-left rounded-xl px-3.5 py-3 border transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
                                                         ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 shadow-lg shadow-primary-900/30'
@@ -1294,7 +1387,7 @@ export default function GovtechIntegrations() {
                                                         </span>
                                                         {isSel && (
                                                             <span className="shrink-0 w-4 h-4 rounded-full bg-primary-400 flex items-center justify-center">
-                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} />
+                                                                <Check className="w-3 h-3 text-primary-950" strokeWidth={3} aria-hidden="true" />
                                                             </span>
                                                         )}
                                                     </span>
@@ -1326,13 +1419,19 @@ export default function GovtechIntegrations() {
                                         </Button>
                                     )}
                                 </div>
-                                <button
-                                    className="shimmer-sweep w-full sm:w-auto inline-flex items-center justify-center gap-1.5 rounded-xl px-5 py-2.5 text-sm font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-900/40 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:hover:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                                {/* The provider cards' "Save & Test", in the same
+                                    control, saying the same thing in the town's
+                                    words. It was a one-off shimmering gradient
+                                    button, so the single most important action
+                                    on this page looked like nothing else on it. */}
+                                <Action
+                                    variant="primary"
                                     onClick={() => goToFinish(wizard)}
-                                    disabled={saving || requiredMissing(wizard).length > 0}
+                                    busy={saving}
+                                    disabled={requiredMissing(wizard).length > 0}
                                 >
-                                    {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Sparkles className="w-4 h-4" /> Save &amp; check the connection</>}
-                                </button>
+                                    {saving ? 'Saving…' : 'Save & check the connection'}
+                                </Action>
                             </div>
                         </div>
                     )}
@@ -1372,8 +1471,8 @@ export default function GovtechIntegrations() {
                                             </>
                                         ) : (testResult.warnings || []).length > 0 ? (
                                             /* Signed in, but something still blocks a report —
-                                               e.g. a SeeClickFix request type with a required
-                                               question nobody has answered. Amber, not a party. */
+                                               e.g. a request type with a required question
+                                               nobody has answered. Amber, not a party. */
                                             <>
                                                 <div className="w-14 h-14 rounded-full bg-amber-500/20 border border-amber-500/40 flex items-center justify-center mb-3">
                                                     <AlertCircle className="w-7 h-7 text-amber-300" />
@@ -1449,13 +1548,16 @@ export default function GovtechIntegrations() {
                                         </h4>
                                         <p className="text-amber-100/80 text-sm">{testResult.friendly || testResult.detail}</p>
                                         <button
+                                            type="button"
                                             onClick={() => setShowTechnical(v => !v)}
-                                            className="text-amber-200/50 text-xs mt-2 hover:text-amber-200/80"
+                                            aria-expanded={showTechnical}
+                                            aria-controls="wizard-technical-detail"
+                                            className="text-amber-200/80 text-xs mt-2 hover:text-amber-100 underline underline-offset-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400/60"
                                         >
                                             {showTechnical ? 'Hide' : 'Show'} technical details (for the vendor's support team)
                                         </button>
                                         {showTechnical && (
-                                            <code className="block mt-2 bg-black/30 rounded-lg px-3 py-2 text-[11px] text-white/50 break-all">{testResult.detail}</code>
+                                            <code id="wizard-technical-detail" className="block mt-2 bg-black/30 rounded-lg px-3 py-2 text-[11px] text-white/70 break-all">{testResult.detail}</code>
                                         )}
                                     </div>
                                     <p className="text-white/60 text-xs">

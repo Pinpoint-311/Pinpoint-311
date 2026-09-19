@@ -15,6 +15,10 @@ import type { Capability, ProviderStatusMap } from '../services/api';
 import GovtechIntegrations from './GovtechIntegrations';
 import ServiceProviders from './ServiceProviders';
 import SetupWizard from './SetupWizard';
+import CloudSetupPath from './setupPathChoice';
+import DeploymentOutputs from './DeploymentOutputs';
+import { selectionsFor } from './deployOutputs';
+import { readSetupAnswer, writeSetupAnswer } from './setupAnswers';
 import { buildPlan, summarise, nameList, BACKUP_SECRETS, SENTRY_SECRETS } from './setupPlan';
 import { townSystemHealth } from './integrationState';
 // Registers every provider's setup steps as a side effect, so the guide can
@@ -23,6 +27,7 @@ import './setupStepsContent';
 import StorageStatusLine from './StorageStatusLine';
 import SecretStoreGate, { SECRET_STORE_GATE_ID } from './SecretStoreGate';
 import SecretField from './SecretField';
+import { useOptionalAnnounce } from './liveAnnounce';
 import { openStayInformed } from './StayInformed';
 import { buildContactFormUrl } from './contactForm';
 
@@ -226,12 +231,23 @@ export function seedAnswersFrom(status: ProviderStatusMap | null): SeededAnswers
     const aiProvider = at('ai');
     return {
         /* The cloud is not stored as such: it is whichever one the credentials
-         * are in. The secret store answers that most directly, with key
-         * management as the fallback and the AI provider after that;
-         * "database" means no cloud has been chosen yet, so the default
-         * stands. */
-        cloud: pick(at('secrets'), CLOUDS) ?? pick(at('kms'), CLOUDS)
-            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null),
+         * are in. Key management answers it first, then AI, and the secret
+         * store last.
+         *
+         * That order matters and used to be the other way round. The secret
+         * store is the ONE selection a card refuses to change -- every
+         * credential the town has is in the current one and repointing the
+         * setting does not move them -- so it lags behind every other signal by
+         * design. Asking it first meant a town that had moved key management,
+         * AI and translation to Azure, and was receiving Azure alerts, still
+         * opened the guide on Google Cloud: the only provider that had not
+         * moved was the only one being consulted.
+         *
+         * "database" is in neither list, so a town that has chosen no cloud
+         * still falls through to the default. */
+        cloud: pick(at('kms'), CLOUDS)
+            ?? (aiProvider ? AI_CLOUD[aiProvider] ?? null : null)
+            ?? pick(at('secrets'), CLOUDS),
         idp: pick(at('identity'), ['auth0', 'entra', 'okta', 'oidc'] as const),
         maps: pick(at('maps'), ['google', 'esri', 'azure', 'apple'] as const),
         email: pick(at('email'), ['smtp', 'ses', 'acs'] as const),
@@ -289,32 +305,46 @@ isConfigured: (key: string) => boolean | undefined;
 onWantAi: () => Promise<void>;
 }) {
     const jsonKey = 'GCP_SERVICE_ACCOUNT_JSON';
+    const announce = useOptionalAnnounce();
     const [showKms, setShowKms] = useState(false);
     const pending = ['GOOGLE_CLOUD_PROJECT', jsonKey, 'KMS_LOCATION', 'KMS_KEY_RING', 'KMS_KEY_ID']
         .filter(k => secretValues[k]);
     return (
         <div className="ml-9 mt-1 rounded-xl border border-white/10 bg-white/[0.03] p-3.5 space-y-3">
             <div>
-                <label className="text-[11px] uppercase tracking-wider text-white/55 font-semibold flex items-center gap-1.5">
+                {/* A <label> that wrapped and pointed at nothing named nothing.
+                    It titles the picker below, which now carries the name itself. */}
+                <p id="gcp-json-label" className="text-[11px] uppercase tracking-wider text-white/55 font-semibold flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5 text-amber-300/80" aria-hidden="true" />
                     The .json file you just downloaded
                     {isConfigured(jsonKey) && <span className="text-emerald-300/80 normal-case font-medium">· Saved</span>}
-                </label>
-                <label className="mt-1.5 block cursor-pointer">
+                </p>
+                {/* sr-only, not `hidden`: display:none takes the input out of the
+                    tab order entirely, and the wrapping label is not focusable,
+                    so this upload could not be started from a keyboard at all.
+                    Off-screen-but-focusable keeps it tabbable, and the ring below
+                    is what a keyboard user sees when it has focus. */}
+                <label className="mt-1.5 block cursor-pointer focus-within:ring-2 focus-within:ring-primary-400 rounded-lg">
                     <div className="h-10 rounded-lg border border-dashed border-white/20 flex items-center justify-center text-white/50 text-xs hover:border-white/40 hover:text-white/70 transition-colors">
                         Choose the file, or drop it here
                     </div>
                     <input
                         type="file"
+                        aria-labelledby="gcp-json-label"
                         accept=".json,application/json"
-                        className="hidden"
+                        className="sr-only"
                         onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (!file) return;
                             const reader = new FileReader();
-                            reader.onload = (ev) => setSecretValues(p => ({
-                                ...p, [jsonKey]: (ev.target?.result as string) || '',
-                            }));
+                            reader.onload = (ev) => {
+                                setSecretValues(p => ({
+                                    ...p, [jsonKey]: (ev.target?.result as string) || '',
+                                }));
+                                // The only sign the file was accepted is a line of
+                                // green text that appears below the picker.
+                                announce(`${file.name} read. Press Save below to store it.`);
+                            };
                             reader.readAsText(file);
                         }}
                     />
@@ -461,6 +491,7 @@ export function LockedUntilStoreChosen({ locked, children }: {
 
 
 export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh }: SetupIntegrationsPageProps) {
+    const announce = useOptionalAnnounce();
     const [secretValues, setSecretValues] = useState<Record<string, string>>({});
     /**
      * Null until the gate reports. Not `false`, because assuming unchosen would
@@ -496,11 +527,46 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const guideAutoSet = useRef(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
 
+    /* Every save on this page reports through saveMessage, and it reported to
+     * sighted people only: the text appeared in a plain div with no live region,
+     * so saving a credential, finishing setup or failing to mint a backup key
+     * were all silent. One effect covers every writer of the message. */
+    useEffect(() => {
+        if (!saveMessage) return;
+        const failed = saveMessage.startsWith('❌');
+        announce(saveMessage.replace(/^[❌✅⚠️]\s*/u, ''), failed ? 'assertive' : 'polite');
+    }, [saveMessage, announce]);
+
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
     // and optional features the admin actually wants to set up.
-    const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>('google');
-    const [setupIdp, setSetupIdp] = useState<'auth0' | 'entra' | 'okta' | 'oidc'>('auth0');
-    const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>('google');
+    /* Remembered, because they were not.
+     *
+     * These three were plain useState with hardcoded defaults, written nowhere
+     * and read from nowhere: an admin picked Microsoft Azure, worked through the
+     * Azure walk, came back the next day and was told they had chosen Google.
+     * The feature toggles immediately below had this same bug and it was fixed
+     * for them; the three questions above them were left behind.
+     *
+     * Per browser rather than per town, deliberately. The answer is a statement
+     * about which instructions to show, not about what the deployment runs --
+     * the server's own providers are that, they are what the cards write, and
+     * `rememberedCloud` prefers them when they exist. Storing an ANSWER on the
+     * server would put a second opinion next to the setting that decides, and
+     * the two would disagree the first time anyone used a card. */
+    const [setupCloud, setSetupCloud] = useState<'google' | 'azure' | 'aws'>(
+        () => readSetupAnswer('cloud', ['google', 'azure', 'aws'], 'google'));
+    /* Stored as an override rather than as the answer: '' means "whatever the
+     * cloud implies", so a town that never touched this question follows its
+     * cloud on the next visit instead of being pinned to the default it was
+     * shown once. */
+    const [idpOverride, setIdpOverride] = useState<string>(
+        () => readSetupAnswer('idp', ['auth0', 'entra', 'okta', 'oidc'], '' as never));
+    const [setupMaps, setSetupMaps] = useState<'google' | 'esri' | 'azure' | 'apple'>(
+        () => readSetupAnswer('maps', ['google', 'esri', 'azure', 'apple'], 'google'));
+
+    useEffect(() => { writeSetupAnswer('cloud', setupCloud); }, [setupCloud]);
+    useEffect(() => { writeSetupAnswer('idp', idpOverride); }, [idpOverride]);
+    useEffect(() => { writeSetupAnswer('maps', setupMaps); }, [setupMaps]);
     /* What the town wants, held here only as a mirror of what the server says.
      *
      * This used to be the whole of it: `useState(new Set(ALL_FEATURES))`, never
@@ -563,6 +629,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * a picker, seeded from the cloud answer so the common case is already
      * right and only a town that wants something else has to touch it. */
     const AI_BY_CLOUD = { google: 'vertex', azure: 'azure', aws: 'bedrock' } as const;
+    /* Only Azure has a real answer here. An Azure subscription always has an
+     * Entra tenant, and this guide already has the town registering an Entra
+     * app for the key vault, so a town on Azure is in Entra whether or not it
+     * signs staff in with it. Google and AWS have identity products of their
+     * own -- Workspace, Identity Center -- and Pinpoint offers neither, so
+     * there is nothing to move to and Auth0 stays the starting point. */
+    const IDP_BY_CLOUD = { google: 'auth0', azure: 'entra', aws: 'auth0' } as const;
     const EMAIL_BY_CLOUD = { google: 'smtp', azure: 'acs', aws: 'ses' } as const;
     const SMS_BY_CLOUD = { google: 'twilio', azure: 'acs', aws: 'sns' } as const;
 
@@ -574,6 +647,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [redactionOverride, setRedactionOverride] = useState<string | null>(null);
 
 
+    const setupIdp = (idpOverride || IDP_BY_CLOUD[setupCloud]) as
+        'auth0' | 'entra' | 'okta' | 'oidc';
     const aiProvider = AI_BY_CLOUD[setupCloud];
     const emailProvider = emailOverride ?? EMAIL_BY_CLOUD[setupCloud];
     const smsProvider = smsOverride ?? SMS_BY_CLOUD[setupCloud];
@@ -677,7 +752,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         seededFromServer.current = true;
         const seed = seedAnswersFrom(providerStatus);
         if (seed.cloud) setSetupCloud(seed.cloud);
-        if (seed.idp) setSetupIdp(seed.idp);
+        if (seed.idp) setIdpOverride(seed.idp);
         if (seed.maps) setSetupMaps(seed.maps);
         if (seed.email) setEmailOverride(seed.email);
         if (seed.sms) setSmsOverride(seed.sms);
@@ -719,11 +794,22 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
     const isConfigured = (key: string) => secrets.find(s => s.key_name === key)?.is_configured;
 
-    const handleSave = async (key: string) => {
-        if (!secretValues[key]) return;
+    /* `explicit` exists for values that were never typed.
+     *
+     * The outputs paste hands over seven values at once. Setting them into
+     * `secretValues` and then calling this would have saved nothing: the state
+     * update has not landed by the time the next line runs, so every read here
+     * would see the render's old map. Passing the value through is the fix, and
+     * it deliberately goes through this same function rather than reaching for
+     * `onSaveSecret` directly -- one write path, so the secret store, the
+     * encryption and the refresh cannot be got right in one place and wrong in
+     * the other. */
+    const handleSave = async (key: string, explicit?: string) => {
+        const value = explicit ?? secretValues[key];
+        if (!value) return;
         setSavingKey(key);
         try {
-            await onSaveSecret(key, secretValues[key]);
+            await onSaveSecret(key, value);
             setSecretValues(prev => ({ ...prev, [key]: '' }));
             onRefresh();
         } catch (err) {
@@ -984,6 +1070,86 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * different words, in each of the four sections that needed it.
      */
     const renderFoundation = (cloud: 'google' | 'azure' | 'aws') => (
+        <CloudSetupPath
+            cloud={cloud}
+            ctx={{ origin: publicOrigin || window.location.origin, copy: () => {}, copied: null }}
+            template={renderTemplateFoundation(cloud)}
+            manual={renderManualFoundation(cloud)}
+        />
+    );
+
+    /* The template path's foundation.
+     *
+     * Short on purpose: the deployment creates the resources, so what is left
+     * is the group to put them in and the place to paste back what came out.
+     * Only reachable on a cloud that has a template, so there is no Google
+     * branch here.
+     */
+    const renderTemplateFoundation = (cloud: 'google' | 'azure' | 'aws') => {
+        if (cloud === 'google') return null;
+        return (
+            <div className="space-y-2.5">
+                {/* No "first, the account" step, deliberately.
+                 *
+                 * This path used to open with a numbered instruction to go to
+                 * the portal and create a resource group -- on Azure, whose own
+                 * deployment form has a "Resource group: Create new" control on
+                 * its first screen, and on AWS, whose console asks for the
+                 * region before it will show you a stack. So the short path
+                 * began by sending the reader to do by hand the one thing the
+                 * form they were about to open does for them.
+                 *
+                 * That is the intermingling this fork exists to end. The
+                 * template path is now the launch, and what comes back from it.
+                 * Anything a person still has to do themselves is named inside
+                 * the outputs box, where the boxes it fills are. */}
+                <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">What the deployment gave back</p>
+                <div>
+                    <DeploymentOutputs
+                        cloud={cloud}
+                        values={secretValues}
+                        onChange={(key, value) => setSecretValues(prev => ({ ...prev, [key]: value }))}
+                        onSave={async (entries, matched) => {
+                            for (const [key, value] of Object.entries(entries)) await handleSave(key, value);
+                            /* And select the providers those values are for.
+                             *
+                             * Saving the credentials alone left a town holding
+                             * a working Azure vault while still encrypting with
+                             * Google: every box green, and the decision to use
+                             * them never taken. From the operator's side
+                             * pasting a deployment's outputs IS the switch, so
+                             * it has to be one action here too.
+                             *
+                             * Through the same endpoint a card's Save uses, so
+                             * this cannot become a second way to select a
+                             * provider -- and that endpoint refuses to repoint
+                             * the secret store, which is the one selection that
+                             * would strand every credential already entered. */
+                            const selections = selectionsFor(matched);
+                            for (const [capability, provider] of Object.entries(selections)) {
+                                try {
+                                    await api.saveProvider(capability, { provider });
+                                } catch (err) {
+                                    // The values are saved either way; say which
+                                    // half did not land rather than implying both.
+                                    setSaveMessage(
+                                        `Saved the values, but could not switch ${capability} to ${provider}. `
+                                        + `Choose it on that card and press Save & Test.`,
+                                    );
+                                }
+                            }
+                            onRefresh();
+                            loadProviderStatus();
+                        }}
+                        saving={savingKey !== null}
+                        isConfigured={(key) => !!isConfigured(key)}
+                    />
+                </div>
+            </div>
+        );
+    };
+
+    const renderManualFoundation = (cloud: 'google' | 'azure' | 'aws') => (
         <div className="space-y-2.5">
             <p className="text-[11px] uppercase tracking-wider text-white/45 font-semibold">First, the account</p>
             {cloud === 'google' && <>
@@ -1060,6 +1226,10 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         try {
                             const { key } = await api.generateBackupKey();
                             setBackupKey(key);
+                            // Shown exactly once, and its arrival was a silent
+                            // DOM swap -- nothing told a screen reader the one
+                            // value they must copy had appeared.
+                            announce('A new backup passphrase has been created and is shown once on this page. Copy it now.', 'assertive');
                         } catch (err: any) {
                             setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
                         }
@@ -1085,7 +1255,17 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     <Button
                         size="sm"
                         variant="ghost"
-                        onClick={() => navigator.clipboard?.writeText(backupKey)}
+                        aria-label="Copy backup passphrase"
+                        onClick={async () => {
+                            try {
+                                await navigator.clipboard?.writeText(backupKey);
+                                // Copy had no feedback of any kind, visual or
+                                // otherwise, on the one value that is never shown again.
+                                announce('Backup passphrase copied to the clipboard.');
+                            } catch {
+                                announce('Could not copy the passphrase. Select it and copy manually.', 'assertive');
+                            }
+                        }}
                     >
                         Copy
                     </Button>
@@ -1361,7 +1541,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * asking whether you want email at all. */}
                                     <Ask
                                         n={1}
-                                        label="What do you want to switch on? (all optional)"
+                                        label="What do you want to switch on?"
                                         hint="Sign-in and maps are always needed. Tick anything else you want; untick to remove it."
                                     >
                                         <div className="flex flex-wrap gap-2">
@@ -1391,31 +1571,55 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     <Ask
                                         n={2}
-                                        label="Which company hosts your town's services?"
+                                        label="Cloud services — AI, translation, key management, secret storage"
                                         hint="If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later."
                                     >
                                         <Options
                                             value={setupCloud}
-                                            onChange={(v) => setSetupCloud(v as typeof setupCloud)}
+                                            onChange={(v) => {
+                                                setSetupCloud(v as typeof setupCloud);
+                                                /* Drop the overrides so the three questions that
+                                                 * start from the cloud follow it. They are bound to
+                                                 * the derived value, so an override left over from
+                                                 * a stored setting -- or from an earlier answer --
+                                                 * would leave "Who sends your email?" showing the
+                                                 * old cloud's answer under a heading that says this
+                                                 * choice sets it. Picking one of them again
+                                                 * overrides it as before. */
+                                                setIdpOverride('');
+                                                setEmailOverride(null);
+                                                setSmsOverride(null);
+                                                setRedactionOverride(null);
+                                            }}
                                             options={[['google', 'Google Cloud'], ['azure', 'Microsoft Azure'], ['aws', 'AWS']]}
                                         />
+                                        {/* Named, because this one answer moves four
+                                            things and the question used to imply one.
+                                            A reader picking Azure for its key vault
+                                            was also moving AI triage and translation
+                                            without being told, and then wondered why
+                                            those cards had changed underneath them. */}
+                                        <p className="text-xs text-white/55 leading-relaxed mt-2">
+                                            Email, text messages and photo screening start here too, and each
+                                            has its own question below.
+                                        </p>
                                     </Ask>
 
                                     <Ask
                                         n={3}
-                                        label="How will staff sign in?"
+                                        label="Staff sign-in — who logs staff in"
                                         hint="If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet."
                                     >
                                         <Options
                                             value={setupIdp}
-                                            onChange={(v) => setSetupIdp(v as typeof setupIdp)}
+                                            onChange={setIdpOverride}
                                             options={[['auth0', 'Auth0'], ['entra', 'Microsoft Entra ID'], ['okta', 'Okta'], ['oidc', 'Other (OIDC)']]}
                                         />
                                     </Ask>
 
                                     <Ask
                                         n={4}
-                                        label="Which map provider?"
+                                        label="Maps — the map and address search"
                                         hint="If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do."
                                     >
                                         <Options
@@ -1431,7 +1635,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * so each starts on whatever suits the cloud
                                       * above and can be changed here. */}
                                     {wants('email') && (
-                                        <Ask n={askEmail} label="Who sends your email?"
+                                        <Ask n={askEmail} label="Email — who delivers it"
                                             hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
                                             <Options
                                                 value={emailProvider}
@@ -1442,7 +1646,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('sms') && (
-                                        <Ask n={askSms} label="Who sends your text messages?"
+                                        <Ask n={askSms} label="Text messages — who delivers them"
                                             hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
                                             <Options
                                                 value={smsProvider}
@@ -1453,7 +1657,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     )}
 
                                     {wants('safety') && (
-                                        <Ask n={askSafety} label="Where should photos be checked and blurred?"
+                                        <Ask n={askSafety} label="Photos — screening and blurring"
                                             hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
                                             <Options
                                                 value={redactionProvider}
@@ -1680,6 +1884,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             </CollapsibleSection>
 
             {/* Optional Integrations */}
+            {/* The status text stays visible; the spoken copy goes through the
+                app's single live region (see announceSaveMessage below), because
+                a node inserted together with its text is routinely not announced. */}
             {saveMessage && (
                 <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
                     {saveMessage}

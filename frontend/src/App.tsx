@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
 import { AccessibilityProvider } from './context/AccessibilityContext';
@@ -7,6 +8,7 @@ import { TranslationProvider } from './context/TranslationContext';
 import { DialogProvider } from './components/DialogProvider';
 import { AutoTranslate } from './components/AutoTranslate';
 import ErrorBoundary from './components/ErrorBoundary';
+import SkipLink from './components/SkipLink';
 import ResidentPortal from './pages/ResidentPortal';
 import Login from './pages/Login';
 
@@ -180,17 +182,44 @@ function AppRoutes() {
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
             <Route path="/accessibility" element={<AccessibilityPage />} />
+            <Route path="/njmmaform" element={<RedirectToNJMMA />} />
+            <Route path="/njmma" element={<RedirectToNJMMA />} />
+            <Route path="/njmma-form" element={<RedirectToNJMMA />} />
             <Route path="*" element={<NotFoundPage />} />
         </Routes>
         </Suspense>
     );
 }
 
+function RedirectToNJMMA() {
+    useEffect(() => {
+        window.location.href = 'https://pinpoint311.org/njmmaform';
+    }, []);
+    return null;
+}
+
 export default function App() {
     return (
         <ErrorBoundary>
+            {/* WCAG 2.3.3 / prefers-reduced-motion.
+              *
+              * The CSS media query in index.css can only reach animations and
+              * transitions declared in CSS. Framer Motion drives its transforms
+              * from JavaScript, writing inline styles frame by frame, and the
+              * media query does not touch those — which is most of the movement
+              * in this product: every page transition, card lift, modal
+              * entrance and stagger.
+              *
+              * `reducedMotion="user"` makes every `motion` element in the tree
+              * honour the OS setting: transform and layout animations resolve
+              * instantly to their end state while opacity cross-fades are kept,
+              * so nothing disappears, it simply stops moving. Set once here
+              * rather than threaded through several hundred call sites. */}
+            <MotionConfig reducedMotion="user">
             <BrowserRouter>
                 <ScrollToTop />
+                {/* First focusable thing on every page — WCAG 2.4.1. */}
+                <SkipLink />
                 <AccessibilityProvider>
                     <SettingsProvider>
                         <TranslationProvider>
@@ -205,6 +234,7 @@ export default function App() {
                     </SettingsProvider>
                 </AccessibilityProvider>
             </BrowserRouter>
+            </MotionConfig>
         </ErrorBoundary>
     );
 }

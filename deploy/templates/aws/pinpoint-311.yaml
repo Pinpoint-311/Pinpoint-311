@@ -27,13 +27,48 @@ AWSTemplateFormatVersion: '2010-09-09'
 #   * Nothing for Translate or Rekognition beyond permissions - both are API-only
 #     services with no resource to create.
 #
+# HOW PINPOINT AUTHENTICATES, which is what the trust policy below has to match.
+# The application asks for credentials in this order and takes the first answer:
+#   1. the ECS container credentials endpoint, if AWS_CONTAINER_CREDENTIALS_-
+#      RELATIVE_URI is set in its environment - so on ECS, name PinpointRole as
+#      the TASK ROLE (not the task EXECUTION role, which is a different field on
+#      the same page and will not do);
+#   2. the EC2 instance metadata service, IMDSv2 - so on EC2, attach the
+#      INSTANCE PROFILE below to the instance.
+# Both are covered by the two service principals in the trust policy. IF
+# PINPOINT RUNS IN A CONTAINER ON EC2 - which is how it is normally deployed -
+# the instance's metadata options must allow it: IMDSv2 with
+# HttpPutResponseHopLimit at 2 or more, because the default of 1 is consumed by
+# the hop out of the container and the application sees no credentials at all.
+# That setting belongs to the instance, which this stack does not create.
+#
+# THERE IS NO AUDIT TRAIL OF KEY USAGE unless you arrange one. CloudTrail records
+# KMS *management* events - who created the key, who changed its policy - in
+# every account by default. It does NOT record Encrypt, Decrypt or
+# GenerateDataKey, which are data events and are off unless a trail carries an
+# event selector for them. This stack creates no trail: a data-event selector is
+# charged per event, a busy 311 portal decrypts constantly, and most accounts
+# that need one already have it at organisation level. See the README for the
+# one command that turns it on, and the cost note beside it.
+#
+# NETWORK POSTURE. Every service here - KMS, Secrets Manager, Translate,
+# Rekognition, Bedrock - is a public AWS API endpoint reached over the internet
+# and authenticated with SigV4. None of them has a network boundary this template
+# could set, and Pinpoint is often not running inside a VPC at all (the reference
+# deployment is on another cloud entirely), so no VPC endpoints are created. What
+# limits access is the role and the key policy, not the network.
+#
 # IF A NAME IS TAKEN, this stack FAILS rather than adopting anything: the KMS
 # alias, the role and the instance profile are all named resources, and
 # CloudFormation refuses to create one that already exists. Nothing existing is
-# modified.
+# modified. Updating THIS stack is fine and idempotent - every logical id is
+# fixed and no name is generated - but a second stack alongside it collides, on
+# purpose.
 #
 # TO REMOVE IT: delete the stack. The role, policy, instance profile and alias go
 # with it. The KMS key is deliberately retained - see PreventAccidentalKeyDeletion.
+# The ALIAS is not retained. Pinpoint is given the key id rather than the alias
+# precisely so that deleting the stack cannot make the key unfindable.
 
 Description: >-
   Pinpoint 311 municipal 311 platform: the KMS key that wraps resident personal
@@ -43,12 +78,28 @@ Description: >-
 Metadata:
   AWS::CloudFormation::Interface:
     ParameterGroups:
+      - Label: { default: Data residency }
+        Parameters: [AllowedRegions]
       - Label: { default: Encryption key }
         Parameters: [KeyAlias, PreventAccidentalKeyDeletion]
       - Label: { default: The identity Pinpoint signs in as }
-        Parameters: [RoleName, AllowBedrock, AllowRekognition, AllowTranslate, AllowSecretsManager]
+        Parameters: [RoleName, AllowBedrock, AllowRekognition, AllowTranslate, AllowSecretsManager, SecretsPrefix]
 
 Parameters:
+  AllowedRegions:
+    Type: CommaDelimitedList
+    Default: 'us-east-1,us-east-2,us-west-1,us-west-2'
+    Description: >-
+      DATA RESIDENCY. Every AWS API call this role is allowed to make is
+      confined to these regions, whatever region the stack itself is deployed
+      into. Resident 311 reports carry names, addresses and photographs of
+      people's homes, and a state or county records policy is usually written in
+      terms of where that data is processed. Enforced continuously by an IAM
+      condition rather than checked once at deploy time, so a later
+      misconfiguration in Pinpoint cannot quietly send a photograph to a
+      different continent for face detection -- the call is refused. Add
+      us-gov-west-1 / us-gov-east-1 for GovCloud. Widening this list is the
+      residency decision; there is no other switch.
   KeyAlias:
     Type: String
     Default: alias/pinpoint-311-pii
@@ -56,7 +107,13 @@ Parameters:
     Description: >-
       Alias for the encryption key. The stack fails if this alias already exists,
       which is deliberate - it is what stops a second run quietly creating a
-      second key you keep paying for.
+      second key you keep paying for. NOTE ON THE AUDIT TRAIL, because it is
+      easily assumed: creating this key does NOT start a record of who used it.
+      CloudTrail logs management events for the key everywhere by default, but
+      Encrypt, Decrypt and GenerateDataKey are DATA events and are recorded only
+      by a trail configured with a data-event selector, which this stack does not
+      create and which is charged per event. Without one there is no record of
+      key usage to go back to. The README has the command and the cost note.
 
   PreventAccidentalKeyDeletion:
     Type: String
@@ -76,15 +133,24 @@ Parameters:
     Type: String
     Default: pinpoint-311-server
     Description: >-
-      Name of the IAM role Pinpoint signs in as. Attach it to the EC2 instance or
-      ECS task running the application and Pinpoint needs no pasted credential at
-      all. The stack fails if a role of this name already exists.
+      Name of the IAM role Pinpoint signs in as. THE STACK CREATES THIS ROLE BUT
+      CANNOT ATTACH IT - attaching it is the step that makes everything else here
+      work, and skipping it is invisible until the first encryption call fails.
+      On EC2, attach the instance profile of this name to the instance, and make
+      sure the instance allows IMDSv2 with a metadata hop limit of at least 2 or
+      Pinpoint (running in a container) will never see the credentials. On ECS,
+      name this role as the TASK ROLE - not the task execution role, which is a
+      different field. The stack fails if a role of this name already exists.
 
   AllowTranslate:
     Type: String
     Default: 'Yes'
     AllowedValues: ['Yes', 'No']
-    Description: Permit Amazon Translate, for translating resident reports.
+    Description: >-
+      Permit Amazon Translate, for translating resident reports. Choosing No
+      creates a stack that reports success and a Translation card that fails with
+      an access-denied error the first time a resident writes in another
+      language; nothing before that point says the permission is missing.
 
   AllowRekognition:
     Type: String
@@ -93,15 +159,20 @@ Parameters:
     Description: >-
       Permit Amazon Rekognition face and text detection, for blurring faces and
       licence plates in resident photographs. Plates are found by reading text,
-      so both actions are granted together or neither is.
+      so both actions are granted together or neither is. Choosing No leaves
+      photo screening unable to call anything: the stack still succeeds, and the
+      first photograph a resident sends is what discovers it.
 
   AllowBedrock:
     Type: String
     Default: 'No'
     AllowedValues: ['Yes', 'No']
     Description: >-
-      Permit invoking Amazon Bedrock models. Each model still has to be enabled
-      for your account in the Bedrock console; this only grants the call.
+      Permit invoking Amazon Bedrock models, which is what AI triage runs on.
+      CHOOSE YES IF YOU SELECTED AWS FOR AI TRIAGE IN PINPOINT - leaving it at No
+      produces a stack that deploys cleanly and an AI card that can never work,
+      with no error until the first report is triaged. Each model still has to be
+      enabled for your account in the Bedrock console; this only grants the call.
 
   AllowSecretsManager:
     Type: String
@@ -109,9 +180,48 @@ Parameters:
     AllowedValues: ['Yes', 'No']
     Description: >-
       Permit Pinpoint to keep every credential a town enters in AWS Secrets
-      Manager rather than in its own database. Pinpoint names each secret after
-      the credential it holds and creates them on first save, so this cannot be
-      scoped to secrets that already exist.
+      Manager rather than in its own database. Choosing No does not fall back
+      silently to the database - it makes every credential save fail once Secrets
+      Manager is selected as the store.
+
+  SecretsPrefix:
+    Type: String
+    Default: pinpoint/
+    AllowedPattern: '^[A-Za-z0-9/_+=.@-]*$'
+    Description: >-
+      Name prefix for the secrets Pinpoint creates, and the limit of what the
+      role above may read. MUST MATCH the AWS_SECRETS_PREFIX the application uses
+      (its default is the default here); a mismatch produces access-denied on
+      every credential save and read. This exists so the grant can be scoped: a
+      311 portal has no business reading every secret in the account, and
+      Secrets Manager permissions written against '*' let it.
+
+  AllowedIpAddress:
+    Type: String
+    Default: ''
+    Description: >-
+      The public IP address Pinpoint calls AWS from. The role may use Translate,
+      Rekognition, Bedrock and Secrets Manager only from this address, so a
+      copied role does not work elsewhere. Pre-filled from this deployment's own
+      DNS. Clear it to allow any address. On EC2 or ECS behind a NAT the
+      outbound address is the NAT or Elastic IP rather than the one below --
+      `curl -s ifconfig.me` on the server shows it.
+
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 50
+    MinValue: 0
+    Description: >-
+      A monthly cost budget in USD for this account, with email alerts at 50%,
+      80% and 100%. Pre-filled at 50, which is generous for a 311 deployment --
+      normal use is a few dollars a month. Set 0 for no budget. AWS does not cap
+      spending, so a budget tells you early rather than stopping anything.
+      Nothing is created unless an alert address is given below.
+
+  BudgetAlertEmail:
+    Type: String
+    Default: ''
+    Description: Where budget alerts go. Required if a budget amount is set.
 
 Conditions:
   DenyKeyDeletion: !Equals [!Ref PreventAccidentalKeyDeletion, 'Yes']
@@ -119,6 +229,10 @@ Conditions:
   UseRekognition: !Equals [!Ref AllowRekognition, 'Yes']
   UseBedrock: !Equals [!Ref AllowBedrock, 'Yes']
   UseSecretsManager: !Equals [!Ref AllowSecretsManager, 'Yes']
+  RestrictBySourceIp: !Not [!Equals [!Ref AllowedIpAddress, '']]
+  CreateBudget: !And
+    - !Not [!Equals [!Ref MonthlyBudgetUsd, 0]]
+    - !Not [!Equals [!Ref BudgetAlertEmail, '']]
 
 Resources:
 
@@ -144,7 +258,22 @@ Resources:
             Principal: { AWS: !Sub 'arn:${AWS::Partition}:iam::${AWS::AccountId}:root' }
             Action: 'kms:*'
             Resource: '*'
-          # Four actions, on this key. Not kms:*, and not on any other key.
+          # Four actions, on this key. Not kms:*, and not on any other key. USE,
+          # not administration: no PutKeyPolicy, no ScheduleKeyDeletion, no
+          # CreateGrant. Pinpoint can wrap and unwrap; it cannot change who else
+          # may, and it cannot take the key away from the account.
+          #
+          # !GetAtt makes CloudFormation create the role first, which is what it
+          # has to do. IAM is eventually consistent even so, and a key policy
+          # naming a role created moments earlier can be rejected with
+          # "MalformedPolicyDocumentException: Policy contains a statement with
+          # one or more invalid principals". That is this, not a wrong template:
+          # re-run the stack and it succeeds. The alternative - dropping this
+          # statement and granting KMS through the role's IAM policy instead,
+          # which the root statement above already permits - would remove the
+          # race but also remove the one place a reviewer can read, on the key
+          # itself, exactly who may use it. The explicit statement is worth a
+          # retry that says what went wrong.
           - Sid: Pinpoint311MayUseTheKey
             Effect: Allow
             Principal: { AWS: !GetAtt PinpointRole.Arn }
@@ -171,8 +300,14 @@ Resources:
       AliasName: !Ref KeyAlias
       TargetKeyId: !Ref PiiKey
 
-  # An assumable role rather than a user with access keys. On EC2 the instance
-  # profile below attaches it; on ECS name this role as the task role.
+  # An assumable role rather than a user with access keys. The two service
+  # principals are the two ways Pinpoint ever obtains credentials: ec2 covers the
+  # instance profile below, read through IMDSv2; ecs-tasks covers being named as
+  # an ECS task role, read through AWS_CONTAINER_CREDENTIALS_RELATIVE_URI. The
+  # application probes both, in that order, so whichever the town uses works with
+  # no configuration. Nothing else can assume this role - no account, no user, no
+  # other service - and there is no external id or cross-account trust here
+  # because Pinpoint never assumes it from outside.
   PinpointRole:
     Type: AWS::IAM::Role
     Properties:
@@ -207,6 +342,13 @@ Resources:
         Statement:
           - !If
             - UseSecretsManager
+            # Scoped to the prefix Pinpoint names its own secrets under, so the
+            # role cannot read a secret belonging to anything else in the
+            # account. The trailing * absorbs the six random characters Secrets
+            # Manager appends to every secret ARN. DeleteSecret is here because
+            # clearing a credential from a card calls it, and a permission set
+            # that can write a secret but not remove it leaves a town unable to
+            # take a credential back out.
             - Sid: KeepTownCredentialsInSecretsManager
               Effect: Allow
               Action:
@@ -214,7 +356,34 @@ Resources:
                 - secretsmanager:PutSecretValue
                 - secretsmanager:GetSecretValue
                 - secretsmanager:DescribeSecret
-                - secretsmanager:ListSecrets
+                - secretsmanager:DeleteSecret
+              Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:*:${AWS::AccountId}:secret:${SecretsPrefix}*'
+              # Locked to the same address as the paid APIs, and for the same
+              # reason as Azure's key vault: a credential store readable from
+              # anywhere is one a copied role can drain. This is the statement
+              # where a wrong address hurts most -- Pinpoint cannot read its own
+              # secrets and the site stops -- which is why the parameter is
+              # optional and says so.
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
+              Condition: !If
+                - RestrictBySourceIp
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+            - !Ref AWS::NoValue
+          # ListSecrets takes no resource - AWS rejects a policy that scopes it -
+          # so it is granted separately and on its own. It returns names and
+          # metadata, never a secret value.
+          - !If
+            - UseSecretsManager
+            - Sid: ListSecretNames
+              Effect: Allow
+              Action: [secretsmanager:ListSecrets]
               Resource: '*'
             - !Ref AWS::NoValue
           - !If
@@ -223,6 +392,17 @@ Resources:
               Effect: Allow
               Action: [translate:TranslateText]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
+              Condition: !If
+                - RestrictBySourceIp
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
           - !If
             - UseRekognition
@@ -233,6 +413,17 @@ Resources:
               Effect: Allow
               Action: [rekognition:DetectFaces, rekognition:DetectText]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
+              Condition: !If
+                - RestrictBySourceIp
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
           - !If
             - UseBedrock
@@ -240,7 +431,56 @@ Resources:
               Effect: Allow
               Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
               Resource: '*'
+              # Two independent limits, and the region one is never optional:
+              # aws:RequestedRegion refuses the call outright if it is aimed
+              # outside AllowedRegions, so residency does not depend on Pinpoint
+              # being configured correctly. The address limit is the optional
+              # half, which is why the region map is repeated in both branches
+              # rather than the whole Condition being dropped with it.
+              Condition: !If
+                - RestrictBySourceIp
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
+                  IpAddress: { 'aws:SourceIp': [!Ref AllowedIpAddress] }
+                - StringEquals: { 'aws:RequestedRegion': !Ref AllowedRegions }
             - !Ref AWS::NoValue
+
+  # A budget is not a cap -- nothing in AWS caps spend -- but it is the
+  # difference between noticing a runaway in a day and noticing it on an
+  # invoice. Created only when an amount and an address are both given, because
+  # a budget with nowhere to send its alerts is decoration.
+  PinpointBudget:
+    Type: AWS::Budgets::Budget
+    Condition: CreateBudget
+    Properties:
+      Budget:
+        BudgetName: !Sub 'pinpoint-311-${AWS::StackName}'
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetAlertEmail
 
 Outputs:
   ReadMeFirst:

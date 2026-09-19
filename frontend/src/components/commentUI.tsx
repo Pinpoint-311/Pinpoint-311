@@ -29,7 +29,16 @@ import type { RequestComment, CommentVisibility } from '../types';
  */
 export type CommentActor = 'staff' | 'resident' | 'integration';
 
-export function commentActor(c: Pick<RequestComment, 'username' | 'user_id'>): CommentActor {
+export function commentActor(
+    c: Pick<RequestComment, 'username' | 'user_id' | 'author_type'>,
+): CommentActor {
+    // The public comments route states authorship outright because it cannot
+    // let the client infer it: `user_id` is a staff member's internal id, and
+    // that route stopped emitting it. Without this line an absent id reads as
+    // null below, and every staff reply on the resident tracker would wear an
+    // "Integration" badge. The staff endpoint sends no author_type and falls
+    // through to the derivation below, unchanged.
+    if (c.author_type) return c.author_type;
     if (c.username === 'Resident') return 'resident';
     if (c.user_id == null) return 'integration';
     return 'staff';
@@ -133,7 +142,13 @@ export function CommentCard({ comment, showVisibility = false, children }: {
                     <a.Icon className="w-4 h-4" aria-hidden="true" />
                 </div>
                 <div className="flex items-center gap-2 flex-wrap min-w-0">
-                    <span className="text-sm font-semibold text-white/90 truncate">{comment.username}</span>
+                    {/* `truncate` clips the name with no way to recover it: the
+                      * pill and the timestamp hold their width, so a long staff
+                      * display name loses its tail at narrow widths (the drawer
+                      * is ~380px) with no reflow and no tooltip. The title puts
+                      * the full name back within reach without changing the
+                      * layout (WCAG 1.4.12). */}
+                    <span className="text-sm font-semibold text-white/90 truncate" title={comment.username}>{comment.username}</span>
                     <span className={`inline-flex items-center px-2 py-0.5 rounded-2xl text-[10px] font-semibold uppercase tracking-wider border shrink-0 ${a.pill}`}>
                         {a.label}
                     </span>

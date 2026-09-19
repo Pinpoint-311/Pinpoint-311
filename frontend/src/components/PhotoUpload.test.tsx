@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import React from 'react';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import PhotoUpload from './PhotoUpload';
+import PhotoUpload, { renderableSrc } from './PhotoUpload';
 
 /**
  * The keyboard-only review found this control invisible to Tab: the picker
@@ -86,7 +86,7 @@ describe('PhotoUpload keyboard access', () => {
     it('makes remove buttons reachable and hides the trigger at the photo cap', () => {
         render(
             <PhotoUpload
-                previewUrls={['data:1', 'data:2', 'data:3']}
+                previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB3']}
                 onAdd={noop}
                 onRemove={noop}
             />,
@@ -98,7 +98,7 @@ describe('PhotoUpload keyboard access', () => {
     it('removes the photo the focused button names', async () => {
         const user = userEvent.setup();
         const onRemove = vi.fn();
-        render(<PhotoUpload previewUrls={['data:1', 'data:2']} onAdd={noop} onRemove={onRemove} />);
+        render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2']} onAdd={noop} onRemove={onRemove} />);
 
         screen.getByRole('button', { name: 'Remove photo 2' }).focus();
         await user.keyboard('{Enter}');
@@ -111,7 +111,7 @@ describe('PhotoUpload keyboard access', () => {
         // than falling to <body>.
         const user = userEvent.setup();
         function Harness() {
-            const [urls, setUrls] = React.useState(['data:1', 'data:2']);
+            const [urls, setUrls] = React.useState(['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2']);
             return (
                 <PhotoUpload
                     previewUrls={urls}
@@ -203,18 +203,18 @@ describe('PhotoUpload keyboard access', () => {
         // `statuses` is optional, and a host that does not pass it must get
         // exactly the pre-screening control back -- no badges, no extra text in
         // the image names, nothing new in the live region.
-        render(<PhotoUpload previewUrls={['data:1']} onAdd={noop} onRemove={noop} />);
+        render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']} onAdd={noop} onRemove={noop} />);
         expect(screen.getByRole('img', { name: 'Photo 1' })).toBeTruthy();
         expect(screen.getByRole('status').textContent).toBe('1 of 3 photos attached.');
     });
 
     it('announces the attached-photo count, and the cap, via a live region', () => {
-        const { rerender } = render(<PhotoUpload previewUrls={['data:1']} onAdd={noop} onRemove={noop} />);
+        const { rerender } = render(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']} onAdd={noop} onRemove={noop} />);
         const status = screen.getByRole('status');
         expect(status.getAttribute('aria-live')).toBe('polite');
         expect(status.textContent).toMatch(/1 of 3 photos attached/);
 
-        rerender(<PhotoUpload previewUrls={['data:1', 'data:2', 'data:3']} onAdd={noop} onRemove={noop} />);
+        rerender(<PhotoUpload previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB2', 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB3']} onAdd={noop} onRemove={noop} />);
         expect(status.textContent).toMatch(/3 of 3 photos attached/);
         expect(status.textContent).toMatch(/maximum reached/i);
     });
@@ -231,7 +231,10 @@ describe('PhotoUpload keyboard access', () => {
  * mostly about what a screen reader hears -- an NVDA audit is the audience.
  */
 describe('PhotoUpload screening status', () => {
-    const withStatus = (statuses: any[], urls = statuses.map((_, i) => `data:${i}`)) =>
+    const withStatus = (
+        statuses: any[],
+        urls = statuses.map((_, i) => `data:image/png;base64,iVBORw0KGgoAAAANSUhEUg${i}`),
+    ) =>
         render(
             <PhotoUpload previewUrls={urls} statuses={statuses} onAdd={noop} onRemove={noop} />,
         );
@@ -263,11 +266,46 @@ describe('PhotoUpload screening status', () => {
     });
 
     it('says a photo that could not be checked is still attached', () => {
-        // The failure case must not read as "lost". It is attached; it is
-        // waiting on a person.
+        // The failure case must not read as "lost". It is attached, and
+        // nothing publishes it until something has checked it.
         withStatus([{ state: 'review' }]);
-        expect(screen.getByRole('status').textContent)
-            .toMatch(/Photo 1: A staff member will review this photo/);
+        const said = screen.getByRole('status').textContent!;
+        expect(said).toMatch(/Photo 1: Attached/);
+        expect(said).toMatch(/check/i);
+    });
+
+    it('does not tell either failure state that a staff member will review it', () => {
+        // Both states shared the string "A staff member will review this
+        // photo" and it was true of neither. Neither state decides anything:
+        // the photo travels inline with the report and is screened AGAIN at
+        // submit, and a person is involved only if that second pass also fails
+        // to clear it. On a town whose cloud detector has no credentials but
+        // whose on-server one works -- the ordinary case -- the submit-time
+        // pass clears the photo and publishes it, having promised a review
+        // that was never queued. Measured on the live demo: the photo was on
+        // the public tracker and media_pending_review was empty.
+        withStatus([{ state: 'review' }, { state: 'error' }]);
+        const said = screen.getByRole('status').textContent!;
+        expect(said).not.toMatch(/staff/i);
+        expect(said).not.toMatch(/will review/i);
+    });
+
+    it('gives review and error different wording', () => {
+        // The difference is real at the point the resident can act on it.
+        // `review` means we asked and got no answer, so re-picking the same
+        // photo will not help; `error` means we could not ask at all, and
+        // trying again may well work. One shared string could say neither.
+        withStatus([{ state: 'review' }]);
+        const forReview = screen.getByRole('status').textContent!;
+        cleanup();
+        withStatus([{ state: 'error' }]);
+        const forError = screen.getByRole('status').textContent!;
+
+        // Both have to actually say something -- an empty label would satisfy
+        // "different" and tell the resident nothing.
+        expect(forReview).toMatch(/Photo 1: \S/);
+        expect(forError).toMatch(/Photo 1: \S/);
+        expect(forReview).not.toBe(forError);
     });
 
     it('carries the state on the image name too', () => {
@@ -299,7 +337,7 @@ describe('PhotoUpload screening status', () => {
         // is not focusable and does not get between the photo's remove button
         // and the trigger, so Tab still walks remove-then-add.
         const user = userEvent.setup();
-        withStatus([{ state: 'ready' }], ['data:1']);
+        withStatus([{ state: 'ready' }], ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']);
         await user.tab();
         expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove photo 1' }));
         await user.tab();
@@ -312,12 +350,42 @@ describe('PhotoUpload screening status', () => {
         // phantom fourth photo.
         render(
             <PhotoUpload
-                previewUrls={['data:1']}
+                previewUrls={['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB1']}
                 statuses={[{ state: 'ready' }, { state: 'checking' }]}
                 onAdd={noop}
                 onRemove={noop}
             />,
         );
         expect(screen.getByRole('status').textContent).not.toMatch(/Photo 2/);
+    });
+});
+
+describe('renderableSrc', () => {
+    it('accepts the two shapes a preview can legitimately have', () => {
+        // What FileReader.readAsDataURL produces from a resident's own photo.
+        expect(renderableSrc('data:image/jpeg;base64,/9j/4AAQSkZJRg==')).not.toBeNull();
+        expect(renderableSrc('data:image/png;base64,iVBORw0KGgo=')).not.toBeNull();
+        // What the screening endpoint hands back for a hosted image.
+        expect(renderableSrc('https://example.gov/uploads/a.jpg')).not.toBeNull();
+    });
+
+    it('refuses anything else rather than passing it to an attribute', () => {
+        expect(renderableSrc('javascript:alert(1)')).toBeNull();
+        expect(renderableSrc('data:text/html;base64,PHNjcmlwdD4=')).toBeNull();
+        expect(renderableSrc('vbscript:msgbox(1)')).toBeNull();
+        expect(renderableSrc('  data:image/png;base64,AAAA')).toBeNull();
+        expect(renderableSrc('')).toBeNull();
+    });
+
+    it('renders a labelled placeholder instead of an unrecognised source', () => {
+        render(
+            <PhotoUpload
+                previewUrls={['data:text/html;base64,PHNjcmlwdD4=']}
+                onAdd={noop}
+                onRemove={noop}
+            />,
+        );
+        expect(screen.getByLabelText('Photo 1, preview unavailable')).toBeTruthy();
+        expect(document.querySelector('img')).toBeNull();
     });
 });

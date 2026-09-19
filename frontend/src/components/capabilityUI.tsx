@@ -1,5 +1,6 @@
-import type { ReactNode } from 'react';
-import { Check, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
+import { useContext, useEffect, useRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { Check, CheckCircle, AlertCircle, CircleDashed, HelpCircle, ChevronDown, Loader2, PowerOff } from 'lucide-react';
+import AccessibilityContext from '../context/AccessibilityContext';
 
 /**
  * The shared vocabulary for a capability, wherever it appears.
@@ -100,12 +101,46 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
     },
 };
 
-export function StatusPill({ state, label }: { state: CapabilityState; label?: string }) {
+export function StatusPill({ state, label, name }: {
+    state: CapabilityState;
+    label?: string;
+    /** What this pill is about, for the announcement. Without it a change reads
+     *  as a bare "Not working", which is useless on a page carrying eight pills. */
+    name?: string;
+}) {
     const p = PILL[state];
+    const text = label ?? p.label;
+
+    /* WCAG 4.1.3 Status Messages.
+     *
+     * These pills are driven by live health checks, so one can flip from
+     * "Working" to "Not working" while the operator is reading something else
+     * on the page. That is a status change with no focus change and no other
+     * signal — exactly the case 4.1.3 covers — and it happened in total silence.
+     *
+     * Routed through the app's single live region rather than making the pill
+     * one: eight pills each with their own aria-live means eight regions
+     * updating in the same tick, and a screen reader announces none of them.
+     *
+     * Read from the context directly rather than through useAnnounce() so this
+     * stays a leaf presentational component that renders anywhere — the hook
+     * throws without a provider, and this pill is used in isolation in tests
+     * and in the setup guide. */
+    const a11y = useContext(AccessibilityContext);
+    const previous = useRef<string | null>(null);
+    useEffect(() => {
+        const current = `${state}:${text}`;
+        // Skip the first render: the initial state is not a change.
+        if (previous.current !== null && previous.current !== current) {
+            a11y?.announce(name ? `${name}: ${text}` : text, hasAlert(state) ? 'assertive' : 'polite');
+        }
+        previous.current = current;
+    }, [state, text, name, a11y]);
+
     return (
         <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-2xl text-xs font-semibold border shrink-0 ${p.cls}`}>
             <p.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-            {label ?? p.label}
+            {text}
         </span>
     );
 }
@@ -136,7 +171,10 @@ export function CapabilityTile({ icon: Icon, label, size = 'md', tone = 'normal'
     }[tone];
     return (
         <div className={`relative shrink-0 flex items-center justify-center border shadow-inner ${box} ${skin}`}>
-            {Icon ? <Icon className={glyph} /> : <span className={`${type} font-bold tabular-nums`}>{label}</span>}
+            {/* The tile is decoration beside a heading that already names the
+              * capability; lucide emits no aria-hidden of its own, so without this
+              * the icon's <svg> is exposed as an unnamed graphic (1.1.1). */}
+            {Icon ? <Icon className={glyph} aria-hidden="true" /> : <span className={`${type} font-bold tabular-nums`}>{label}</span>}
             {badge != null && (
                 <span className="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-primary-500 border-2 border-slate-900 text-[10px] font-bold text-white flex items-center justify-center">
                     {badge}
@@ -154,18 +192,28 @@ export function CapabilityTile({ icon: Icon, label, size = 'md', tone = 'normal'
  * tiles; the primary carries the indigo gradient and its own shadow, which is
  * what the rest of the console uses for the one action a screen is about.
  */
-export function Action({
-    variant = 'ghost', size = 'md', busy = false, disabled, onClick, children, title, chevron = false,
-}: {
+/* The prop list used to be closed, which meant no caller could pass aria-label,
+ * aria-expanded, aria-controls or aria-describedby to a button rendered by this
+ * component — they were not dropped at runtime so much as impossible to write
+ * (4.1.2). Exactly the defect ui/Button.tsx had. `...rest` fixes it once, for
+ * every surface that imports Action; `className` is included so a caller can
+ * extend the skin without a wrapper that breaks the layout. */
+interface ActionProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children'> {
     variant?: 'primary' | 'ghost';
     size?: 'sm' | 'md';
     busy?: boolean;
-    disabled?: boolean;
-    onClick?: () => void;
     children: ReactNode;
-    title?: string;
+    /** Renders a dropdown caret. Only honest on a control that opens a menu. */
     chevron?: boolean;
-}) {
+    /** Whether the menu this button opens is currently open. Required whenever
+     *  `chevron` is set — see the comment below. */
+    expanded?: boolean;
+}
+
+export function Action({
+    variant = 'ghost', size = 'md', busy = false, disabled, onClick, children, title, chevron = false,
+    expanded, className = '', ...rest
+}: ActionProps) {
     const pad = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
     const skin = variant === 'primary'
         ? 'font-semibold text-white bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 border-primary-400/50 shadow-lg shadow-primary-500/25 hover:shadow-primary-500/40'
@@ -176,13 +224,122 @@ export function Action({
             onClick={onClick}
             disabled={disabled || busy}
             title={title}
-            className={`${pad} ${skin} rounded-2xl border inline-flex items-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300`}
+            /* A caret says "this opens a menu". Saying it visually and not
+             * programmatically leaves a screen-reader user with a button that
+             * gives no hint it will open anything, and no way to know whether it
+             * already has. aria-haspopup rides with the caret; aria-expanded
+             * follows it whenever the caller tracks the state. */
+            aria-haspopup={chevron ? 'menu' : undefined}
+            aria-expanded={chevron ? !!expanded : undefined}
+            /* `busy` already swaps in a spinner and disables the control; without
+             * aria-busy that is a button that silently stops responding. */
+            aria-busy={busy || undefined}
+            className={`${pad} ${skin} rounded-2xl border inline-flex items-center gap-1.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${className}`}
+            {...rest}
         >
             {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
             {children}
-            {chevron && <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
+            {chevron && (
+                <ChevronDown
+                    className={`w-3.5 h-3.5 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+                    aria-hidden="true"
+                />
+            )}
         </button>
     );
+}
+
+/**
+ * The verdict of the last action, in the one treatment both card surfaces use.
+ *
+ * Both the provider cards and the town-system cards render "here is what the
+ * check found" directly under the card's buttons, and both had hand-rolled it:
+ * one at `rounded-xl px-3 py-2.5` with an icon, the other at `rounded-lg px-3
+ * py-2` with none. The colours also carried the whole meaning on the second
+ * one, which is the version a colour-blind clerk reads as three identical grey
+ * boxes. Icon and a screen-reader word, so the outcome survives losing colour.
+ *
+ * `unknown` is not a soft failure: it is "we reached it and there was nothing
+ * here to verify", which the pill vocabulary spells `unverifiable`. Amber for
+ * that would be a warning about something nobody can act on.
+ */
+export function ResultNote({ tone, children }: { tone: 'ok' | 'bad' | 'unknown'; children: ReactNode }) {
+    const skin = {
+        ok: { cls: 'bg-emerald-500/10 border-emerald-400/30 text-emerald-200', Icon: CheckCircle, word: 'Success' },
+        bad: { cls: 'bg-amber-500/10 border-amber-400/30 text-amber-200', Icon: AlertCircle, word: 'Problem' },
+        unknown: { cls: 'bg-white/[0.05] border-white/15 text-white/70', Icon: HelpCircle, word: 'Note' },
+    }[tone];
+    return (
+        <div className={`mt-3 rounded-xl px-3 py-2.5 text-xs border flex items-start gap-2 ${skin.cls}`}>
+            <skin.Icon className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
+            <span className="sr-only">{skin.word}: </span>
+            {/* pre-line: the tests report their work as numbered steps, one per
+                line — collapsing them to a paragraph turns a verifiable log back
+                into a claim. */}
+            <span className="min-w-0 whitespace-pre-line">{children}</span>
+        </div>
+    );
+}
+
+/** The same sliding pill the Modules screen uses, so on/off looks like on/off
+ * everywhere in the console rather than being a labelled button here and a
+ * toggle there. Held to the exact geometry of the modules one on purpose.
+ *
+ * Lived in ServiceProviders, which meant the town-system cards drew their own
+ * at a different size with a different focus ring — the exact drift this module
+ * exists to stop. */
+export function Switch({ on, busy, disabled, onChange, label, 'aria-describedby': describedBy }: {
+    on: boolean; busy?: boolean; disabled?: boolean;
+    onChange: () => void; label: string;
+    /* The prop list was closed, so a caller could not attach the sentence
+     * explaining what the switch does even when it had written one. */
+    'aria-describedby'?: string;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onChange}
+            disabled={disabled}
+            role="switch"
+            aria-checked={on}
+            aria-label={label}
+            aria-describedby={describedBy}
+            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+            style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
+        >
+            <span
+                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${on ? 'translate-x-6' : 'translate-x-1'} ${busy ? 'animate-pulse' : ''}`}
+                style={{ width: 16, height: 16 }}
+                aria-hidden="true"
+            />
+        </button>
+    );
+}
+
+/**
+ * Say something to a screen reader, through the one live region this app has.
+ *
+ * `#aria-live-region` is declared once in index.html and is the only polite
+ * region on any page; AccessibilityContext.announce writes to the same element,
+ * and delegates here so there is a single implementation of the clear/set/clear
+ * dance. Cards must not mount their own: several live regions on one screen is
+ * how a stale message gets read over a fresh one, and the setup page can carry
+ * a dozen cards that all want to report a check result.
+ *
+ * textContent, never innerHTML: most of what gets announced here is a vendor's
+ * own error string, which is remote text and has no business being parsed as
+ * markup.
+ */
+export function announceStatus(message: string, priority: 'polite' | 'assertive' = 'polite') {
+    if (typeof document === 'undefined') return;
+    const region = document.getElementById('aria-live-region');
+    if (!region) return;
+    region.setAttribute('aria-live', priority);
+    region.textContent = '';
+    // A same-text rewrite is not a change, so the region has to empty first and
+    // land the message on a later tick for the reading to be triggered at all.
+    setTimeout(() => { region.textContent = message; }, 100);
+    setTimeout(() => { region.textContent = ''; }, 3000);
 }
 
 /* CapabilityRow was here.

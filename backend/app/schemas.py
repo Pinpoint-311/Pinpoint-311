@@ -218,8 +218,12 @@ class ServiceRequestUpdate(BaseModel):
     closed_substatus: Optional[ClosedSubstatus] = None
     completion_message: Optional[str] = None
     completion_photo_url: Optional[str] = None
-    # Legal hold (admin only)
+    # Legal hold (admin only). `flagged` is the legacy name the admin console
+    # still posts; `legal_hold` is the column retention actually reads, and the
+    # handler keeps the two in step. See models.ServiceRequest.legal_hold for
+    # why they are separate columns now.
     flagged: Optional[bool] = None
+    legal_hold: Optional[bool] = None
 
 
 class PublicArchiveUpdate(BaseModel):
@@ -251,12 +255,22 @@ class ServiceRequestResponse(BaseModel):
     requested_datetime: Optional[datetime] = None
     updated_datetime: Optional[datetime] = None
     source: str
+    # Content moderation said a human should look at this.
     flagged: bool = False
+    # Exempt from the retention schedule until an admin lifts it. Distinct from
+    # `flagged`; see models.ServiceRequest.legal_hold.
+    legal_hold: bool = False
     # Whether this report appears in public listings (False = unlisted).
     is_public: bool = True
     # Whether staff took it off the public tracker and map. Distinct from
     # is_public, which is the resident's own choice — see models.ServiceRequest.
     public_archived: bool = False
+    # How many photos on this report are held out of media_urls waiting for a
+    # staff decision. The photos themselves are unredacted and appear only on
+    # the staff-only detail schema; this is the count, so a list can show a
+    # badge and filter without carrying megabytes of base64 -- and so a held
+    # photo stops depending on somebody happening to open the report.
+    photos_pending_review: int = 0
 
     @field_validator('is_public', mode='before')
     @classmethod
@@ -271,6 +285,11 @@ class ServiceRequestResponse(BaseModel):
     @field_validator('flagged', mode='before')
     @classmethod
     def coalesce_flagged(cls, v):
+        return v if v is not None else False
+
+    @field_validator('legal_hold', mode='before')
+    @classmethod
+    def coalesce_legal_hold(cls, v):
         return v if v is not None else False
     
     matched_asset: Optional[Dict[str, Any]] = None
@@ -294,6 +313,128 @@ class ServiceRequestResponse(BaseModel):
     # Priority fields for sorting/filtering (AI score is in ai_analysis.priority_score)
     manual_priority_score: Optional[float] = None
     ai_analysis: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class Open311CreatedRequestResponse(BaseModel):
+    """What an anonymous poster is told back after creating a request.
+
+    `POST /api/open311/v2/requests.json` is unauthenticated -- anyone on the
+    internet can call it -- and it used to answer with `ServiceRequestResponse`,
+    the staff model built off the whole ORM row. That handed the poster the
+    internal integer `id`, the soft-delete triple, `flagged`, `priority`,
+    `source`, `is_public`/`public_archived`, `matched_asset`, `custom_fields`,
+    `ai_analysis`, `manual_priority_score`, `assigned_department_id` and
+    `assigned_to` -- a STAFF USERNAME, disclosed to a stranger by the act of
+    filing a pothole report. Auto-assignment runs inside that same handler, so
+    the field was reliably populated by the time it serialised.
+
+    The create path gets its own model rather than a filtered view of the staff
+    one, so that a field added to `ServiceRequestResponse` later for the
+    console cannot silently appear here as well.
+
+    The field set is the GeoReport v2 acknowledgement -- what a submitter needs
+    to know their report landed and to look it up again -- plus
+    `photos_pending_review`, and nothing else. The resident portal reads two of
+    them (`result.service_request_id` and that count); the rest are kept
+    because an Open311 client that is not our portal reasonably expects the
+    echo.
+
+    `photos_pending_review` is the one deliberate addition to "the
+    acknowledgement and nothing else", and it earns the exception by being
+    about THIS submission rather than about the report as staff see it: a
+    photo the submitter just attached is not on their report, and this
+    response is the only place they can be told so while they are still
+    looking. It is a count, so it discloses nothing the submitter did not
+    themselves upload -- unlike every field the docstring above is warning
+    about, which were facts about the town's internal handling.
+
+    Deliberately absent though the spec would allow it: `media_urls`. On this
+    deployment those are base64 data URIs of several megabytes each and the
+    poster is the one who just uploaded them -- the public list endpoint omits
+    them for the same reason. The old response did not carry them either, so
+    leaving them out is not a removal.
+    """
+    service_request_id: str
+    service_code: str
+    service_name: str
+    description: str
+    status: str
+    address: Optional[str] = None
+    lat: Optional[float] = None
+    long: Optional[float] = None
+    requested_datetime: Optional[datetime] = None
+    # How many of the photos just submitted are held back for a staff check.
+    # A count, not the photos -- the same reasoning as media_urls above, and
+    # the held ones are unredacted besides. It is here because this response is
+    # the resident's only chance to be told at the moment it happens: the
+    # thumbnail's status was a guess made at pick time, and the submit is where
+    # the real answer is decided. Without it the success screen congratulates
+    # someone whose photo has just been withheld.
+    photos_pending_review: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class PublicRequestCommentResponse(BaseModel):
+    """One external comment, as an unauthenticated reader may see it.
+
+    `RequestCommentResponse` carries the author's `user_id` and their real
+    `username` -- for a staff comment, a login name -- plus the internal
+    integer `service_request_id`. The public comments route served that model
+    verbatim, so the tracker page of any report published the roster of whoever
+    had touched it. The public audit log in the same file already gets this
+    right (`actor_name if actor_type == "resident" else "Staff"`); this is that
+    rule applied to the other public surface.
+
+    `author_type` is stated rather than inferred because the tracker renders a
+    badge per author and derived it from `user_id` being null (commentUI.tsx).
+    With the id gone that test would have labelled every staff comment an
+    integration sync note.
+    """
+    id: int
+    author_type: str  # "resident" | "staff" | "integration"
+    username: str
+    content: str
+    visibility: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    @classmethod
+    def redacted(cls, comment) -> "PublicRequestCommentResponse":
+        """Build one from a RequestComment row, hiding any staff identity.
+
+        The single way this model is constructed, so a public route cannot
+        assemble one field by field and quietly get the redaction wrong.
+
+        Keyed on `user_id` rather than on the username string: a staffer who
+        happens to be named "Resident" must not be able to pass as one, and a
+        row written by a logged-in user is a staff row whatever it is labelled.
+        An `external_ref` marks a note synced in from Accela, Tyler and the
+        like -- its display name is the platform's, not a person's, so it
+        survives.
+
+        Projected field by field rather than handed to from_attributes, so a
+        column added to RequestComment later cannot arrive here by default.
+        """
+        if comment.user_id is not None:
+            author_type, username = "staff", "Staff"
+        elif getattr(comment, "external_ref", None):
+            author_type, username = "integration", (comment.username or "Integration")
+        else:
+            author_type, username = "resident", (comment.username or "Resident")
+        return cls(
+            id=comment.id,
+            author_type=author_type,
+            username=username,
+            content=comment.content,
+            visibility=comment.visibility,
+            created_at=comment.created_at,
+            updated_at=getattr(comment, "updated_at", None),
+        )
 
     class Config:
         from_attributes = True
@@ -741,6 +882,8 @@ class RequestCommentCreate(BaseModel):
 
 
 class RequestCommentResponse(BaseModel):
+    """A comment as STAFF see it: the author is named."""
+
     id: int
     service_request_id: int
     user_id: Optional[int] = None
@@ -752,6 +895,8 @@ class RequestCommentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
 
 
 # ============ Request Audit Log ============

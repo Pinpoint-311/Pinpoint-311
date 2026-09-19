@@ -40,18 +40,21 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Azure Government AI",
         "boundary": "Azure Government / GCC High (FedRAMP High / DoD)",
         "description": "Azure OpenAI (GPT models) in US government regions. Best for Microsoft/M365 states.",
-        # Azure addresses a model by the *deployment name* the town chose, not
-        # by the model name -- which is why discovery lists deployments. These
-        # are the conventional names, and they resolve only where a deployment
-        # was named to match; the moment credentials are saved, discovery
-        # replaces them with what the town actually has.
-        "models": [
-            {"id": "gpt-4.1-mini", "label": "GPT-4.1 mini (fast, cheap)"},
-            {"id": "gpt-4.1", "label": "GPT-4.1 (higher quality, long context)"},
-            {"id": "gpt-4o-mini", "label": "GPT-4o mini"},
-            {"id": "gpt-4o", "label": "GPT-4o"},
-        ],
-        "default_model": "gpt-4.1-mini",
+        # Deliberately no model list, and no default.
+        #
+        # Azure addresses a model by the *deployment name the town invented*,
+        # not by a model name. There used to be four conventional ids here on
+        # the theory that discovery would replace them once credentials were
+        # saved. It does not: listing deployments left the Azure data plane, so
+        # an api-key gets 404 from /openai/deployments and only Entra
+        # credentials against the control plane can enumerate them. The list
+        # therefore stayed, offering ids that work only where somebody happened
+        # to name a deployment identically -- and it gave the card a second
+        # place to set the same value as the "Deployment name" box below,
+        # which is how a Google model id ended up being sent to Azure.
+        #
+        # One field, typed, which is the only form the true value ever takes.
+        "models": [],
         "credential_fields": [
             {"key": "AZURE_OPENAI_ENDPOINT", "label": "Azure OpenAI Endpoint", "secret": False},
             {"key": "AZURE_OPENAI_API_KEY", "label": "API Key", "secret": True},
@@ -61,7 +64,7 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         "field_help": {
             "AZURE_OPENAI_ENDPOINT": "e.g. https://your-resource.openai.azure.us — the Gov-cloud endpoint from the Azure portal.",
             "AZURE_OPENAI_API_KEY": "Key 1 or Key 2 from your Azure OpenAI resource.",
-            "AZURE_OPENAI_DEPLOYMENT": "The deployment name you created for the model (acts as the model id).",
+            "AZURE_OPENAI_DEPLOYMENT": "The name YOU gave the deployment in Azure AI Foundry -- not a model id like gpt-4.1-mini, unless that is what you named it. Foundry -> your resource -> Deployments.",
             "AZURE_OPENAI_API_VERSION": "Leave blank to use the supported default.",
         },
     },
@@ -109,13 +112,31 @@ def build_ai_provider(provider: str, model: Optional[str], creds: Dict[str, str]
     if provider == "azure":
         endpoint = creds.get("AZURE_OPENAI_ENDPOINT")
         api_key = creds.get("AZURE_OPENAI_API_KEY")
-        if not endpoint or not api_key:
+        deployment = creds.get("AZURE_OPENAI_DEPLOYMENT") or model
+        # Without a deployment name there is nothing to call, and no name worth
+        # guessing. Returning None reports the card as not configured, which is
+        # true, instead of sending Azure an invented name and relaying its 404.
+        if not endpoint or not api_key or not deployment:
             return None
         from app.services.ai.azure_openai import AzureOpenAIProvider
         return AzureOpenAIProvider(
             endpoint=endpoint,
             api_key=api_key,
-            deployment=model or creds.get("AZURE_OPENAI_DEPLOYMENT"),
+            # The provider's own field wins over the shared AI_MODEL key.
+            #
+            # AI_MODEL is one key across every provider, so a model id chosen
+            # for a different one survives a switch and used to override the
+            # box labelled "Deployment name" on this very card. Live: an Azure
+            # town with AZURE_OPENAI_DEPLOYMENT correctly set to its deployment
+            # went on asking Azure for `gemini-3.6-flash` and got
+            # DeploymentNotFound -- with the right answer already typed into
+            # the form, and no way to see why it was being ignored.
+            #
+            # On Azure these two mean the same thing anyway: a deployment name
+            # is what identifies a model, and discovery lists deployments as
+            # models. So preferring the explicit field costs a town nothing and
+            # makes the field on screen the one that decides.
+            deployment=deployment,
             api_version=creds.get("AZURE_OPENAI_API_VERSION") or "2024-06-01",
         )
     if provider == "bedrock":

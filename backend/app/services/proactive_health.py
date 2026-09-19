@@ -232,7 +232,16 @@ async def _backup_age_check() -> Dict[str, Any]:
             )
         created = last["created_at"]
         if isinstance(created, str):
-            created = datetime.fromisoformat(created.replace("Z", "").replace("+00:00", ""))
+            # Both replaces used to run, stripping the offset back off an ISO
+            # string to produce a NAIVE datetime, which cannot be subtracted
+            # from an aware `now`. The TypeError landed in the except below and
+            # this check reported "unknown" on every single sweep -- so the one
+            # check that verifies a town's backups are still running could never
+            # fire, and a town whose backups stopped months ago looked exactly
+            # like a town whose backups were fine.
+            created = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
         hours = (datetime.now(timezone.utc) - created).total_seconds() / 3600
         status = classify_metric(round(hours, 1), warn=36, crit=72)
         return _check(
