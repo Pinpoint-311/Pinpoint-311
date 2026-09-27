@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Free, open-source municipal service request software for residents and staff.</strong>
+  <strong>Free, open-source municipal service request software for residents, staff, administrators, and researchers.</strong>
 </p>
 
 <p align="center">
@@ -17,22 +17,17 @@
   <img src="https://img.shields.io/badge/PostgreSQL-PostGIS-336791.svg" alt="PostgreSQL + PostGIS">
 </p>
 
-<p align="center">
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
-</p>
-
 ---
 
 ## Overview
 
 Pinpoint 311 is a free, open-source platform for managing non-emergency municipal service requests.
 
-Residents can report issues without creating an account, attach photos and locations, receive updates, and track requests. Municipal staff can route, assign, update, and resolve requests from a central dashboard. Administrators configure services, departments, integrations, branding, routing, and system settings from the browser.
+Residents can report issues without creating an account. Staff can route, assign, update, and resolve requests from a central dashboard. Administrators can configure services, departments, integrations, branding, routing, and system settings from the browser. Researchers can work with privacy-preserved operational and geographic data through an optional Research Suite.
 
-Municipalities can operate independent self-hosted instances, while states, counties, shared-service organizations, and other hosts can optionally operate isolated municipal instances through Pinpoint's [centralized-hosting system](https://github.com/Pinpoint-311/centralizedhosting/tree/main).
+Municipalities can operate independent self-hosted instances, while states, counties, shared-service organizations, and other hosts can optionally operate isolated municipal instances through Pinpoint's centralized-hosting system.
 
-Pinpoint is MIT-licensed. Each municipal instance maintains its own data and configuration, with no per-seat or per-request software licensing fees.
+Pinpoint is MIT licensed. Each municipal instance maintains its own data and configuration, with no per-seat or per-request software licensing fees.
 
 ### At a glance
 
@@ -56,16 +51,19 @@ Pinpoint is MIT-licensed. Each municipal instance maintains its own data and con
 
 ## Contents
 
+### Who Pinpoint Is For
+
+- [For Residents](#for-residents)
+- [For Staff](#for-staff)
+- [For Administrators](#for-administrators)
+- [For Researchers](#for-researchers)
+
 ### Platform
 
-- [Resident Portal](#resident-portal)
-- [Staff Dashboard](#staff-dashboard)
-- [Optional AI Assistance](#optional-ai-assistance)
-- [Admin Console](#admin-console)
 - [GIS and Jurisdiction Routing](#gis-and-jurisdiction-routing)
-- [Open311 and Integrations](#open311-and-integrations)
-- [Research and Analytics](#research-and-analytics)
+- [Optional AI Assistance](#optional-ai-assistance)
 - [Privacy and Security](#privacy-and-security)
+- [Open311 and Integrations](#open311-and-integrations)
 - [Accessibility](#accessibility)
 - [Architecture](#architecture)
 
@@ -88,9 +86,9 @@ Pinpoint is MIT-licensed. Each municipal instance maintains its own data and con
 ### Technical Reference
 
 - [Request Lifecycle](#request-lifecycle)
-- [Detailed Resident Portal Reference](#detailed-resident-portal-reference)
-- [Detailed Staff Dashboard Reference](#detailed-staff-dashboard-reference)
-- [Detailed Admin Console Reference](#detailed-admin-console-reference)
+- [Resident Portal Reference](#resident-portal-reference)
+- [Staff Dashboard Reference](#staff-dashboard-reference)
+- [Admin Console Reference](#admin-console-reference)
 - [Research Data Dictionary](#research-data-dictionary)
 - [API Reference](#api-reference)
 - [Resource Requirements and Sizing](#resource-requirements-and-sizing)
@@ -99,51 +97,38 @@ Pinpoint is MIT-licensed. Each municipal instance maintains its own data and con
 - [Records Retention Implementation](#records-retention-implementation)
 - [CI/CD Reference](#cicd-reference)
 - [Infrastructure and Container Configuration](#infrastructure-and-container-configuration)
+- [Authentication and Provider Setup](#authentication-and-provider-setup)
+- [Sustainability and Continuity](#sustainability-and-continuity)
 
 ---
 
-# Platform
+# Who Pinpoint Is For
 
-## Resident Portal
+## For Residents
 
-The Resident Portal provides a public interface for submitting and tracking non-emergency municipal service requests.
+Pinpoint gives residents a simple way to report non-emergency problems without creating an account or learning how municipal departments are organized.
 
-### Reporting
+A resident can report an issue, place it on a map, attach photos, answer questions specific to the service, and provide contact information for updates.
+
+### Simple reporting
 
 Residents can:
 
-- Select a municipal service category
-- Enter or select a location on an interactive map
+- Select a service category
+- Enter or select a location on a map
 - Upload up to three photos
 - Answer service-specific questions
 - Provide contact information for updates
-- Submit an unlisted request that does not appear on the public map or feed
+- Submit an unlisted request
 - Submit without creating an account
 
-### Location and infrastructure
+### Track without an account
 
-Pinpoint supports:
+After submitting a request, residents can receive a secure magic link for tracking it.
 
-- Google Maps
-- Esri / ArcGIS Online and Enterprise
-- Azure Maps
-- Apple MapKit JS
-- Municipal boundary validation
-- PostGIS road-corridor checks
-- Custom GeoJSON infrastructure layers
-- Selectable municipal assets such as hydrants, streetlights, parks, and other infrastructure
+The tracking page can show:
 
-Routing rules can distinguish between municipal, county, state, utility, or other jurisdictional responsibility.
-
-For example, a pothole on a municipal road can enter the municipality's Public Works queue while a report on a state-maintained highway can instead display the appropriate outside agency information.
-
-### Request tracking
-
-Residents can follow requests through a secure magic link without maintaining an account.
-
-The tracking interface supports:
-
-- Request status
+- Current status
 - Public updates
 - Status history
 - Resolution information
@@ -152,9 +137,24 @@ The tracking interface supports:
 
 Email and SMS notifications can also be enabled.
 
+### Map-based reporting
+
+Pinpoint can use configured mapping and GIS providers to help residents identify exactly where a problem is located.
+
+Supported mapping integrations include:
+
+- Google Maps
+- Esri / ArcGIS Online and Enterprise
+- Azure Maps
+- Apple MapKit JS
+
+Municipalities can also add their own infrastructure layers, allowing residents to select assets such as hydrants, streetlights, parks, or other mapped infrastructure.
+
 ### Public request map
 
-Municipalities can provide a public map and feed of service requests with filtering by:
+Municipalities can provide a public map and feed of service requests.
+
+Residents can filter public requests by:
 
 - Service
 - Department
@@ -164,18 +164,26 @@ Municipalities can provide a public map and feed of service requests with filter
 
 Resident PII is excluded from public views.
 
+### Language access
+
+Pinpoint supports configurable translation providers, allowing the resident interface to be offered in more than 100 languages.
+
+Translation is optional and can be configured by the municipality.
+
 ---
 
-## Staff Dashboard
+## For Staff
 
-The Staff Dashboard provides municipal employees with a central workspace for managing requests.
+Pinpoint gives municipal employees a central workspace for receiving, triaging, assigning, updating, and resolving service requests.
+
+Staff do not need residents to know which department handles a problem. Routing rules and municipal configuration can direct requests to the appropriate workflow.
 
 ### Request management
 
 Staff can:
 
 - Review incoming requests
-- Filter and search the request queue
+- Search and filter the request queue
 - Assign requests to departments or individual staff
 - Update status and priority
 - Add internal notes
@@ -210,45 +218,31 @@ Requests can be routed using configurable rules based on:
 - Infrastructure asset
 - External agency responsibility
 
-This allows municipalities to model their actual service-delivery structure rather than forcing every request through a single generic queue.
+For example, a pothole on a municipal road can enter the municipality's Public Works queue while a report on a state-maintained highway can instead direct the resident toward the appropriate outside agency.
+
+### Operational context
+
+Staff can see additional context around a request, including:
+
+- Nearby requests
+- Infrastructure information
+- Geographic context
+- Request history
+- Status history
+- Assignment history
+- Optional AI-assisted triage
+
+This keeps operational information attached to the request instead of scattered across email, spreadsheets, and separate systems.
 
 ---
 
-## Optional AI Assistance
+## For Administrators
 
-AI functionality in Pinpoint is optional and provider-configurable.
+Pinpoint gives municipal administrators control over how the platform operates without requiring routine code changes.
 
-When enabled, it can assist staff with:
+The Admin Console is used to configure the municipality's services, departments, routing, branding, users, providers, infrastructure layers, and optional modules.
 
-- Plain-language request summaries
-- Photo categorization
-- Suggested priority scores
-- Safety context
-- Sentiment analysis
-- Natural-language operational analytics
-
-AI functions as decision support. Suggested priorities require explicit staff acceptance before changing a request, and that action is recorded in the audit log.
-
-Routing, assignment, request submission, and the core service-request workflow continue to operate when AI is disabled or unavailable.
-
-### Photo privacy
-
-Pinpoint also supports configurable photo processing for:
-
-- Human face detection and redaction
-- License-plate detection and redaction
-- EXIF metadata removal
-- Photo categorization
-
-Photos with uncertain detections can be held for staff review before publication.
-
----
-
-## Admin Console
-
-Municipal administrators can configure their deployment from the browser without editing application code.
-
-### Services and routing
+### Services and departments
 
 Administrators can configure:
 
@@ -261,7 +255,7 @@ Administrators can configure:
 - Expected service levels
 - Infrastructure layers
 
-### Branding
+### Municipal branding
 
 Each deployment can use the municipality's:
 
@@ -301,9 +295,101 @@ Administrators can configure providers for:
 - Identity
 - Secret storage
 
-Advanced integrations are optional. The core service-request platform can operate without AI, translation, or external messaging providers.
+Advanced integrations are optional. The core service-request workflow can operate without AI, translation, or external messaging providers.
+
+### Infrastructure layers
+
+Administrators can upload GeoJSON layers representing municipal assets such as:
+
+- Parks
+- Storm drains
+- Hydrants
+- Streetlights
+- Zoning districts
+- Other infrastructure
+
+These layers can be used for resident reporting, staff context, routing, and infrastructure history.
+
+### Records administration
+
+Pinpoint includes configurable tools for:
+
+- Records retention
+- Anonymization
+- Legal holds
+- Audit history
+- Request deletion and restoration workflows
+
+Retention policies can be configured according to the municipality's applicable records requirements.
+
+### Deployment control
+
+Municipalities can run Pinpoint independently on their own infrastructure.
+
+Organizations operating Pinpoint for multiple municipalities can instead use the optional centralized-hosting architecture, which allows a state, county, shared-service organization, or other host to manage isolated municipal instances from a central control plane.
+
+More information is available in [Centralized Hosting](#centralized-hosting).
 
 ---
+
+## For Researchers
+
+Pinpoint includes an optional Research Suite for studying municipal service delivery while separating research data from direct resident identifying information.
+
+The Research Suite can be enabled or disabled by the municipality.
+
+### Municipal analytics
+
+Researchers and authorized municipal users can study:
+
+- Request volume
+- Response and resolution times
+- Reassignment patterns
+- Service hotspots
+- Infrastructure history
+- Seasonal trends
+- Resident sentiment
+- Geographic patterns
+- Administrative workflow
+- Human/AI decision patterns
+
+### Privacy-preserved exports
+
+Authorized researchers can export sanitized datasets in:
+
+- CSV
+- GeoJSON
+
+Research fields can include:
+
+- Operational metrics
+- Geographic variables
+- Infrastructure context
+- Census-linked variables
+- Weather
+- Sentiment
+- Administrative-friction measures
+- Human/AI comparison metrics
+
+Resident free-text descriptions and direct identifying information are excluded from research exports.
+
+### Reproducible analysis
+
+The Research Suite provides a structured data dictionary and export formats intended for tools such as:
+
+- Python
+- R
+- SPSS
+- Excel
+- QGIS
+- ArcGIS
+- GeoPandas
+
+A detailed field-level reference is available in the [Research Data Dictionary](#research-data-dictionary).
+
+---
+
+# Platform
 
 ## GIS and Jurisdiction Routing
 
@@ -319,56 +405,53 @@ Supported workflows include:
 - Geographic filtering
 - Custom GeoJSON layers
 
-This makes it possible to route requests based on where an issue actually occurs rather than relying only on the service category selected by the resident.
+This makes it possible to route requests based on where an issue actually occurs rather than relying only on the category selected by the resident.
+
+### Road jurisdiction
+
+Road-corridor routing can distinguish between roads maintained by different jurisdictions.
+
+A municipality can configure Pinpoint to recognize responsibility such as:
+
+- Municipal
+- County
+- State
+- Utility
+- Other outside agency
+
+This allows requests outside municipal responsibility to be handled differently from ordinary municipal requests.
 
 ---
 
-## Open311 and Integrations
+## Optional AI Assistance
 
-Pinpoint supports the **Open311 GeoReport v2** standard.
+AI functionality in Pinpoint is optional and provider-configurable.
 
-This provides standardized service discovery and request interfaces for integrations with other civic systems.
+When enabled, it can assist staff with:
 
-Pinpoint also supports connectors for external systems with documented APIs. Connectors can exchange request information, status updates, comments, photos, and related data where supported by the external system.
+- Plain-language request summaries
+- Photo categorization
+- Suggested priority scores
+- Safety context
+- Sentiment analysis
+- Natural-language operational analytics
 
-Interactive API documentation is available in development environments at:
+AI functions as decision support.
 
-- `/api/docs`
-- `/api/redoc`
+Suggested priorities require explicit staff acceptance before changing the request, and that action is recorded in the audit history.
 
----
+Routing, assignment, request submission, and the core service-request workflow continue to operate when AI is disabled or unavailable.
 
-## Research and Analytics
+### Photo privacy
 
-Pinpoint includes an optional privacy-preserving Research Suite for municipal analysis and academic research.
+Pinpoint supports configurable photo processing for:
 
-### Municipal analytics
+- Human face detection and redaction
+- License-plate detection and redaction
+- EXIF metadata removal
+- Photo categorization
 
-Operational data can help municipalities study:
-
-- Request volume
-- Response and resolution times
-- Reassignment patterns
-- Service hotspots
-- Infrastructure history
-- Seasonal trends
-- Resident sentiment
-- Geographic patterns
-
-### Research exports
-
-Authorized researchers can export sanitized datasets in:
-
-- CSV
-- GeoJSON
-
-Research fields can include operational, geographic, infrastructure, Census, weather, sentiment, and human/AI comparison metrics.
-
-Resident free-text descriptions and direct identifying information are excluded from research exports.
-
-The Research Suite can be enabled or disabled by the municipality.
-
-A complete field-level reference is available in the [Research Data Dictionary](#research-data-dictionary).
+Photos with uncertain detections can be held for staff review before publication.
 
 ---
 
@@ -404,6 +487,10 @@ Pinpoint can integrate with:
 
 When an external secret store is configured, integration credentials can be stored there while Pinpoint retains only the reference required to retrieve them.
 
+### PII encryption
+
+Resident identifying information can be encrypted separately from ordinary operational request data.
+
 ### Audit history
 
 Request lifecycle events are recorded in a tamper-evident audit history, including actions such as:
@@ -416,6 +503,21 @@ Request lifecycle events are recorded in a tamper-evident audit history, includi
 - Acceptance of AI recommendations
 
 For additional information, see [COMPLIANCE.md](./COMPLIANCE.md).
+
+---
+
+## Open311 and Integrations
+
+Pinpoint supports the **Open311 GeoReport v2** standard.
+
+This provides standardized service discovery and request interfaces for integrations with other civic systems.
+
+Pinpoint also supports connectors for external systems with documented APIs. Connectors can exchange request information, status updates, comments, and related data where supported by the external system.
+
+Interactive API documentation is available in development environments at:
+
+- `/api/docs`
+- `/api/redoc`
 
 ---
 
@@ -436,11 +538,18 @@ Accessibility information and testing details are maintained in [COMPLIANCE.md](
 
 ```mermaid
 graph TB
+    subgraph Users
+        Residents[Residents]
+        Staff[Municipal Staff]
+        Admins[Administrators]
+        Researchers[Researchers]
+    end
+
     subgraph Interfaces
-        Resident[Resident Portal]
-        Staff[Staff Dashboard]
-        Admin[Admin Console]
-        Research[Research Suite]
+        ResidentPortal[Resident Portal]
+        StaffDashboard[Staff Dashboard]
+        AdminConsole[Admin Console]
+        ResearchSuite[Research Suite]
     end
 
     subgraph Application
@@ -467,10 +576,15 @@ graph TB
         Moderation[Content Moderation]
     end
 
-    Resident --> Caddy
-    Staff --> Caddy
-    Admin --> Caddy
-    Research --> Caddy
+    Residents --> ResidentPortal
+    Staff --> StaffDashboard
+    Admins --> AdminConsole
+    Researchers --> ResearchSuite
+
+    ResidentPortal --> Caddy
+    StaffDashboard --> Caddy
+    AdminConsole --> Caddy
+    ResearchSuite --> Caddy
 
     Caddy --> API
 
@@ -505,10 +619,15 @@ graph TB
 
 # Deployment Models
 
-Pinpoint supports two deployment models:
+Pinpoint supports two deployment models.
 
-1. **Municipal self-hosting** — a municipality operates its own independent Pinpoint instance.
-2. **Centralized hosting** — a state, county, shared-service organization, or other host operates isolated municipal instances through a central control plane.
+### Municipal self-hosting
+
+A municipality operates its own independent Pinpoint instance and infrastructure.
+
+### Centralized hosting
+
+A state, county, shared-service organization, or other host operates isolated municipal instances through a central control plane.
 
 Self-hosting is the default. Centralized hosting is optional.
 
@@ -631,11 +750,9 @@ Once staff SSO is configured, normal staff authentication uses the configured id
 
 ## Centralized Hosting
 
-For organizations supporting multiple municipalities, Pinpoint provides a separate centralized-hosting system:
+Pinpoint's centralized-hosting system allows an organization to operate separate Pinpoint instances for multiple municipalities from a central control plane.
 
-**[Pinpoint 311 Centralized Hosting](https://github.com/Pinpoint-311/centralizedhosting/tree/main)**
-
-The centralized-hosting control plane is designed for organizations such as:
+This deployment model is intended for organizations such as:
 
 - State agencies
 - Counties
@@ -643,13 +760,15 @@ The centralized-hosting control plane is designed for organizations such as:
 - Regional authorities
 - Other organizations operating Pinpoint on behalf of multiple municipalities
 
-Instead of manually maintaining many independent deployments, the host can operate a fleet of municipal Pinpoint instances through a central control plane.
+The centralized-hosting implementation is maintained in a separate repository:
+
+**[Pinpoint 311 Centralized Hosting](https://github.com/Pinpoint-311/centralizedhosting/tree/main)**
 
 ### One municipality, one instance
 
-Centralized hosting does not place every municipality into a shared resident-request database.
+Centralized hosting does not place every municipality into one shared resident-request database.
 
-Each municipality receives an isolated Pinpoint instance with its own:
+Each municipality continues to receive an isolated Pinpoint instance with its own:
 
 - Application
 - Database
@@ -664,11 +783,14 @@ Resident data from one municipality is not combined with resident data from anot
 
 ```mermaid
 graph TB
+    Host[State / County / Shared-Service Host]
     Control[Centralized Hosting Control Plane]
 
-    Control --> TownA[Municipality A]
-    Control --> TownB[Municipality B]
-    Control --> TownC[Municipality C]
+    Host --> Control
+
+    Control --> TownA[Municipality A Instance]
+    Control --> TownB[Municipality B Instance]
+    Control --> TownC[Municipality C Instance]
 
     TownA --> DBA[(Database A)]
     TownB --> DBB[(Database B)]
@@ -692,13 +814,15 @@ The centralized-hosting system handles infrastructure-level fleet operations suc
 - Lifecycle management
 - Fleet-level operational metadata
 
-Municipal staff continue to use their own Pinpoint instance for service requests, departments, routing, staff workflows, and resident interactions.
+Municipal staff continue to work inside their municipality's own Pinpoint instance.
 
 ### Municipal data isolation
 
-The centralized control plane manages infrastructure rather than municipal service-request data.
+The control plane manages infrastructure rather than combining municipal service-request databases.
 
-Resident activity remains within each municipality's instance, allowing a host organization to manage infrastructure across many municipalities without creating a shared resident-request database.
+Resident activity remains within each municipality's instance.
+
+This allows a host organization to manage infrastructure across many municipalities while preserving separate municipal deployments.
 
 ### Managed configuration
 
@@ -717,26 +841,22 @@ Host-controlled settings can be identified as managed settings within the munici
 
 ### Fleet updates and monitoring
 
-Municipal instances expose health and version information that allows the centralized-hosting system to coordinate:
+Municipal instances can expose health and version information to the centralized-hosting system for:
 
 - Health monitoring
 - Version tracking
 - Application rollouts
 - Instance lifecycle operations
 
-This allows an organization to maintain many isolated municipal instances without administering every deployment individually.
+This allows the host to maintain multiple isolated deployments without administering every server individually.
 
 ### Optional by design
 
-Centralized hosting is completely optional.
+Centralized hosting is not required for Pinpoint.
 
-When managed mode is disabled, Pinpoint operates as the standalone municipal deployment described throughout this README.
+When managed mode is disabled, Pinpoint operates as a standalone municipal deployment.
 
-A self-hosting municipality does not need the centralized-hosting repository or control plane to operate its deployment.
-
-The centralized-hosting implementation is maintained separately:
-
-**[github.com/Pinpoint-311/centralizedhosting](https://github.com/Pinpoint-311/centralizedhosting/tree/main)**
+A self-hosting municipality does not need the centralized-hosting repository or control plane to operate its instance.
 
 ---
 
@@ -771,8 +891,6 @@ Use the repository's private vulnerability-reporting process so security issues 
 2. Select **Report a vulnerability**.
 3. Submit the vulnerability through the private advisory.
 
-We aim to acknowledge reports within 48 hours.
-
 ---
 
 ## Contributing
@@ -804,11 +922,9 @@ You may use, modify, fork, and redistribute the software under the terms of that
 
 ## Fiscal Sponsorship
 
-Pinpoint 311 is fiscally sponsored by **[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/)**, doing business as Hack Club, a 501(c)(3) public charity (EIN: 81-2908499).
+Pinpoint 311 is fiscally sponsored by **[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/)**, doing business as Hack Club, a 501(c)(3) public charity.
 
 Fiscal sponsorship allows Pinpoint 311 to receive charitable contributions through Hack Club while continuing development of free and open-source civic technology.
-
-Donations to Pinpoint 311 through its fiscal sponsor are tax-deductible to the extent permitted by law.
 
 <a href="https://hcb.hackclub.com/pinpoint-311">
   <img src="https://img.shields.io/badge/Fiscally%20Sponsored%20by-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club">
@@ -818,7 +934,7 @@ Donations to Pinpoint 311 through its fiscal sponsor are tax-deductible to the e
 
 # Technical Reference
 
-The sections below contain detailed implementation, operational, security, API, and research information for developers, system administrators, security reviewers, and researchers.
+The sections below provide detailed implementation, operational, API, security, and research information for developers, system administrators, security reviewers, and researchers.
 
 They are not required to understand Pinpoint at a high level.
 
@@ -850,35 +966,37 @@ flowchart LR
 
 ---
 
-## Detailed Resident Portal Reference
+# Resident Portal Reference
 
-### Service discovery
+## Service Discovery
 
-- Services are displayed with consistent iconography.
-- Municipalities can configure their own service catalog.
-- Service-specific questions can collect additional information before submission.
+Services are displayed using the municipality's configured service catalog.
 
-### Location picker
+Each service can have:
 
-- Interactive maps support drag-to-set pin functionality.
-- Address autocomplete can use Google Places or configured ArcGIS locators.
-- System-level GeoJSON polygons and PostGIS road-corridor checks validate service areas.
-- Residents can select infrastructure assets from configured map layers.
+- A name and description
+- Department assignment
+- Icon
+- Custom questions
+- Routing behavior
+- Expected service level
+- Third-party handling rules
 
-### Routing
+## Location Picker
 
-Configurable rules can distinguish between:
+The resident portal supports interactive location selection.
 
-- Municipality-handled services
-- State roads
-- County roads
-- Utilities
-- Partner agencies
-- Other third-party responsibilities
+Depending on configured providers, this can include:
 
-A service that belongs to another organization can provide residents with the appropriate instructions and contact information rather than creating an internal municipal request.
+- Drag-to-set map pins
+- Address autocomplete
+- Google Places
+- ArcGIS locators
+- Municipal boundary validation
+- PostGIS road-corridor checks
+- Selectable infrastructure assets
 
-### Photos
+## Photos
 
 Residents can upload up to three photos.
 
@@ -890,19 +1008,19 @@ Configured photo processing can:
 - Detect and redact license plates
 - Hold uncertain detections for staff review
 
-### Unlisted submissions
+## Unlisted Submissions
 
 Residents can choose to prevent a request from appearing on the public request map or feed.
 
-### Feedback
+## Feedback
 
 Municipalities can enable an optional five-point feedback survey following request submission.
 
-### Magic-link tracking
+## Magic-Link Tracking
 
 Residents receive a unique tracking link that allows them to view request status without maintaining an account.
 
-### Status timeline
+## Status Timeline
 
 Requests can progress through states including:
 
@@ -911,7 +1029,7 @@ Requests can progress through states including:
 - Resolved
 - Closed
 
-### Public request map
+## Public Request Map
 
 Public requests can be filtered by:
 
@@ -922,9 +1040,9 @@ Public requests can be filtered by:
 
 ---
 
-## Detailed Staff Dashboard Reference
+# Staff Dashboard Reference
 
-### Unified workspace
+## Unified Workspace
 
 The staff interface provides:
 
@@ -935,7 +1053,7 @@ The staff interface provides:
 - Satellite map view
 - Search and filtering
 
-Filters include:
+Filters can include:
 
 - Priority
 - Department
@@ -944,7 +1062,7 @@ Filters include:
 - Date range
 - Service category
 
-### Collaboration
+## Collaboration
 
 Staff can use:
 
@@ -953,7 +1071,7 @@ Staff can use:
 - Individual email/SMS notification preferences
 - Request audit history
 
-### Request management
+## Request Management
 
 Staff can:
 
@@ -969,7 +1087,7 @@ Staff can:
 - Review held photos
 - Review asset history
 
-### Work orders
+## Work Orders
 
 Printable work orders can include:
 
@@ -979,7 +1097,7 @@ Printable work orders can include:
 - Dispatch notes
 - QR tracking code
 
-### Triage panel
+## Triage Panel
 
 The triage panel combines deterministic operational context with optional AI assistance.
 
@@ -993,7 +1111,7 @@ Context can include:
 - Suggested priority
 - Request summary
 
-#### Proximity analysis
+### Proximity analysis
 
 PostGIS can determine whether a request is near infrastructure such as:
 
@@ -1003,19 +1121,19 @@ PostGIS can determine whether a request is near infrastructure such as:
 
 A Nominatim/OpenStreetMap fallback can provide additional context for unmapped areas.
 
-#### Similar-request detection
+### Similar-request detection
 
 Nearby reports within a configurable geographic and temporal window can be surfaced for staff awareness.
 
 Pinpoint does not automatically delete or merge reports identified as similar.
 
-#### Priority assistance
+### Priority assistance
 
 When AI is enabled, it can generate a suggested priority score.
 
 The suggestion is stored separately from the actual request priority. A staff member must explicitly accept the suggestion before it changes the request.
 
-### Geospatial analytics
+## Geospatial Analytics
 
 PostGIS supports:
 
@@ -1024,7 +1142,7 @@ PostGIS supports:
 - Jurisdiction verification
 - Nearby-request analysis
 
-### Analytics Assistant
+## Analytics Assistant
 
 The optional Analytics Assistant allows staff to ask natural-language questions about municipal request data.
 
@@ -1036,7 +1154,7 @@ Examples include:
 
 The assistant can use aggregated Research Suite metrics rather than exposing resident PII.
 
-### Manual intake
+## Manual Intake
 
 Staff can create requests originating from:
 
@@ -1050,9 +1168,9 @@ Optional fields can remain empty when information is unavailable.
 
 ---
 
-## Detailed Admin Console Reference
+# Admin Console Reference
 
-### Service configuration
+## Service Configuration
 
 Each service can be configured with:
 
@@ -1064,7 +1182,7 @@ Each service can be configured with:
 - SLA expectations
 - Icon
 
-### System management
+## System Management
 
 Administrative tools include:
 
@@ -1079,7 +1197,7 @@ Administrative tools include:
 - Operations monitoring
 - Client-error telemetry
 
-### Version switching
+## Version Switching
 
 The Admin Console can support application version changes and rollbacks.
 
@@ -1092,7 +1210,7 @@ The workflow can:
 - Apply a selected version
 - Roll back when appropriate
 
-### Custom map layers
+## Custom Map Layers
 
 Administrators can upload GeoJSON layers representing municipal assets such as:
 
@@ -1103,7 +1221,7 @@ Administrators can upload GeoJSON layers representing municipal assets such as:
 - Zoning districts
 - Other infrastructure
 
-### Providers
+## Providers
 
 The Admin Console can configure:
 
@@ -1116,7 +1234,7 @@ The Admin Console can configure:
 - SMS
 - Secret storage
 
-### Feature modules
+## Feature Modules
 
 Optional modules include:
 
@@ -1124,7 +1242,7 @@ Optional modules include:
 - Unlisted Reports
 - Platform Feedback
 
-### Legal documents
+## Legal Documents
 
 Municipalities can customize:
 
@@ -1166,8 +1284,6 @@ Protections include:
 - Anonymous geographic zone IDs
 - Exclusion of direct resident PII
 
----
-
 ## Social Equity Pack
 
 Census-linked fields support geographic and equity analysis.
@@ -1186,8 +1302,6 @@ Potential analyses include:
 - SVI and response-time analysis
 - Geographic reporting patterns
 - Housing-tenure and service-request patterns
-
----
 
 ## Environmental Context Pack
 
@@ -1210,8 +1324,6 @@ Potential analyses include:
 - Precipitation and drainage issues
 - Seasonal request patterns
 
----
-
 ## Sentiment and Trust Pack
 
 Rule-based NLP fields provide indicators for studying resident communication patterns.
@@ -1229,8 +1341,6 @@ Potential analyses include:
 - Repeat-report outcomes
 - Geographic sentiment patterns
 - Changes in resident communication over time
-
----
 
 ## Bureaucratic Friction Pack
 
@@ -1255,8 +1365,6 @@ Potential analyses include:
 - Reassignment frequency
 - Service-level performance
 
----
-
 ## Moderation and AI/ML Pack
 
 Fields support analysis of moderation and human/AI interaction.
@@ -1276,8 +1384,6 @@ Potential analyses include:
 - Triage consistency
 - Human override patterns
 
----
-
 ## Research Data Sources
 
 | Source | Fields | Notes |
@@ -1287,8 +1393,6 @@ Potential analyses include:
 | VADER | Sentiment | Rule-based sentiment analysis |
 | Audit logs | Workflow metrics | System-generated operational data |
 | Configured AI provider | AI fields | Available when AI analysis is enabled |
-
----
 
 ## Research API
 
@@ -1650,7 +1754,7 @@ Additional container protections include:
 
 ---
 
-# Detailed Authentication Setup
+# Authentication and Provider Setup
 
 ## Step 1: Configure Environment
 
@@ -1688,8 +1792,6 @@ Before staff SSO is configured, visit:
 ```
 
 and select the initial administrator setup option.
-
-Bootstrap authorization can also be performed through the API.
 
 ## Step 4: Configure Staff SSO
 
