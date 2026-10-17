@@ -118,3 +118,13 @@ def test_a_department_with_no_routing_email_can_be_saved():
     import pytest
     with pytest.raises(Exception):
         DepartmentCreate(name="Public Works", routing_email="not-an-email")
+
+
+def test_every_category_endpoint_loads_the_assigned_department():
+    """ServiceResponse serialises `assigned_department`; a lazy load of it in an
+    async session raises, so once any category had a department assigned the
+    whole category list was a 500 (live, on a fresh install)."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "api" / "services.py").read_text()
+    assert src.count("selectinload(ServiceDefinition.departments)") == \
+        src.count("selectinload(ServiceDefinition.assigned_department)")

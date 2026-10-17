@@ -24,6 +24,7 @@ async def list_services(
         select(ServiceDefinition)
         .where(ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
         .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
     services = result.scalars().all()
@@ -67,6 +68,7 @@ async def list_all_services(
     result = await db.execute(
         select(ServiceDefinition)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
         .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
     return result.scalars().all()
@@ -149,6 +151,7 @@ async def create_service(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service.id)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     return result.scalar_one()
 
@@ -223,6 +226,7 @@ async def get_service(service_id: int, db: AsyncSession = Depends(get_db)):
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id, ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     service = result.scalar_one_or_none()
     if not service:
@@ -327,6 +331,7 @@ async def toggle_service(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     service = result.scalar_one_or_none()
     if not service:
