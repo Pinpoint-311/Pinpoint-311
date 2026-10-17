@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import DASHBOARD_SOURCE from './StaffDashboard.tsx?raw';
 
 /**
  * The open request is replaced by a fresh copy on a 30-second (or 5-second)
@@ -10,7 +9,7 @@ import { resolve } from 'node:path';
  * leaves a half-typed comment, while staff are using it.
  */
 describe('the request detail panel', () => {
-    const src = readFileSync(resolve(__dirname, 'StaffDashboard.tsx'), 'utf8');
+    const src = DASHBOARD_SOURCE;
 
     it('scrolls to the top only when the open request id changes', () => {
         const start = src.indexOf('const openRequestId = selectedRequest?.service_request_id;');
