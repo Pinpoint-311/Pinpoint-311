@@ -26,6 +26,17 @@ def _use_null_pool_in_worker(**_kwargs):
 worker_process_init.connect(_use_null_pool_in_worker)
 worker_init.connect(_use_null_pool_in_worker)
 
+
+def _crash_reporting_in_worker(**kwargs):
+    # The worker never started Sentry at all, so a failing nightly sync or
+    # notification task was only ever in the container log.
+    from app.core.crash_reporting import init_in_worker
+    init_in_worker(**kwargs)
+
+
+worker_process_init.connect(_crash_reporting_in_worker)
+worker_init.connect(_crash_reporting_in_worker)
+
 celery_app = Celery(
     "township_311",
     broker=settings.redis_url,

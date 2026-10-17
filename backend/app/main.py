@@ -11,45 +11,10 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-# Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
-SENTRY_DSN = os.environ.get("SENTRY_DSN")
-
-
-def _crash_reporting_wanted(event, hint):
-    """Drop the event when the town has switched crash reporting off.
-
-    "Crash reporting" is one of the ticks on the setup page, and unticking it
-    used to do nothing at all: the DSN is an environment variable read once at
-    import, so the box was cosmetic and reports kept leaving the building. This
-    is the only choke point -- there is no per-call site to gate.
-
-    Deliberately reading a cached snapshot rather than the database. This runs on
-    the error path, and the error being reported may be that the database is
-    unreachable; opening a session here would fail exactly when it matters, and
-    `before_send` has no event loop to await one with. A process that has not yet
-    read the switch sends the event, because swallowing the crash that stopped it
-    from reading is the worse failure.
-    """
-    try:
-        from app.services.capability_switches import wanted_sync
-
-        if not wanted_sync("errors"):
-            return None
-    except Exception:
-        # Never let this decide to lose a crash report.
-        pass
-    return event
-
-
-if SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        traces_sample_rate=0.1,  # 10% of requests for performance monitoring
-        profiles_sample_rate=0.1,
-        environment=os.environ.get("ENVIRONMENT", "production"),
-        send_default_pii=False,  # Don't send personally identifiable info
-        before_send=_crash_reporting_wanted,
-    )
+# Crash reporting. From SENTRY_DSN when the host sets it; otherwise from the DSN
+# saved on the setup page, loaded in lifespan below. See core/crash_reporting.
+from app.core import crash_reporting
+crash_reporting.init_from_env()
 
 from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates, resident_history
 from app.db.init_db import seed_database
@@ -413,6 +378,9 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database with default data
     await seed_database()
 
+    # The DSN saved on the setup page, when the host did not set SENTRY_DSN.
+    await crash_reporting.init_from_saved_credential()
+
     # Load the panel-set lifecycle state (managed hosting suspend/resume)
     from app.core.managed import load_lifecycle_state
     async with SessionLocal() as _lifecycle_db:
@@ -637,8 +605,9 @@ async def sentry_debug():
     from app.core.config import get_settings
     if not get_settings().debug:
         raise HTTPException(status_code=404, detail="Not found")
-    if not SENTRY_DSN:
-        return {"status": "sentry_not_configured", "message": "Set SENTRY_DSN env var to enable"}
+    if not crash_reporting.is_active():
+        return {"status": "sentry_not_configured",
+                "message": "Add a Sentry DSN on the setup page, or set SENTRY_DSN."}
     # Intentional error for testing
     raise Exception("Sentry test error - this is intentional!")
 

@@ -366,7 +366,9 @@ def test_crash_reporting_answers_without_touching_the_database():
     import ast
     from pathlib import Path
 
-    main_py = Path(cs.__file__).resolve().parent.parent / "main.py"
+    # Lives in core/crash_reporting.py since the saved-DSN fix: the API and the
+    # worker both start Sentry through it.
+    main_py = Path(cs.__file__).resolve().parent.parent / "core" / "crash_reporting.py"
     tree = ast.parse(main_py.read_text(encoding="utf-8"))
 
     hook = next(
