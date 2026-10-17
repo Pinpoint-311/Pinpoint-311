@@ -67,7 +67,6 @@ Your service request data is retained in accordance with applicable state public
 You have the right to:
 - Request access to your personal information
 - Request correction of inaccurate information
-- Submit requests anonymously (for most request types)
 - Contact us with privacy concerns
 
 ## Security
