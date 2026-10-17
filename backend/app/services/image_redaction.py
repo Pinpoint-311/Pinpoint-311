@@ -1052,6 +1052,17 @@ async def _azure_vision_creds():
     return endpoint, key
 
 
+def _raise_with_vendor_words(resp) -> None:
+    """raise_for_status, keeping the vendor's explanation.
+
+    httpx's own message is "400 Bad Request" and a URL; Azure's reason
+    ("InvalidImageSize: Image size is too small", a bad key, a wrong region) is
+    in the body, and the Test button sends admins to this log line for it.
+    """
+    if resp.status_code >= 400:
+        raise RuntimeError(f"HTTP {resp.status_code} from {resp.request.url.host}: {resp.text[:300]}")
+
+
 async def _azure_detect(raw: bytes, width: int, height: int,
                         faces: bool, plates: bool) -> List[Box]:
     import httpx
@@ -1068,7 +1079,7 @@ async def _azure_detect(raw: bytes, width: int, height: int,
                              "Content-Type": "application/octet-stream"},
                     content=raw,
                 )
-                resp.raise_for_status()
+                _raise_with_vendor_words(resp)
                 out += azure_faces(resp.json(), width, height)
         if plates:
             endpoint, key = await _azure_vision_creds()
@@ -1080,7 +1091,7 @@ async def _azure_detect(raw: bytes, width: int, height: int,
                              "Content-Type": "application/octet-stream"},
                     content=raw,
                 )
-                resp.raise_for_status()
+                _raise_with_vendor_words(resp)
                 out += azure_text_plates(resp.json(), width, height)
     return out
 

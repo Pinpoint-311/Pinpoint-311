@@ -1698,15 +1698,27 @@ def _one_pixel_probe_image() -> bytes:
 
     Deliberately not a photograph of anybody: the useful signal is whether the
     call succeeds, not what it finds, and sending a real face to a vendor to test
-    a checkbox would be its own problem. 64x64 mid-grey, built here so the check
+    a checkbox would be its own problem. 64x64 grey, built here so the check
     needs no fixture file on disk.
+
+    Grey with faint noise rather than flat: Azure Face refuses any file under
+    1 KB ("InvalidImageSize: Image size is too small"), and a flat 64x64 PNG
+    compresses to about 250 bytes. Live, that turned a working key into "has
+    credentials saved but rejected them" on the Test button. The noise comes
+    from a fixed LCG so the probe is the same bytes on every run.
     """
     import struct
     import zlib
 
     width = height = 64
-    row = b"\x00" + b"\x80" * (width * 3)
-    raw = row * height
+    seed = 1
+    raw = bytearray()
+    for _ in range(height):
+        raw.append(0)  # PNG filter type: none
+        for _ in range(width * 3):
+            seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF
+            raw.append(0x70 + (seed >> 16) % 0x20)
+    raw = bytes(raw)
 
     def chunk(kind: bytes, payload: bytes) -> bytes:
         return (struct.pack(">I", len(payload)) + kind + payload
