@@ -1074,11 +1074,9 @@ def _require_a_secret_store() -> None:
     raise HTTPException(
         status_code=409,
         detail=(
-            "Choose where this town's credentials are kept before entering any. "
-            "Until that is answered a credential is written to the encrypted "
-            "database, and any backup taken before it is moved keeps a copy that "
-            "moving it cannot reach. Pick a store in Setup Instructions — the "
-            "encrypted database is one of the answers."
+            "Choose where this town's credentials are stored before entering any. "
+            "Pick a store in Setup Instructions; the encrypted database is one of "
+            "the options."
         ),
         headers={"X-Pinpoint-Secret-Stores": ",".join(SECRET_STORES)},
     )
@@ -1234,10 +1232,9 @@ async def save_provider(
         raise HTTPException(status_code=400, detail=f"Unknown capability: {capability}")
     if capability in _READ_ONLY_SELECTION:
         raise HTTPException(status_code=400, detail=(
-            "The secret store cannot be switched from a card: every credential this town has "
-            "is in the current one, and repointing the setting does not move them. Set up the "
-            "new store's credentials first, let the hourly migration copy them across, and "
-            "change the store after that."
+            "The secret store can't be switched from a card, because changing the setting "
+            "does not move existing credentials. Set up the new store's credentials, let the "
+            "hourly migration copy them across, then change the store."
         ))
     # Before anything is written, and before the provider selection too: a save
     # that recorded "we have decided on Twilio" and then refused the account SID
@@ -1341,8 +1338,8 @@ async def save_provider(
             "message": (
                 f"Saved and encrypted in the database. "
                 f"{ {'azure': 'Azure Key Vault', 'aws': 'AWS Secrets Manager'}.get(_secrets_provider(), 'Google Secret Manager') }"
-                " is not reachable yet — once you finish the cloud credentials above,"
-                " this moves across on its own. Nothing further to do here."
+                " isn't reachable yet. It moves across automatically once you finish"
+                " the cloud credentials above."
             ),
         })
     else:
@@ -1588,7 +1585,7 @@ async def _test_identity(db) -> dict:
                  "access_denied", "invalid_scope", "invalid_target", "invalid_request"):
         return {"ok": True, "detail": (
             f"{found}, and the client ID and secret were accepted "
-            f"(the provider recognised this application and declined a "
+            f"(the provider recognized this application and declined a "
             f"machine-to-machine token, which is expected for a sign-in app).")}
 
     if error == "invalid_client" or resp.status_code in (401, 403):
@@ -1658,7 +1655,7 @@ async def _test_redaction(db=None) -> dict:
     if degraded_from == actual:
         return {"ok": False, "detail": (
             "No detector is available, so photos would be stored without blurring. "
-            "On-server detection needs no account — this usually means OpenCV is missing.")}
+            "On-server detection needs no account, so check that OpenCV is installed.")}
     if degraded_from:
         return {"ok": False, "detail": (
             f"{degraded_from} has no usable credentials, so blurring is falling back to "
@@ -1687,7 +1684,7 @@ async def _test_redaction(db=None) -> dict:
 
     return {"ok": True, "detail": _steps(
         "Built a one-pixel test image on this server.",
-        f"Sent it to {actual} for a live face and licence-plate scan.",
+        f"Sent it to {actual} for a live face and license-plate scan.",
         "It answered: nothing to blur — the correct answer for this image — "
         "so the detector is accepting requests and real photos will be redacted.",
     )}
@@ -1871,10 +1868,10 @@ async def _test_maps(db=None, site_origin: Optional[str] = None) -> dict:
 
             return {"ok": False, "detail": (
                 "Geocoding works, but Places API (New) rejected the key, so the address "
-                "box on the report form will offer no suggestions. In Google Cloud enable "
-                "\"Places API (New)\" — it is a separate API from both \"Geocoding API\" "
-                "and the older \"Places API\", and if the key is restricted to a list of "
-                f"APIs it must be ticked there too. Google said: {places_error}").strip()}
+                "box on the report form won't offer suggestions. In Google Cloud, enable "
+                "\"Places API (New)\", which is separate from \"Geocoding API\" and the "
+                "older \"Places API\". If the key is restricted to a list of APIs, add it "
+                f"there too. Google said: {places_error}").strip()}
 
         if provider == "azure":
             key = await get_secret("AZURE_MAPS_KEY")
@@ -2071,10 +2068,9 @@ async def _test_delivery(capability: str) -> dict:
                 said = message.decode("utf-8", "replace") if isinstance(message, bytes) else str(message)
                 return {"ok": False, "detail": (
                     f"Signed in to {host}, and it will not carry mail from {sender}: "
-                    f"{code} {said.strip()[:200]}. That address has to be a verified sender on "
-                    f"this relay — the sign-in and the permission to send as an address are two "
-                    f"different things, and switching relay keeps the address and loses the "
-                    f"permission."
+                    f"{code} {said.strip()[:200]}. Make that address a verified sender on this "
+                    f"relay. Signing in and permission to send as an address are separate, and "
+                    f"the permission doesn't carry over when you switch relays."
                 )}
             # Only claim the sign-in that actually happened. Without a username
             # and password this opens a socket and negotiates TLS, which proves
@@ -2786,10 +2782,9 @@ async def choose_secret_store(
     current = _secrets_provider()
     if store_chosen() and current != store:
         raise HTTPException(status_code=409, detail=(
-            f"This town's credentials are in {current}. Repointing this setting does not "
-            f"move them, so every card would stop being able to read its own key. Set up "
-            f"the new store's credentials, let the migration copy them across, and change "
-            f"the store after that."
+            f"This town's credentials are in {current}, and changing this setting does not "
+            f"move them. Set up the new store's credentials, let the migration copy them "
+            f"across, then change the store."
         ))
 
     if os.getenv("SECRETS_PROVIDER"):
@@ -3590,7 +3585,7 @@ async def set_town_timezone(
         # Rejected rather than quietly falling back to UTC. Silently storing
         # something other than what was chosen is how a town ends up certain
         # its times are local when they are not.
-        raise HTTPException(status_code=400, detail=f"Not a timezone this server recognises: {name or '(empty)'}")
+        raise HTTPException(status_code=400, detail=f"Not a timezone this server recognizes: {name or '(empty)'}")
 
     settings = await read_settings_row(db, create=True)
     settings.timezone = name
@@ -4807,7 +4802,7 @@ async def update_system(_: User = Depends(get_current_admin)):
         return {
             "status": "success",
             "message": "Updates pulled successfully. " + (
-                "Container restart may be needed for dependency changes." 
+                "Restart the container to apply dependency changes." 
                 if needs_restart 
                 else "Code changes will reload automatically."
             ),
@@ -5093,7 +5088,7 @@ async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
         logger.error(f"Failed to fetch security status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch security status"
+            detail="Couldn't fetch the security status. Try again."
         )
 
 
@@ -5976,7 +5971,7 @@ async def delete_backup_endpoint(
 @router.post("/backups/{backup_name}/restore")
 async def restore_backup_endpoint(
     backup_name: str,
-    confirm: bool = Query(False, description="Must be true to confirm restore - this will overwrite the database!"),
+    confirm: bool = Query(False, description="Must be true to confirm the restore, which overwrites the database."),
     _: User = Depends(get_current_admin)
 ):
     """
@@ -5990,7 +5985,7 @@ async def restore_backup_endpoint(
     if not confirm:
         raise HTTPException(
             status_code=400, 
-            detail="You must pass confirm=true to restore. WARNING: This will overwrite the current database!"
+            detail="Pass confirm=true to restore. Restoring overwrites the current database."
         )
     
     from app.services.backup_service import restore_backup
@@ -6959,7 +6954,7 @@ The chat UI renders plain text with basic inline markdown only — it does NOT r
                     ai_response += part['text']
         
         if not ai_response:
-            ai_response = "I wasn't able to generate a response. Please try rephrasing your question."
+            ai_response = "I couldn't generate a response. Try rephrasing your question."
         
         # Track API usage
         try:

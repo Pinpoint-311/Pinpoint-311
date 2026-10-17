@@ -1063,7 +1063,7 @@ Yes. Every deployment is self-hosted on your own infrastructure.
 
 **Updating**
 
-Nothing updates itself unattended. There is no agent watching a registry, and no way for anybody outside your organisation to change what is running on your server.
+Nothing updates itself unattended. There is no agent watching a registry, and no way for anybody outside your organization to change what is running on your server.
 
 Updates are performed in one of two deliberate ways:
 1. **Via the Admin Console (`VersionSwitcher`)**: Administrators can review available release tags and commit builds directly in the browser, check GitHub Actions security and test check statuses, verify database migration safety, trigger automatic pre-migration backups, and switch versions or roll back with a click.

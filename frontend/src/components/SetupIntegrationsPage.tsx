@@ -72,14 +72,12 @@ function RetentionNotice() {
                 <AlertCircle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" aria-hidden="true" />
                 <div className="space-y-2 min-w-0">
                     <h3 className="font-semibold text-white">
-                        Resident personal data is being kept indefinitely
+                        No retention period is set
                     </h3>
                     <p className="text-white/75 text-sm leading-relaxed">{policy.detail}</p>
                     <p className="text-white/55 text-sm leading-relaxed">
-                        Nothing has been deleted, so no record has been lost to this. Your
-                        clerk has the town's records retention schedule; this product will
-                        not guess at it, because destroying a record early cannot be undone.
-                        Set it under <strong className="text-white/75">Compliance → Document
+                        Closed requests are kept until you set a period from the town's
+                        records retention schedule. Set it under <strong className="text-white/75">Compliance → Document
                         Retention</strong>.
                     </p>
                 </div>
@@ -1157,7 +1155,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                     Go to <a href="https://console.cloud.google.com" target="_blank" rel="noopener noreferrer" className="text-blue-300 underline underline-offset-2">console.cloud.google.com</a> and make a new project. Copy its <strong className="text-white/90">Project ID</strong> — that is the short code, not the name you typed.
                 </InstructionStep>
                 <InstructionStep num={2}>
-                    Add a billing account under <strong className="text-white/90">Billing</strong>. Google asks for this even for the things it does not charge you for; without it the requests come back refused.
+                    Add a billing account under <strong className="text-white/90">Billing</strong>. Google requires it; without it, requests are refused.
                 </InstructionStep>
                 <InstructionStep num={3} check={<>your service account listed under IAM &amp; Admin.</>}>
                     Under <strong className="text-white/90">IAM &amp; Admin → Service Accounts</strong>, create one called <code className="bg-black/30 px-1 rounded text-blue-300 text-xs">pinpoint311</code>. This is a login for the software, so nothing is tied to your own account.
@@ -1165,7 +1163,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 <InstructionStep num={4} check={<>a file ending in <code className="bg-black/30 px-1 rounded">.json</code> in your Downloads.</>}>
                     Open it, then <strong className="text-white/90">Keys → Add Key → Create new key → JSON</strong>. A file downloads — that is the one you add below.
                 </InstructionStep>
-                <Trouble>Google will not let you download that file again. Keep a copy somewhere the town controls, not on your own laptop.</Trouble>
+                <Trouble>Google allows this file to be downloaded only once. Store a copy somewhere the town controls, not on a personal laptop.</Trouble>
                 <GoogleAccountFields
                     secretValues={secretValues} setSecretValues={setSecretValues}
                     handleSave={handleSave} savingKey={savingKey} isConfigured={isConfigured}
@@ -1215,8 +1213,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
                 <p className="text-white/50 text-xs mb-2.5">
                     {isConfigured('BACKUP_ENCRYPTION_KEY')
-                        ? "A passphrase is already set and backups are being encrypted with it. Creating a new one means older backups can only be restored with the old passphrase — so only do this if the current one has been exposed."
-                        : "Backups are encrypted before they leave this server. We'll create the passphrase for you — you don't need to think one up."}
+                        ? "A passphrase is already set. Older backups can only be restored with the old passphrase, so replace it only if it has been exposed."
+                        : "Backups are encrypted before they leave this server. Pinpoint creates the passphrase for you."}
                 </p>
                 <Button
                     size="sm"
@@ -1243,10 +1241,9 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
         ) : (
             <div className="rounded-xl border border-amber-400/30 bg-amber-500/[0.07] p-3 space-y-2.5">
                 <p className="text-amber-100/90 text-xs leading-relaxed">
-                    This is shown once. Put a copy somewhere that is <strong>not this
-                    server</strong> — a password manager, or a sealed envelope in the
-                    clerk's safe. Without it, a backup cannot be restored, and that is the
-                    one thing we cannot do for you.
+                    This is shown once. Store a copy somewhere that is <strong>not this
+                    server</strong>, such as a password manager. Backups can't be restored
+                    without it.
                 </p>
                 <div className="flex items-center gap-2">
                     <code className="flex-1 bg-black/40 rounded-lg px-3 py-2 text-[11px] text-amber-200 break-all select-all">
@@ -1385,22 +1382,21 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     Register your deployment — takes two minutes
                                 </span>
                                 <span className="block text-xs text-white/50 mt-0.5">
-                                    Who to reach, and where this runs — so we can contact you about
-                                    security fixes, releases, and anything affecting your instance.
+                                    Tell us who to contact about security fixes and releases.
                                 </span>
                             </span>
                             <ChevronRight className="w-4 h-4 text-indigo-300 group-hover:text-indigo-200 shrink-0" />
                         </button>
                         <p className="text-[11px] text-white/35 mt-1.5">
-                            The form is hosted by Microsoft Forms and opens here. What this deployment
-                            already knows is filled in for you.
+                            The form is hosted by Microsoft Forms and opens here, with known details
+                            already filled in.
                         </p>
                     </div>
                 ) : (
                     <div className="mt-4 pt-3 border-t border-white/10 flex items-center gap-2 flex-wrap">
                         <Bell className="w-3.5 h-3.5 text-white/35" />
                         <span className="text-xs text-white/45">
-                            We have no way to reach you about security fixes or updates — Pinpoint calls home about nothing.
+                            Pinpoint doesn't contact us on its own, so register to hear about security fixes and updates.
                         </span>
                         <button
                             type="button"
@@ -1500,15 +1496,13 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     in one sitting. */}
                                 <div className="rounded-xl border border-indigo-400/20 bg-indigo-500/[0.07] p-4">
                                     <p className="text-sm text-white/75 leading-relaxed">
-                                        <strong className="text-white">You do not have to do all of this.</strong> Two things are needed
-                                        before the town can take reports — <strong className="text-white/90">staff sign-in</strong> and a{' '}
-                                        <strong className="text-white/90">map</strong>. Everything else can be added whenever you like, and
-                                        nothing breaks while it is switched off. What you save is kept, so you can stop and come back.
+                                        <strong className="text-white">Only two things are required</strong> before the town can take reports:{' '}
+                                        <strong className="text-white/90">staff sign-in</strong> and a{' '}
+                                        <strong className="text-white/90">map</strong>. Add everything else when you're ready. Your
+                                        progress is saved, so you can stop and come back.
                                     </p>
                                     <p className="text-xs text-white/50 leading-relaxed mt-2">
-                                        Each step says what you should be looking at, so you can tell it worked. Where there is a copy
-                                        button, use it instead of retyping. You will be asked to sign in to one or two outside services;
-                                        the steps say exactly where to click.
+                                        Each step shows what you should see when it worked. Use the copy buttons instead of retyping.
                                     </p>
                                 </div>
 
@@ -1523,8 +1517,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 />
 
                                 <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
-                                    <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions and we will hide the rest</p>
-                                    <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown — a town needs both before it can take a report.</p>
+                                    <p className="text-sm font-semibold text-white mb-0.5">Answer a few questions to hide what you don't need</p>
+                                    <p className="text-white/50 text-xs mb-3">Sign-in and maps are always shown because both are required.</p>
 
                                     {/* Every provider decision, in one place.
                                       *
@@ -1542,7 +1536,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <Ask
                                         n={1}
                                         label="What do you want to switch on?"
-                                        hint="Sign-in and maps are always needed. Tick anything else you want; untick to remove it."
+                                        hint="Sign-in and maps are always needed. Check anything else you want."
                                     >
                                         <div className="flex flex-wrap gap-2">
                                             {FEATURES.map(([f, label]) => (
@@ -1563,16 +1557,15 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             <p role="alert" className="text-[11px] text-amber-200/85 mt-2">{switchError}</p>
                                         )}
                                         <p className="text-[11px] text-white/45 mt-2">
-                                            Unticking one switches it off and stops it running. Anything you
-                                            have already entered stays saved — switch it back on and it works
-                                            as it did.
+                                            Unchecking a feature turns it off. Its settings are kept for when you
+                                            turn it back on.
                                         </p>
                                     </Ask>
 
                                     <Ask
                                         n={2}
                                         label="Cloud services — AI, translation, key management, secret storage"
-                                        hint="If the town already uses Microsoft 365, pick Microsoft Azure. If you are not sure, pick Google — you can change it later."
+                                        hint="If the town uses Microsoft 365, pick Microsoft Azure. Otherwise, pick Google. You can change this later."
                                     >
                                         <Options
                                             value={setupCloud}
@@ -1608,7 +1601,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <Ask
                                         n={3}
                                         label="Staff sign-in — who logs staff in"
-                                        hint="If your staff already sign in to Microsoft 365, you already have Entra and can use it. Auth0 is for when there is nothing in place yet."
+                                        hint="If staff sign in to Microsoft 365, use Entra. Choose Auth0 if you have no sign-in system yet."
                                     >
                                         <Options
                                             value={setupIdp}
@@ -1620,7 +1613,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     <Ask
                                         n={4}
                                         label="Maps — the map and address search"
-                                        hint="If the town or county already has an ArcGIS agreement, Esri lets you use it. Otherwise any of these will do."
+                                        hint="If the town or county has an ArcGIS agreement, choose Esri. Otherwise, any of these works."
                                     >
                                         <Options
                                             value={setupMaps}
@@ -1636,7 +1629,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                       * above and can be changed here. */}
                                     {wants('email') && (
                                         <Ask n={askEmail} label="Email — who delivers it"
-                                            hint="SMTP uses the mail server the town already has. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services may be less work than getting an exception.">
+                                            hint="SMTP uses the town's existing mail server. Microsoft 365 and Google Workspace block plain SMTP by default, so SES or Azure Communication Services is often simpler.">
                                             <Options
                                                 value={emailProvider}
                                                 onChange={setEmailOverride}
@@ -1647,7 +1640,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     {wants('sms') && (
                                         <Ask n={askSms} label="Text messages — who delivers them"
-                                            hint="Whichever you pick, start the 10DLC carrier registration early — it is not a technical step and it is not immediate.">
+                                            hint="Start the 10DLC carrier registration early. It takes time to approve.">
                                             <Options
                                                 value={smsProvider}
                                                 onChange={setSmsOverride}
@@ -1658,7 +1651,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
 
                                     {wants('safety') && (
                                         <Ask n={askSafety} label="Photos — screening and blurring"
-                                            hint="On this server needs no account and no photo ever leaves the building; it finds fewer faces than the clouds do.">
+                                            hint="On this server needs no account and keeps photos on the server, but finds fewer faces than the cloud options.">
                                             <Options
                                                 value={redactionProvider}
                                                 onChange={setRedactionOverride}
@@ -1711,9 +1704,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                         <div className="min-w-0 flex-1">
                                             <p className="text-sm font-semibold text-white">Finished for now?</p>
                                             <p className="text-white/50 text-xs mt-0.5">
-                                                This guide opens by itself every time you sign in until you say so. You can
-                                                come back to it from this tab whenever you like, and anything still
-                                                outstanding stays listed on the cards below.
+                                                This guide opens each time you sign in until you select I&apos;m done with setup. You can
+                                                return to it from this tab, and unfinished items stay listed below.
                                             </p>
                                         </div>
                                         <button
@@ -1781,7 +1773,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             blockedReason:
                                 (backupKeyAcknowledged || (!backupKey && isConfigured('BACKUP_ENCRYPTION_KEY')))
                                     ? null
-                                    : 'Create the encryption passphrase below and confirm you have kept a copy first.',
+                                    : 'Create the encryption passphrase below and confirm you saved a copy.',
                             body: renderBackupPassphrase(),
                         }] : []),
                         ...(wantedFeatures.has('errors') ? [{

@@ -261,7 +261,7 @@ export default function GovtechIntegrations() {
             setCleared(new Set());
             return saved;
         } catch (err: any) {
-            setWizardError(err?.message || 'Could not save. Please try again.');
+            setWizardError(err?.message || 'Could not save. Try again.');
             return null;
         } finally {
             setSaving(false);
@@ -296,7 +296,7 @@ export default function GovtechIntegrations() {
                 setConfigs(prev => [...prev.filter(c => c.platform !== platform.platform), updated]);
             }
         } catch (err: any) {
-            setTestResult({ ok: false, detail: err?.message || 'Test failed', friendly: 'Something went wrong running the check. Please try again.' });
+            setTestResult({ ok: false, detail: err?.message || 'Test failed', friendly: 'The check couldn\u2019t run. Try again.' });
         } finally {
             setTesting(false);
         }
@@ -322,7 +322,7 @@ export default function GovtechIntegrations() {
             oauthPopup.current = popup;
         } catch (err: any) {
             setOauthBusy(false);
-            setOauthError(err?.message || 'Could not start the sign-in. Please try again.');
+            setOauthError(err?.message || 'Could not start the sign-in. Try again.');
         }
     };
 
@@ -407,9 +407,8 @@ export default function GovtechIntegrations() {
                 const confirmed = await dialog.confirm({
                     title: `Turn on ${name} anyway?`,
                     message: `The last check on this connection failed${detail ? `:\n\n${truncate(detail, 300)}` : '.'}\n\n`
-                        + 'Reports sent while it is broken are not queued and retried — they '
-                        + 'are logged as failed. Run "Check connection" first unless you know '
-                        + 'the problem is already fixed.',
+                        + 'Reports sent while it is failing are logged as failed, not retried. '
+                        + 'Run "Check connection" first unless the problem is fixed.',
                     variant: 'warning',
                     confirmText: 'Turn it on anyway',
                 });
@@ -531,10 +530,10 @@ export default function GovtechIntegrations() {
     const handleRegenerateToken = async (existing: IntegrationConfig, name: string) => {
         const confirmed = await dialog.confirm({
             title: `Issue a new address for ${name}?`,
-            message: 'The current address stops working immediately. Anything the vendor '
-                + 'sends to it will be refused until you give them the new one.\n\n'
-                + 'Do this if the address may have been shared or logged somewhere it '
-                + 'should not have been.',
+            message: 'The current address stops working immediately, and the vendor must '
+                + 'use the new one.\n\n'
+                + 'Use this if the address was shared or logged somewhere it '
+                + 'shouldn\u2019t be.',
             variant: 'warning',
             confirmText: 'Issue a new address',
         });
@@ -1213,7 +1212,7 @@ export default function GovtechIntegrations() {
                                         {copied === 'email' ? 'Copied — paste it into an email' : 'Copy this email'}
                                     </Button>
                                     <p className="text-white/60 text-xs mt-2">
-                                        You can close this window and come back once they reply — nothing is lost.
+                                        You can close this window and come back when they reply. Your progress is saved.
                                     </p>
                                 </div>
                             )}
@@ -1232,7 +1231,7 @@ export default function GovtechIntegrations() {
                     {step === 'details' && (
                         <div className="space-y-4">
                             <p className="text-white/50 text-sm">
-                                Copy and paste each item exactly as it was sent to you. Watch out for extra spaces at the start or end.
+                                Paste each item exactly as it was sent to you, without extra spaces.
                             </p>
 
                             <div className="space-y-3">
@@ -1320,9 +1319,9 @@ export default function GovtechIntegrations() {
                                         {showPasswordFallback && (
                                             <div id="wizard-password-fallback" className="space-y-3 mt-3">
                                                 <p className="text-white/50 text-xs leading-relaxed">
-                                                    Only if your {wizard.name} administrator would rather issue a service
-                                                    account. This stores that account's password in your credential vault,
-                                                    and it keeps working until someone changes it.
+                                                    Use this if your {wizard.name} administrator issues a service account
+                                                    instead. Its password is stored in your credential vault and works until
+                                                    someone changes it.
                                                 </p>
                                                 {wizard.credential_fields.map(f => renderField(wizard, f, true))}
                                             </div>
@@ -1442,7 +1441,7 @@ export default function GovtechIntegrations() {
                                 <div className="flex flex-col items-center py-8 text-center">
                                     <Loader2 className="w-8 h-8 text-indigo-300 animate-spin mb-3" />
                                     <p className="text-white/70 text-sm">Checking the connection to {wizard.name}…</p>
-                                    <p className="text-white/60 text-xs mt-1">This usually takes a few seconds.</p>
+                                    <p className="text-white/60 text-xs mt-1">This takes a few seconds.</p>
                                 </div>
                             )}
 

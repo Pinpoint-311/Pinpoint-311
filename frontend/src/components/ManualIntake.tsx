@@ -270,7 +270,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                     'assertive',
                 );
             } else {
-                const message = e?.message || 'Could not log the request. Please try again.';
+                const message = e?.message || 'Couldn\'t log the request. Try again.';
                 setError(message); setErrorField(null);
                 announce(message, 'assertive');
             }
@@ -685,7 +685,7 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
                             <span className="min-w-0">
                                 <span className="block text-sm font-medium text-white">Log it anyway</span>
                                 <span className="block text-[11px] text-white/50 mt-0.5 leading-relaxed">
-                                    Records the report here so it is not lost. Your town still has to forward it.
+                                    Records the report here. Your town still needs to forward it.
                                 </span>
                             </span>
                         </label>

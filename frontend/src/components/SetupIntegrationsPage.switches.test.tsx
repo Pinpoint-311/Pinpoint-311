@@ -236,6 +236,6 @@ describe('the feature ticks', () => {
 
     it('says that switching one off does not delete what was entered', async () => {
         await mount();
-        expect(host.textContent).toMatch(/stays saved/i);
+        expect(host.textContent).toMatch(/settings are kept/i);
     });
 });

@@ -385,7 +385,7 @@ async def verify_bootstrap(
     if not admin:
         return _bootstrap_html_message(
             "Setup Error",
-            '<h2>No admin user found</h2><p>The database may not be initialized yet.</p>',
+            '<h2>No admin user found</h2><p>Check that the database has been initialized.</p>',
             404,
         )
 
@@ -493,7 +493,7 @@ async def initiate_login(
     if status_info["status"] != "configured":
         raise HTTPException(
             status_code=503,
-            detail="Authentication not configured. Please configure your identity provider in the Admin Console."
+            detail="Sign-in isn't set up yet. Configure an identity provider in the Admin Console."
         )
     
     # Generate state token for CSRF protection
@@ -505,7 +505,7 @@ async def initiate_login(
     
     auth_url = await Auth0Service.get_authorization_url(callback_url, state, db)
     if not auth_url:
-        raise HTTPException(status_code=503, detail="Failed to generate Auth0 login URL")
+        raise HTTPException(status_code=503, detail="Couldn't start Auth0 sign-in. Check the Auth0 settings.")
     
     return {"auth_url": auth_url, "state": state}
 
@@ -532,12 +532,12 @@ async def auth0_callback(
     if not redirect_uri:
         raise HTTPException(
             status_code=400,
-            detail="This sign-in link is no longer valid. Please start signing in again."
+            detail="This sign-in link is no longer valid. Start signing in again."
         )
         
     # Handle Auth0 errors (user cancellation, access denied, etc.)
     if error or not code:
-        err_msg = error_description or error or "Authentication cancelled or failed."
+        err_msg = error_description or error or "Sign-in was canceled or didn't complete."
         safe_error = urllib.parse.quote(err_msg)
 
         redirect_uri = _sanitize_redirect_uri(redirect_uri)
@@ -593,7 +593,7 @@ async def auth0_callback(
             )
             redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
-                url=f"{redirect_uri}?error=Account+not+found.+Please+contact+an+administrator+to+be+added+to+the+system.",
+                url=f"{redirect_uri}?error=Account+not+found.+Ask+an+administrator+to+add+you.",
                 status_code=302
             )
         
@@ -608,7 +608,7 @@ async def auth0_callback(
             )
             redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
-                url=f"{redirect_uri}?error=Account+is+disabled.+Please+contact+an+administrator.",
+                url=f"{redirect_uri}?error=Account+is+disabled.+Contact+an+administrator.",
                 status_code=302
             )
         

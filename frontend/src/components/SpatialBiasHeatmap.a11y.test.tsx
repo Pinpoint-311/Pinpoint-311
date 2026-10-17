@@ -110,7 +110,7 @@ describe('SpatialBiasHeatmap text alternative', () => {
         renderPanel();
 
         const summary = await screen.findByText(/Heat map of 30 reports/);
-        expect(summary.textContent).toMatch(/areas of roughly 150 metres/);
+        expect(summary.textContent).toMatch(/areas of roughly 150 meters/);
         // The spread, which is the thing the picture is actually read for.
         expect(summary.textContent).toMatch(/concentrated|evenly spread/);
     });

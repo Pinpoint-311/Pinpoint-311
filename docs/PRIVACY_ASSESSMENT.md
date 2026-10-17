@@ -53,7 +53,7 @@ turns it on under Modules, and that choice is recorded in the audit log.
 **How matching works without weakening encryption.** Resident name, email
 and phone remain encrypted (AES-256-GCM, random nonce per value, data key
 wrapped by the configured KMS). Matching uses separate fingerprint columns:
-HMAC-SHA256 of the normalised email and of the normalised full name, under a
+HMAC-SHA256 of the normalized email and of the normalized full name, under a
 random 256-bit key that is itself wrapped by the same KMS envelope. Without
 that key a fingerprint reveals nothing, and it cannot be reversed into the
 value. A single first or last name is never fingerprinted.
@@ -64,7 +64,7 @@ value. A single first or last name is never fingerprinted.
 |---------|--------|
 | Opt-in | Module off by default; endpoints answer 404 while it is off. Fingerprints are only created while it is on, and are erased when it is turned off |
 | Least privilege | Staff and administrators only, limited to requests their department scoping already permits |
-| Data minimisation | Returns request number, category, status and date only — never another request's description, location or contact details |
+| Data minimization | Returns request number, category, status and date only — never another request's description, location or contact details |
 | Exact match only | Full email address or full name; no partial or fuzzy search over PII |
 | Accountability | Every lookup writes an audit event (`resident_history_viewed`, `resident_search`) with actor, request or search type, and result count — never the searched value. If the audit write fails, no results are returned |
 | No PII in URLs | Search is a POST; values never appear in URLs, proxy logs or browser history |

@@ -116,7 +116,7 @@ export default function ClientErrorPanel() {
             <div className="relative">
                 {failed ? (
                     <p className="text-sm text-amber-200/75">
-                        Could not load the error list. That is itself worth investigating.
+                        Could not load the error list.
                     </p>
                 ) : errors === null ? (
                     <p className="text-sm text-white/40">Loading…</p>

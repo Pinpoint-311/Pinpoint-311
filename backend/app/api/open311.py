@@ -391,7 +391,7 @@ async def add_public_comment(
         raise HTTPException(
             status_code=400,
             detail="Your comment contains explicit or abusive language and can't be posted. "
-                   "Please rephrase without offensive content.",
+                   "Rephrase it without offensive language.",
         )
     if mod.flagged:
         # Moderation only. This endpoint is unauthenticated by design, and
@@ -676,7 +676,7 @@ async def get_service_definition(service_code: str, db: AsyncSession = Depends(g
                 "required": True,
                 "datatype_description": "Detailed description of the issue (min 10 chars)",
                 "order": 1,
-                "description": "Please describe the issue"
+                "description": "Describe the issue"
             },
             {
                 "variable": True,
@@ -935,7 +935,7 @@ async def screen_photo(
     if len(raw) > MAX_SCREEN_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="That photo is too large. Please pick one under 12 MB.",
+            detail="That photo is too large. Choose one under 12 MB.",
         )
 
     mime = (file.content_type or "").lower()
@@ -959,7 +959,7 @@ async def screen_photo(
             "handle": handle,
             "status": "blocked",
             "message": "This photo appears to contain explicit or graphic content and "
-                       "can't be used. Please choose a different one.",
+                       "can't be used. Choose a different one.",
         }
 
     if batch.withheld or not batch.media:
@@ -1075,7 +1075,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your report contains explicit or abusive language and can't be submitted. "
-                   "Please describe the issue without offensive content and try again.",
+                   "Describe the issue without offensive language and submit again.",
         )
 
     # Screening and redaction are one step because they are one question asked
@@ -1108,7 +1108,7 @@ async def create_request(
             detail={
                 "error": "stale_photo_handles",
                 "handles": resolved.stale,
-                "message": "Your photos took too long to attach. Please try submitting again.",
+                "message": "Your photos took too long to attach. Submit again.",
             },
         )
     if resolved.blocked:
@@ -1116,7 +1116,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
-                   "can't be submitted. Please remove it and try again.",
+                   "can't be submitted. Remove it and submit again.",
         )
 
     inline_media = [value for _, value in resolved.inline]
@@ -1126,7 +1126,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
-                   "can't be submitted. Please remove it and try again.",
+                   "can't be submitted. Remove it and submit again.",
         )
 
     # Rebuild the resident's ordering. Both halves say which submitted slot they

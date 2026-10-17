@@ -35,7 +35,7 @@ EMAIL_I18N = {
         "description": "Description",
         "location": "Location",
         "submitted": "Submitted",
-        "no_reply": "Please do not reply directly to this email.",
+        "no_reply": "Do not reply directly to this email.",
 
         # Confirmation email
         "request_received": "Request received",
@@ -537,7 +537,7 @@ def build_confirmation_email(
         language=language,
         preheader=f"{i18n.get('request_id', 'Request ID')} #{request_id}",
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 
@@ -563,7 +563,7 @@ async def build_confirmation_email_async(
         language=language,
         preheader=f"{i18n.get('request_id', 'Request ID')} #{request_id}",
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 
@@ -591,7 +591,7 @@ def build_status_update_email(
         logo_url=logo_url, primary_color=primary_color, footer_lines=footer,
         language=language, preheader=subject,
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 
@@ -618,7 +618,7 @@ async def build_status_update_email_async(
         logo_url=logo_url, primary_color=primary_color, footer_lines=footer,
         language=language, preheader=subject,
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 
@@ -643,7 +643,7 @@ def build_comment_email(
         logo_url=logo_url, primary_color=primary_color, footer_lines=footer,
         language=language, preheader=subject,
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 
@@ -668,7 +668,7 @@ async def build_comment_email_async(
         logo_url=logo_url, primary_color=primary_color, footer_lines=footer,
         language=language, preheader=subject,
         tagline=i18n.get("service_portal", L.DEFAULT_TAGLINE),
-        no_reply_note=i18n.get("no_reply", "Please do not reply directly to this email."),
+        no_reply_note=i18n.get("no_reply", "Do not reply directly to this email."),
     )
 
 

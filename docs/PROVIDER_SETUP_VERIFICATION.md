@@ -97,7 +97,7 @@ not work. Keys also expire at 00:00:00 GMT on the date set, which is now stated.
 
 **AWS KMS deletion is 7 to 30 days, defaulting to 30**, and the key becomes
 unusable the moment deletion is *scheduled* rather than when the window closes —
-so resident data stops decrypting immediately. It can be cancelled inside the
+so resident data stops decrypting immediately. It can be canceled inside the
 window. The steps said only "at least seven days".
 
 Confirmed correct, having originally been written from memory: `TranslateReadOnly`

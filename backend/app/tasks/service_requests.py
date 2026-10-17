@@ -1754,9 +1754,8 @@ def proactive_health_scan():
             # mode, or with a screen reader, has to get the same answer.
             blocks = [
                 L.heading(f"{worst}: system needs attention", 2),
-                L.paragraph("Each check below has crossed its alert threshold. "
-                            "The condition observed and the action for it are "
-                            "stated on each one."),
+                L.paragraph("Each check below has crossed its alert threshold "
+                            "and states what was observed and what to do."),
             ]
             for c in escalations:
                 tone = "critical" if c["status"] == "critical" else "warning"

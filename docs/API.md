@@ -41,7 +41,7 @@ Returns `{ "auth_url": "https://your-auth0-domain/authorize?..." }`. Redirect th
 There is no credential-free login path. `GET /api/auth/demo-login`, which minted
 an admin token for whoever asked when `DEMO_MODE=true`, has been removed
 outright — see the commit that deleted it for why a single env var was not an
-acceptable defence.
+acceptable defense.
 
 ### Using a Token
 

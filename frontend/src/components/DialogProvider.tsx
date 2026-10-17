@@ -447,7 +447,7 @@ export const useConfirmBackup = () => {
     return useCallback(() => {
         return confirm({
             title: 'Create Backup',
-            message: 'Create a new database backup now?\n\nThis may take a few moments depending on database size.',
+            message: 'Create a new database backup now?\n\nLarger databases take longer.',
             variant: 'info',
             confirmText: 'Create Backup',
             icon: <Download size={24} />,

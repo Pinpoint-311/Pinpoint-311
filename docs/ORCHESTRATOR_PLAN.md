@@ -210,7 +210,7 @@ town an afternoon when the answer is three weeks:
   permission to write to a directory is a far larger grant than a town should
   hand over for this. Sign-in stays a human step, deliberately.
 - **Third-party accounts.** Twilio, a Google Maps browser key, an ArcGIS
-  organisation. No cloud template creates an account with another company.
+  organization. No cloud template creates an account with another company.
 - **The billing account itself.** Someone owns the subscription and attaches a
   payment method, and that ownership is the residual risk described in
   DISASTER_RECOVERY.md -- an account closed for non-payment takes the KMS key

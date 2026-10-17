@@ -309,7 +309,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             setCommentError(
                 err instanceof Error && err.message
                     ? err.message
-                    : "Your comment could not be posted. Please try again."
+                    : "Your comment wasn't posted. Try again."
             );
         } finally {
             setIsSubmittingComment(false);
@@ -437,7 +437,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         {copied ? (
                             <>
                                 <Check className="w-4 h-4" />
-                                <span className="font-medium">Link Copied!</span>
+                                <span className="font-medium">Link copied</span>
                             </>
                         ) : (
                             <>
@@ -684,7 +684,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                     : `${selectedRequest.photos_pending_review} photos are waiting to be checked`}
                             </h3>
                             <p className="text-sm text-amber-200/70">
-                                Faces and licence plates could not be blurred automatically, so
+                                Faces and license plates could not be blurred automatically, so
                                 {selectedRequest.photos_pending_review === 1 ? ' it is ' : ' they are '}
                                 not shown here. A staff member will look and either publish or
                                 delete {selectedRequest.photos_pending_review === 1 ? 'it' : 'them'}.
@@ -840,7 +840,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         ) : comments.length === 0 ? (
                             <CommentEmptyState
                                 title="No comments yet"
-                                hint="Be the first to share an update!"
+                                hint="Share an update about this request."
                             />
                         ) : (
                             comments.map((comment, index) => (

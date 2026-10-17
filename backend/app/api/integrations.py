@@ -476,8 +476,8 @@ def _friendly_test_error(error: str) -> str:
     # back as a 400 from the token endpoint, and "check your password" is the
     # wrong advice for a connection that has no password.
     if "is not signed in" in text or "oauth2 refresh" in text:
-        return ("This connection isn't signed in to Accela any more — the authorization "
-                "may have been revoked or expired there. Open Settings and sign in again.")
+        return ("This connection is no longer signed in to Accela; the authorization was "
+                "revoked or expired there. Open Settings and sign in again.")
     if "http 401" in text or "http 403" in text or "unauthorized" in text or "forbidden" in text:
         return ("The platform refused the sign-in details. Double-check the key or "
                 "username/password — copy and paste them again with no extra spaces.")
@@ -487,8 +487,8 @@ def _friendly_test_error(error: str) -> str:
     if "http 429" in text:
         return "The platform says we're connecting too often. Wait a few minutes and try again."
     if "http 5" in text:
-        return ("Their system had a problem on its end. This usually isn't your setup — "
-                "wait a few minutes and try again, or check with the vendor.")
+        return ("Their system reported an error on its end. Wait a few minutes and try "
+                "again, or check with the vendor.")
     if "timed out" in text or "timeout" in text:
         return ("Their system didn't answer in time. Check the web address for typos; "
                 "if it looks right, try again in a few minutes.")
@@ -510,8 +510,8 @@ def _friendly_test_error(error: str) -> str:
                 "that layer, and that the layer is shared with it.")
     if "credentials missing" in text or "requires agency_name" in text or "requires record_type" in text:
         return "Some required fields are still blank — go back one step and fill them in."
-    return ("Something didn't work. The technical details below may help the vendor's "
-            "support team figure it out.")
+    return ("The test didn't pass. Share the technical details below with the vendor's "
+            "support team.")
 
 
 @router.post("/{integration_id}/test")
@@ -696,9 +696,8 @@ async def regenerate_webhook_token(
                 sanitize_for_log(integration.platform))
     return {
         **_serialize(integration),
-        "message": ("New webhook address issued. The previous one stopped working "
-                    "immediately — send the new address to your vendor, or they will "
-                    "keep posting to an address that now refuses them."),
+        "message": ("New webhook address issued, and the previous one no longer works. "
+                    "Send the new address to your vendor."),
     }
 
 
@@ -858,7 +857,7 @@ async def accela_oauth_callback(
     from app.integrations import accela_oauth
 
     if error:
-        return _oauth_result_page(False, "Accela reported that the sign-in was cancelled or refused.")
+        return _oauth_result_page(False, "Accela reported that the sign-in was canceled or refused.")
     if not code or not state:
         return _oauth_result_page(False, "Accela's response was missing the sign-in code.")
 

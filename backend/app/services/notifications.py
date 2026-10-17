@@ -667,9 +667,9 @@ class NotificationService:
                 # has stayed, because it is the only instruction here.
                 L.heading("Your request has been received", 2),
                 L.fields([("Request ID", f"#{request_id}")]),
-                L.paragraph("You can track the status of your request using this ID."),
+                L.paragraph("Use this ID to track your request."),
             ],
-            footer_lines=["We appreciate your help in making our community better."],
+            footer_lines=["Thank you for your report."],
         )
         if email:
             self.send_email(email, message["subject"], message["html"], message["text"])

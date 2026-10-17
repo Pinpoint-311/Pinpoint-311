@@ -77,7 +77,7 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
      * that. It is also not "not checked yet", which implies somebody could. */
     unverifiable: {
         cls: 'bg-white/[0.07] text-white/70 border-white/15',
-        label: 'Set up · we cannot test this one', Icon: HelpCircle,
+        label: 'Set up · can\u2019t be tested here', Icon: HelpCircle,
     },
     /* Not a fault, and not an omission.
      *

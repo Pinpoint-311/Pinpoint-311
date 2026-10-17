@@ -179,7 +179,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
     add(IDP_VENDOR[idp], {
         id: 'identity',
         title: 'Staff sign-in',
-        blurb: 'How your staff log in. Residents never sign in — only the people who work the reports.',
+        blurb: 'How staff sign in. Residents don\u2019t need an account.',
         cap: 'identity', provider: idp, required: true,
     });
 
@@ -235,7 +235,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         add((input.redactionProvider as Vendor) || cloud, {
             id: 'safety',
             title: 'Screening and blurring',
-            blurb: 'Screens what residents write, and blurs faces and number plates in the photos they send. Abusive text is always screened, with or without this.',
+            blurb: 'Screens what residents write, and blurs faces and license plates in the photos they send. Abusive text is always screened, with or without this.',
             cap: 'redaction', provider: input.redactionProvider,
             secrets: cloud === 'azure' ? [
                 { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Keys and Endpoint blade of an Azure AI Content Safety resource.' },
@@ -257,7 +257,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         add(SMS_VENDOR[input.smsProvider] ?? 'twilio', {
             id: 'sms',
             title: 'Text message notifications',
-            blurb: 'The same updates by text, for residents who give a mobile number. Email on its own is fine too.',
+            blurb: 'The same updates by text, for residents who give a mobile number. Optional if you use email.',
             cap: 'sms', provider: input.smsProvider,
         });
     }

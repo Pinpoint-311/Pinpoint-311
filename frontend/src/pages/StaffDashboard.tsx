@@ -341,7 +341,7 @@ export default function StaffDashboard() {
             const result = await api.analyticsChat(msg, newMessages.slice(0, -1));
             setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
         } catch (err: any) {
-            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ Error: ${err.message || 'Failed to get AI response'}` }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message || "Couldn't get a response. Try again."}` }]);
         } finally {
             setChatLoading(false);
         }
@@ -984,7 +984,7 @@ export default function StaffDashboard() {
             announce(`Status set to ${status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : status}.`);
         } catch (err) {
             console.error('Failed to update status:', err);
-            announce('Could not update the status. Please try again.', 'assertive');
+            announce('Couldn\'t update the status. Try again.', 'assertive');
         }
     };
 
@@ -1009,7 +1009,7 @@ export default function StaffDashboard() {
             announce('Request closed.');
         } catch (err) {
             console.error('Failed to close request:', err);
-            announce('Could not close the request. Please try again.', 'assertive');
+            announce('Couldn\'t close the request. Try again.', 'assertive');
         }
     };
 
@@ -1046,7 +1046,7 @@ export default function StaffDashboard() {
                 : 'Public reply sent to the reporter.');
         } catch (err) {
             console.error('Failed to add comment:', err);
-            announce('Could not post the comment. Please try again.', 'assertive');
+            announce('Couldn\'t post the comment. Try again.', 'assertive');
         } finally {
             setIsSubmittingComment(false);
         }
@@ -1151,7 +1151,7 @@ export default function StaffDashboard() {
             await api.exportRequests({ format });
         } catch (err: any) {
             console.error('Export failed:', err);
-            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+            alert(`Export didn't finish: ${err.message || 'unknown error'}. Try again.`);
         }
     };
 
@@ -1160,7 +1160,7 @@ export default function StaffDashboard() {
             await api.exportStatistics({ format });
         } catch (err: any) {
             console.error('Statistics export failed:', err);
-            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+            alert(`Export didn't finish: ${err.message || 'unknown error'}. Try again.`);
         }
     };
 
@@ -1813,9 +1813,8 @@ export default function StaffDashboard() {
                                     </div>
 
                                     <p className="text-[11px] text-white/35 mt-3.5 leading-relaxed">
-                                        These were never filed as requests, so they are not in any queue or export.
-                                        A road appearing often is either worth raising with that agency, or a sign its
-                                        routing rule is wrong.
+                                        These weren't filed as requests, so they aren't in any queue or export.
+                                        A road that appears often is worth raising with that agency, or its routing rule needs fixing.
                                     </p>
                                 </div>
                             )}
@@ -2167,7 +2166,7 @@ export default function StaffDashboard() {
                                                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)', alignSelf: 'flex-start'
                                             }}
                                         >
-                                            👋 Hi! I'm the AI Analytics Advisor. I can help you understand your data — trends, equity metrics, response times, sentiment, and more. What would you like to know?
+                                            I'm the AI Analytics Advisor. Ask about trends, equity metrics, response times, sentiment, and more.
                                         </div>
                                     )}
 
@@ -2759,7 +2758,7 @@ export default function StaffDashboard() {
                                                             <EyeOff className="w-3 h-3" aria-hidden="true" />
                                                             Unlisted
                                                             <span className="sr-only">
-                                                                — the resident asked to keep this off the public map and feed. Work it normally, just don't share it publicly.
+                                                                — the resident asked to keep this off the public map and feed. Work it normally, but don't share it publicly.
                                                             </span>
                                                         </span>
                                                     )}
@@ -2925,7 +2924,7 @@ export default function StaffDashboard() {
                                                             : 'Assignment saved.');
                                                     } catch (err) {
                                                         console.error(err);
-                                                        announce('Could not save the assignment. Please try again.', 'assertive');
+                                                        announce('Couldn\'t save the assignment. Try again.', 'assertive');
                                                     } finally {
                                                         setIsSavingAssignment(false);
                                                     }
@@ -2949,7 +2948,7 @@ export default function StaffDashboard() {
                                                                 announce('Legal hold placed. This record is now exempt from the retention policy.');
                                                             } catch (err) {
                                                                 console.error('Failed to enable legal hold:', err);
-                                                                announce('Could not place the legal hold. Please try again.', 'assertive');
+                                                                announce('Couldn\'t place the legal hold. Try again.', 'assertive');
                                                             }
                                                         }
                                                     } else {
@@ -2963,7 +2962,7 @@ export default function StaffDashboard() {
                                                             announce('Legal hold removed.');
                                                         } catch (err) {
                                                             console.error('Failed to remove legal hold:', err);
-                                                            announce('Could not remove the legal hold. Please try again.', 'assertive');
+                                                            announce('Couldn\'t remove the legal hold. Try again.', 'assertive');
                                                         }
                                                     }
                                                 }}
@@ -3005,9 +3004,8 @@ export default function StaffDashboard() {
                                                 const nowArchived = selectedRequest.public_archived !== true;
                                                 if (nowArchived && !window.confirm(
                                                     'Archive this report from public view?\n\n' +
-                                                    'It will be removed from the public tracker and the public map straight away. ' +
-                                                    'Nothing is deleted — residents holding the link can still see it, and it stays in research exports.\n\n' +
-                                                    'Continue?'
+                                                    'It comes off the public tracker and map right away. ' +
+                                                    'Nothing is deleted: residents with the link can still see it, and it stays in research exports.'
                                                 )) return;
                                                 try {
                                                     const updated = await api.setPublicArchived(
@@ -3020,7 +3018,7 @@ export default function StaffDashboard() {
                                                         : 'Restored to public view.');
                                                 } catch (err) {
                                                     console.error('Failed to change public visibility:', err);
-                                                    announce('Could not change the public visibility. Please try again.', 'assertive');
+                                                    announce('Couldn\'t change the public visibility. Try again.', 'assertive');
                                                 }
                                             }}
                                             className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.public_archived === true
@@ -3110,7 +3108,7 @@ export default function StaffDashboard() {
                                                             : `${selectedRequest.media_pending_review.length} photos need your review`}
                                                     </p>
                                                     <p className="text-xs text-amber-200/70 mb-3">
-                                                        The automatic face and licence-plate blur could not run on
+                                                        The automatic face and license-plate blur could not run on
                                                         these, so they have been kept off the public tracker, the map
                                                         and the Open311 feed. Check for faces and plates before
                                                         releasing one.
@@ -3296,7 +3294,7 @@ export default function StaffDashboard() {
                                                                                         announce(`AI priority accepted. Priority confirmed at ${priorityScore} out of 10.`);
                                                                                     } catch (e) {
                                                                                         console.error('Failed to accept AI priority:', e);
-                                                                                        announce('Could not accept the AI priority. Please try again.', 'assertive');
+                                                                                        announce('Couldn\'t accept the AI priority. Try again.', 'assertive');
                                                                                     } finally {
                                                                                         setIsUpdatingPriority(false);
                                                                                     }
@@ -3381,7 +3379,7 @@ export default function StaffDashboard() {
                                                                                             announce(`Priority saved as ${pendingPriority} out of 10.`);
                                                                                         } catch (e) {
                                                                                             console.error('Failed to update priority:', e);
-                                                                                            announce('Could not save the priority. Please try again.', 'assertive');
+                                                                                            announce('Couldn\'t save the priority. Try again.', 'assertive');
                                                                                         } finally {
                                                                                             setIsUpdatingPriority(false);
                                                                                         }
@@ -3417,7 +3415,7 @@ export default function StaffDashboard() {
                                                                                             announce('Priority reset to the AI suggestion.');
                                                                                         } catch (e) {
                                                                                             console.error('Failed to clear priority:', e);
-                                                                                            announce('Could not reset the priority. Please try again.', 'assertive');
+                                                                                            announce('Couldn\'t reset the priority. Try again.', 'assertive');
                                                                                         } finally {
                                                                                             setIsUpdatingPriority(false);
                                                                                         }
@@ -4104,7 +4102,7 @@ export default function StaffDashboard() {
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm font-medium text-white">
-                                                                        {copiedLink === 'staff' ? 'Copied!' : 'Staff Portal Link'}
+                                                                        {copiedLink === 'staff' ? 'Copied' : 'Staff Portal Link'}
                                                                     </div>
                                                                     <div className="text-xs text-white/40 truncate">For internal staff use</div>
                                                                 </div>
@@ -4126,7 +4124,7 @@ export default function StaffDashboard() {
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm font-medium text-white">
-                                                                        {copiedLink === 'resident' ? 'Copied!' : 'Resident Portal Link'}
+                                                                        {copiedLink === 'resident' ? 'Copied' : 'Resident Portal Link'}
                                                                     </div>
                                                                     <div className="text-xs text-white/40 truncate">Share with the reporter</div>
                                                                 </div>
@@ -4285,7 +4283,7 @@ export default function StaffDashboard() {
                                                 setCompletionPhotoUrl(result.url);
                                             } catch (err) {
                                                 console.error('Upload failed:', err);
-                                                alert("Failed to upload image");
+                                                alert("The photo didn't upload. Try again.");
                                             }
                                         }
                                     }}
@@ -4329,16 +4327,16 @@ export default function StaffDashboard() {
                     <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                         <p className="text-red-400 font-medium flex items-center gap-2">
                             <Trash2 className="w-5 h-5" aria-hidden="true" />
-                            This will soft-delete the request
+                            This hides the request
                         </p>
                         <p className="text-white/60 text-sm mt-2">
-                            The request will be hidden from the normal view but will remain accessible to administrators.
+                            It's removed from normal views but stays available to administrators.
                         </p>
                     </div>
 
                     <Textarea
                         label="Justification *"
-                        placeholder="Explain why this request should be deleted (minimum 10 characters)..."
+                        placeholder="Explain why this request should be deleted (at least 10 characters)..."
                         value={deleteJustification}
                         onChange={(e) => setDeleteJustification(e.target.value)}
                         required

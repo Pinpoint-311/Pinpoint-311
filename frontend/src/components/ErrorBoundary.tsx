@@ -65,7 +65,7 @@ export default class ErrorBoundary extends Component<Props, State> {
                             {this.state.reported === true
                                 ? 'It has been logged for your administrator.'
                                 : this.state.reported === false
-                                    ? 'It could not be logged automatically — please tell your administrator what you were doing.'
+                                    ? 'It could not be logged automatically. Tell your administrator what you were doing.'
                                     : 'Logging it now…'}
                         </p>
                         <button

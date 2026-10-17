@@ -93,14 +93,14 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
         "id": "description",
         "label": "What the resident wrote",
         "detail": "The free-text description. Residents often put names, phone "
-                  "numbers and neighbours' details in here.",
+                  "numbers and neighbors' details in here.",
     },
     {
         "id": "custom_fields",
         "label": "Answers to the town's own questions",
         "detail": "Whatever residents typed into the follow-up questions this "
                   "town added. Free text, so it holds the same names, phone "
-                  "numbers and neighbours' details the description does -- and "
+                  "numbers and neighbors' details the description does -- and "
                   "it was invisible to retention entirely until recently, so on "
                   "older records it outlived every other field.",
     },

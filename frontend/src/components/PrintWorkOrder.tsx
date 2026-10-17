@@ -20,7 +20,7 @@ interface PrintWorkOrderProps {
 }
 
 const POPUP_BLOCKED =
-    'The work order could not open. Your browser blocked the print window — allow pop-ups for this site, then try again.';
+    "The work order didn't open because your browser blocked the print window. Allow pop-ups for this site and try again.";
 
 export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, config }: PrintWorkOrderProps) {
     const announce = useAnnounce();

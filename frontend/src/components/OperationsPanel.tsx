@@ -221,7 +221,7 @@ export default function OperationsPanel() {
     const executeRunbook = async (action: string, label: string) => {
         const confirmed = await dialog.confirm({
             title: `Execute: ${label}`,
-            message: `Are you sure you want to execute "${label}"?\n\nThis action will be logged and may briefly affect availability.`,
+            message: `Run "${label}"?\n\nThis is logged and can briefly interrupt service.`,
             variant: action.includes('restart') ? 'warning' : 'info',
             confirmText: 'Execute',
         });

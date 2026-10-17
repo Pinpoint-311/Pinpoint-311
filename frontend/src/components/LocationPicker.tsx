@@ -476,7 +476,7 @@ export default function LocationPicker({
                 setIsLoading(false);
             } catch (err) {
                 if (isMounted) {
-                    setError('Failed to load the map');
+                    setError("The map didn't load.");
                     // No provider widget attached, so this component's own
                     // suggestion list is the only autocomplete left.
                     setNeedsOwnList(true);
@@ -515,7 +515,7 @@ export default function LocationPicker({
            relevant and stays on screen to be re-read. */
         setGeoError(null);
         if (!navigator.geolocation) {
-            setGeoError("This browser cannot share your location. Please type the address above.");
+            setGeoError("This browser can't share your location. Type the address above.");
             return;
         }
 
@@ -540,7 +540,7 @@ export default function LocationPicker({
             },
             (error) => {
                 console.error('Geolocation error:', error);
-                setGeoError("We could not get your location. Please enter an address above instead.");
+                setGeoError("We couldn't get your location. Enter an address above.");
                 setIsLocating(false);
             },
             { enableHighAccuracy: true, timeout: 10000 }
@@ -798,7 +798,7 @@ export default function LocationPicker({
                 >
                     <span className="text-red-400" aria-hidden="true">⚠️</span>
                     <span className="text-red-300">
-                        This location is outside the municipality boundary. Please select a location within the jurisdiction.
+                        This location is outside the municipal boundary. Choose a location within the municipality.
                     </span>
                 </div>
             )}

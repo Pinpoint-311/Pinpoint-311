@@ -43,7 +43,7 @@ Your information is used exclusively for municipal service purposes:
 
 This applies only if your municipality has turned on the Resident History feature. It is off unless they do.
 
-When it is on, municipal staff working on one of your requests can see a short list of your other requests that were filed with the same email address, and can search for requests by an exact full email address or full name. This helps them recognise a recurring problem or follow up on an earlier report. Safeguards:
+When it is on, municipal staff working on one of your requests can see a short list of your other requests that were filed with the same email address, and can search for requests by an exact full email address or full name. This helps them recognize a recurring problem or follow up on an earlier report. Safeguards:
 
 - Staff see only requests their own department can already access, and only each request's number, category, status and date — not its description, location or your contact details
 - Matching uses a one-way, keyed fingerprint of your email address or name. Your contact details remain encrypted, and the fingerprint cannot be turned back into your email or name
@@ -76,7 +76,7 @@ We implement appropriate technical and organizational measures to protect your p
 
 ## Administrator Registration with Pinpoint 311
 
-This section does not concern residents and no resident data is involved. It is here because the platform's privacy claim is that it makes no automatic calls to its maintainers, and the one voluntary exception belongs in the same document as the claim.
+This section involves no resident data. It describes the one voluntary exception to the platform's practice of making no automatic calls to its maintainers.
 
 The admin console offers municipal staff an optional form for sharing a contact address with Pinpoint 311, so that security advisories and release notes can reach this deployment. It is never filled in automatically and nothing is sent unless a member of staff completes it and presses Submit.
 
@@ -84,11 +84,11 @@ If submitted, Pinpoint 311 stores what was entered — organization, contact nam
 
 ## Contact Us
 
-For privacy-related questions or concerns, please contact your municipal clerk or the department of administration.
+For privacy-related questions or concerns, contact your municipal clerk or the department of administration.
 
 ---
 
-*This privacy policy applies to service requests submitted through the 311 portal. For the municipality's general privacy policy, please visit the main municipal website.*
+*This privacy policy applies to service requests submitted through the 311 portal. For the municipality's general privacy policy, visit the main municipal website.*
 `;
 
 /* Consecutive "- " lines become one <ul>.

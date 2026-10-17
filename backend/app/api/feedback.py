@@ -115,7 +115,7 @@ async def submit_platform_feedback(
     if recent >= DAILY_SUBMISSION_CAP:
         raise HTTPException(
             status_code=429,
-            detail="We have collected as much feedback as we can store today. Please try again tomorrow.",
+            detail="We've reached today's feedback limit. Try again tomorrow.",
         )
 
     db.add(PlatformFeedback(platform_experience=payload.platform_experience))

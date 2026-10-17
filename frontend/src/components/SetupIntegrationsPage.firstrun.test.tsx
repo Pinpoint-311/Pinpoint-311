@@ -119,7 +119,7 @@ async function mount() {
 
 /** The guide's body is only in the DOM when it is open. */
 function guideIsOpen() {
-    return /Answer a few questions and we will hide the rest/.test(host.textContent || '');
+    return /Answer a few questions to hide what you don't need/.test(host.textContent || '');
 }
 
 function button(pattern: RegExp): HTMLElement | undefined {
@@ -221,6 +221,6 @@ describe('the first-run guide', () => {
         // still opens. All the flag settles is what happens on sign-in, and a
         // button that reads like a permanent dismissal does not get pressed.
         await mount();
-        expect(host.textContent).toMatch(/come back to it from this tab/i);
+        expect(host.textContent).toMatch(/return to it from this tab/i);
     });
 });

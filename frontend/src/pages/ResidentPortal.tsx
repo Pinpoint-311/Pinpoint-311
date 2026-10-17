@@ -162,7 +162,7 @@ export default function ResidentPortal() {
             e.stopPropagation();
             const checkbox = disclaimerRef.current?.querySelector<HTMLElement>('input[type="checkbox"]');
             checkbox?.focus();
-            announce('Please confirm the non-emergency notice to continue.', 'assertive');
+            announce('Confirm the non-emergency notice to continue.', 'assertive');
             return;
         }
         if (e.key !== 'Tab') return;
@@ -553,19 +553,19 @@ export default function ResidentPortal() {
         const errors: Record<string, string> = {};
 
         if (!formData.description || formData.description.length < 10) {
-            errors.description = 'Please provide a detailed description (at least 10 characters)';
+            errors.description = 'Describe the issue in at least 10 characters.';
         }
         if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) {
-            errors.email = 'Please enter a valid email address';
+            errors.email = 'Enter a valid email address.';
         }
         if (formData.phone && !isValidPhone(formData.phone)) {
-            errors.phone = 'Please enter a valid phone number, e.g. (555) 123-4567';
+            errors.phone = 'Enter a valid phone number, such as (555) 123-4567.';
         }
         // The server refuses it too; checking here saves the round trip.
         if (locationMode === 'required') {
             const hasPin = formData.lat != null && formData.long != null;
             if (!(formData.address || '').trim() && !hasPin) {
-                errors.address = 'Choose a spot on the map or enter an address';
+                errors.address = 'Choose a spot on the map or enter an address.';
             }
         }
 
@@ -615,7 +615,7 @@ export default function ResidentPortal() {
         // refuses it a third time, which is where it actually counts.
         if (blockedPhotos.length) {
             setFormErrors({
-                submit: "One of your photos can't be used. Please remove it and try again.",
+                submit: "One of your photos can't be used. Remove it and submit again.",
             });
             return;
         }
@@ -676,7 +676,7 @@ export default function ResidentPortal() {
             scrollToTop('instant');
         } catch (err) {
             console.error('Failed to submit request:', err);
-            setFormErrors({ submit: 'Failed to submit request. Please try again.' });
+            setFormErrors({ submit: "Your request wasn't submitted. Try again." });
         } finally {
             setIsSubmitting(false);
         }
@@ -780,7 +780,7 @@ export default function ResidentPortal() {
                         updatePhoto(id, {
                             state: 'blocked',
                             message: result.message
-                                || "This photo can't be used. Please choose a different one.",
+                                || "This photo can't be used. Choose a different one.",
                             handle: undefined,
                         });
                         return;
@@ -803,7 +803,7 @@ export default function ResidentPortal() {
                         // Show them the blurred version, not the original.
                         ...(result.preview ? { previewUrl: result.preview } : {}),
                         message: result.faces || result.plates
-                            ? 'Ready to send — faces and licence plates blurred'
+                            ? 'Ready to send — faces and license plates blurred'
                             : undefined,
                     });
                 })
@@ -932,7 +932,7 @@ export default function ResidentPortal() {
                                     </div>
                                 )}
                                 <h2 id="disclaimer-title" className="text-2xl font-bold text-white mb-1">
-                                    Welcome to {settings?.township_name || "311 Services"}!
+                                    Welcome to {settings?.township_name || "311 Services"}
                                 </h2>
                                 <p className="text-white/60 text-sm">Your community service request portal</p>
                             </div>
@@ -955,7 +955,7 @@ export default function ResidentPortal() {
                                 <div className="mt-3 pt-3 border-t border-white/10">
                                     <p className="text-white/60 text-sm flex items-start gap-2">
                                         <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-                                        <span>For emergencies (police, fire, medical), please dial <strong className="text-white whitespace-nowrap">911</strong></span>
+                                        <span>For emergencies (police, fire, medical), call <strong className="text-white whitespace-nowrap">911</strong></span>
                                     </p>
                                 </div>
                             </div>
@@ -981,7 +981,7 @@ export default function ResidentPortal() {
                                     </div>
                                 </div>
                                 <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
-                                    Got it! I'll use this for non-emergency requests and call 911 for emergencies.
+                                    I'll use this portal for non-emergency requests and call 911 for emergencies.
                                 </span>
                             </label>
 
@@ -991,7 +991,7 @@ export default function ResidentPortal() {
                                 disabled={!disclaimerChecked}
                                 className={`w-full py-3 text-base font-medium ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : 'bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700'}`}
                             >
-                                {disclaimerChecked ? "Let's Get Started! →" : "Check the box above to continue"}
+                                {disclaimerChecked ? "Get started →" : "Check the box above to continue"}
                             </Button>
                         </motion.div>
                     </motion.div>
@@ -1318,7 +1318,7 @@ export default function ResidentPortal() {
                                                 <Textarea
                                                     id={FIELD_IDS.description}
                                                     label={"Description"}
-                                                    placeholder="Please describe the issue in detail..."
+                                                    placeholder="Describe the issue..."
                                                     value={formData.description}
                                                     onChange={(e) =>
                                                         setFormData((prev) => ({ ...prev, description: e.target.value }))
@@ -1867,9 +1867,9 @@ export default function ResidentPortal() {
                                                     : 'bg-amber-500/20 border-amber-500/30 text-amber-300'}`}
                                             >
                                                 {isLocationOutOfBounds ? (
-                                                    <><strong>Cannot submit:</strong> The selected location is outside the municipality boundary. Please choose a location within the jurisdiction.</>
+                                                    <><strong>Outside the boundary:</strong> Choose a location within the municipality.</>
                                                 ) : (
-                                                    <>Submission blocked - see notice above</>
+                                                    <>Can&apos;t submit yet. See the notice above.</>
                                                 )}
                                             </div>
                                         )}
@@ -1933,11 +1933,10 @@ export default function ResidentPortal() {
                                         tabIndex={-1}
                                         className="text-3xl font-bold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
                                     >
-                                        Request Submitted!
+                                        Request submitted
                                     </h1>
                                     <p className="text-white/60">
-                                        Thank you for helping improve our community. Your request has been
-                                        received and will be reviewed shortly.
+                                        Thank you. We've received your request and staff will review it.
                                     </p>
                                     {submittedId && (
                                         <div className="inline-block px-4 py-2 rounded-lg bg-white/10 border border-white/20">
@@ -1961,11 +1960,10 @@ export default function ResidentPortal() {
                                                     : `${submittedPhotosHeld} of your photos are waiting to be checked`}
                                             </p>
                                             <p className="text-xs text-amber-200/70 mt-1">
-                                                We could not blur faces and licence plates automatically, so
-                                                {submittedPhotosHeld === 1 ? ' it is ' : ' they are '}
-                                                not on the public tracker yet. Your report has been filed and
-                                                is being handled either way. A staff member will look and
-                                                either publish or delete
+                                                We couldn&apos;t blur faces and license plates automatically, so
+                                                {submittedPhotosHeld === 1 ? ' it isn\'t ' : ' they aren\'t '}
+                                                on the public tracker yet. Your report is filed. Staff will review
+                                                {submittedPhotosHeld === 1 ? ' it' : ' them'} and publish or delete
                                                 {submittedPhotosHeld === 1 ? ' it' : ' them'}.
                                             </p>
                                         </div>

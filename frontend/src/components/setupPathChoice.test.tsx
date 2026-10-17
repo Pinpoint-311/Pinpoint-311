@@ -285,7 +285,7 @@ describe('Google, which has no template', () => {
         expect(stepNumbers()[0]).toBe('1');
         expect(container.textContent).toContain('Key Management');
         // The one line saying why, as a statement rather than an apology.
-        expect(container.textContent).toContain('Google has none');
+        expect(container.textContent).toContain('Google has no one-click template');
     });
 });
 

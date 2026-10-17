@@ -283,7 +283,7 @@ DEFAULT_REDACTION_PROVIDER = "local"
 
 _REDACTION_TOGGLES = [
     {"key": "REDACT_FACES", "label": "Blur faces (true/false)", "required": False},
-    {"key": "REDACT_PLATES", "label": "Blur licence plates (true/false)", "required": False},
+    {"key": "REDACT_PLATES", "label": "Blur license plates (true/false)", "required": False},
 ]
 
 # Every entry below used to declare the two toggles and nothing else, and every

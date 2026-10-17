@@ -557,7 +557,7 @@ async def search_census_boundary(
         if response.status_code != 200:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Failed to connect to Census API"
+                detail="Couldn't reach the Census API. Try again."
             )
         
         data = response.json()
@@ -652,7 +652,7 @@ async def search_osm_township(
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Failed to connect to Nominatim"
+                    detail="Couldn't reach OpenStreetMap search. Try again."
                 )
             
             results = response.json()
@@ -677,7 +677,7 @@ async def search_osm_township(
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Failed to search Nominatim: {str(e)}"
+            detail=f"Couldn't search OpenStreetMap: {str(e)}"
         )
 
 
@@ -701,7 +701,7 @@ async def fetch_osm_boundary(
             if response.status_code != 200:
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Failed to fetch boundary from OpenStreetMap. The boundary may not be available."
+                    detail="OpenStreetMap didn't return a boundary for this place. Try again."
                 )
             
             geojson = response.json()
@@ -711,7 +711,7 @@ async def fetch_osm_boundary(
     except httpx.RequestError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch boundary from OpenStreetMap"
+            detail="Couldn't fetch the boundary from OpenStreetMap. Try again."
         )
 
 

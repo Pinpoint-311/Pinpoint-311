@@ -2272,7 +2272,7 @@ async def research_chat(
                     ai_response += part['text']
 
         if not ai_response:
-            ai_response = "I wasn't able to generate a response. Please try rephrasing your question."
+            ai_response = "I couldn't generate a response. Try rephrasing your question."
 
         # Log the research chat access
         await log_research_access(
@@ -2287,7 +2287,7 @@ async def research_chat(
         raise
     except Exception as e:
         logger.error(f"Research chat error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get AI response")
+        raise HTTPException(status_code=500, detail="Couldn't get a response from the AI service. Try again.")
 
 
 

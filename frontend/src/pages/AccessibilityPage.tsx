@@ -47,25 +47,24 @@ If you are unable to use this web portal, you can submit service requests via:
 
 ## Known Limitations
 
-We would rather name these than imply they are solved. We are aware of and
-working to address:
+We're working to address these known issues:
 
 - Placing a pin by dragging it on the map is a pointer gesture with no keyboard equivalent. Typing an address, or using "Use my current location", sets the same location, so a report can always be filed without the map — but the map itself is not keyboard operable
 - Map tiles, markers and the map provider's own controls come from a third party and have not been audited by us
-- The staff and administrator console has not been through the same review as the resident portal, and should not be assumed to meet AA
+- The staff and administrator console has not been through the same review as the resident portal, and isn't yet confirmed to meet AA
 - Photos uploaded by other residents carry generic descriptions ("Submitted photo 2"), because the person who uploaded them is not asked for alternative text
-- Automatic translations are machine-generated; wording and phrasing may be less clear than the English original
+- Automatic translations are machine-generated and can read less clearly than the English original
 - This statement describes our own assessment. It has not yet been confirmed by an independent audit
 
 ## Feedback
 
-We welcome your feedback on the accessibility of this portal. Please let us know if you encounter accessibility barriers:
+We welcome feedback on the accessibility of this portal. Tell us about any barriers you encounter:
 
 - Report an accessibility issue through the service request form
 - Contact your municipal clerk's office
 - Email the IT department
 
-We try to respond to accessibility feedback within 5 business days.
+We aim to respond to accessibility feedback within 5 business days.
 
 ## Continuous Improvement
 

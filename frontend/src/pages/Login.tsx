@@ -82,7 +82,7 @@ export default function Login() {
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.detail || 'Failed to initiate login');
+                throw new Error(errorData.detail || "Sign-in didn't start. Try again.");
             }
 
             const data = await response.json();
@@ -90,7 +90,7 @@ export default function Login() {
             // Redirect to Auth0
             window.location.href = data.auth_url;
         } catch (err) {
-            setError((err as Error).message || 'Failed to start login');
+            setError((err as Error).message || "Sign-in didn't start. Try again.");
             setIsLoading(false);
         }
     };
@@ -163,7 +163,7 @@ export default function Login() {
                                     Enter Admin Console
                                 </a>
                                 <p className="text-white/30 text-xs text-center">
-                                    This button is only available during initial setup
+                                    Available only during initial setup
                                 </p>
                             </div>
                         ) : (
@@ -177,7 +177,7 @@ export default function Login() {
                                         disabled={isLoading}
                                         isLoading={isLoading}
                                         leftIcon={<LogIn className="w-5 h-5" />}
-                                        aria-label={isLoading ? 'Signing in, please wait' : 'Sign in with your organization account'}
+                                        aria-label={isLoading ? 'Signing in' : 'Sign in with your organization account'}
                                     >
                                         Sign In with SSO
                                     </Button>

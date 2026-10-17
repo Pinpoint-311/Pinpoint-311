@@ -46,9 +46,9 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     // between them; PII encryption and photo redaction had no UI at all, so
     // face and plate blurring was a shipped feature a town could not turn on.
     { key: 'email', title: 'Email', blurb: 'Sends confirmations and status updates to residents. SMTP works with the mail server your town already has.', icon: Mail },
-    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
-    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
-    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
+    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts for residents who give a mobile number.', icon: MessageSquare },
+    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'The key service that protects the key encrypting resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
+    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and license plates in resident photos before they are stored.', icon: ImageIcon },
     // The capability every card above depends on, and the last to get a check.
     // A credential saved while the store is unreachable stays in the encrypted
     // database and the card that saved it still shows a tick, so the failure
@@ -653,7 +653,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const spotlightDetail = bad
         ? (currentHealth?.last_error || currentHealth?.last_result || currentHealth?.summary || 'The last check failed.')
         : shown === 'unchecked'
-            ? 'Nothing has used this yet, so we cannot say whether it works.'
+            ? 'Not used yet, so it hasn\u2019t been verified.'
             : blurb;
 
     const handleSave = async () => {
@@ -1579,8 +1579,8 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
      * checked yet" and mean "we could not ask". */
     const healthNotice = healthUnavailable ? (
         <div role="alert" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-            The status of these services could not be read, so the badges below
-            show what was last known rather than what is true now.
+            The status of these services could not be read. The badges below show
+            the last known status.
         </div>
     ) : null;
     /* Only what is wrong gets the whole width.
@@ -1731,7 +1731,7 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                        whether to switch it back on is looking
                                        at the tile. */
                                     <p className="text-[11px] text-emerald-200/60 mt-1.5">
-                                        Nothing was deleted. Switch it back on and it works as it did.
+                                        Its settings are kept. Switch it back on to resume.
                                     </p>
                                 )}
                                 {/* The way back, on the tile itself. "Go find
@@ -1759,8 +1759,8 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                         ))}
                     </div>
                     <p className="text-[11px] text-white/55 mt-3.5">
-                        These are built and ready — nothing here needs writing. Switch one back on
-                        and its card returns above; anything never set up also appears in the{' '}
+                        Switch one back on and its card returns above. Anything not yet set up also
+                        appears in the{' '}
                         <strong className="text-white/75">Setup Instructions</strong> guide with its steps.
                     </p>
                 </div>

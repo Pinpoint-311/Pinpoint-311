@@ -330,7 +330,7 @@ async def _kms_check() -> Dict[str, Any]:
                 "Act today. Check that the key still exists and has not been scheduled "
                 "for deletion, and that its credentials have not expired. Records saved "
                 "before this started may already be unreadable, and if a deletion is "
-                "pending it can only be cancelled inside the waiting period."
+                "pending it can only be canceled inside the waiting period."
             ),
         )
     except Exception:
@@ -368,7 +368,7 @@ async def _redaction_check() -> Dict[str, Any]:
             return _check(
                 "redaction", "Photo redaction", "critical", "none",
                 "No detector is available — resident photos are being stored "
-                "without blurring faces or licence plates.",
+                "without blurring faces or license plates.",
                 action=(
                     "Check the Photo Redaction card. On-server detection needs no "
                     "account and works anywhere, so this usually means the image is "

@@ -257,10 +257,10 @@ function describeDensity(points: HeatmapPoint[], mode: HeatmapMode): string {
             : 'fairly evenly spread';
 
     return `Heat map of ${points.length.toLocaleString()} ${noun} across ` +
-        `${weights.length.toLocaleString()} neighbourhood-sized areas of roughly 150 metres. ` +
+        `${weights.length.toLocaleString()} neighborhood-sized areas of roughly 150 meters. ` +
         `Density is ${spread}: the busiest tenth of areas holds ${topShare}% of the total, ` +
         `and the single busiest area holds ${share(1)}%. ` +
-        `Warmer colours mark denser areas; white is the densest.`;
+        `Warmer colors mark denser areas; white is the densest.`;
 }
 
 const BIAS_FILL = { high: '#f87171', moderate: '#fbbf24', low: '#34d399' } as const;
@@ -716,7 +716,7 @@ export default function SpatialBiasHeatmap({
                         })}
                     </ul>
                     <p className="text-[10px] text-white/30 mt-2">
-                        Clusters where reports-per-reporter exceeds 2x may indicate repeat reporting bias rather than widespread community concern.
+                        Clusters where reports-per-reporter exceeds 2x can indicate repeat reporting rather than widespread community concern.
                     </p>
                 </div>
             )}

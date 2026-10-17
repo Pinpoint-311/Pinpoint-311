@@ -304,7 +304,7 @@ async def configure_gcp(
         logger.error(f"Failed to configure GCP: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Failed to configure GCP"
+            detail="Couldn't configure Google Cloud. Check the credentials and try again."
         )
 
 
@@ -345,7 +345,7 @@ async def configure_auth0(
                 logger.error(f"Auth0 Management API token failed: HTTP {token_response.status_code}")
                 raise HTTPException(
                     status_code=400,
-                    detail="Failed to get Management API token"
+                    detail="Couldn't get an Auth0 Management API token. Check the credentials."
                 )
             
             access_token = token_response.json()["access_token"]
@@ -378,7 +378,7 @@ async def configure_auth0(
                 logger.error(f"Auth0 application creation failed: {app_response.text}")
                 raise HTTPException(
                     status_code=400,
-                    detail="Failed to create Auth0 application"
+                    detail="Couldn't create the Auth0 application. Try again."
                 )
             
             app_data = app_response.json()
@@ -600,7 +600,7 @@ async def configure_auth0(
         logger.error(f"Auth0 configuration failed: {e}")
         raise HTTPException(
             status_code=500,
-            detail="Failed to configure Auth0"
+            detail="Couldn't configure Auth0. Check the credentials and try again."
         )
 
 

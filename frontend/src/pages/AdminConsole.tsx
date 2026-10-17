@@ -629,7 +629,7 @@ export function DepartmentsTab({
                                         <Building2 className="w-12 h-12 mx-auto text-white/20 mb-3" />
                                         <p className="text-white/60">No departments yet.</p>
                                         <p className="text-white/40 text-sm mt-1">
-                                            Add one to organise staff and route reports to the right team.
+                                            Add one to organize staff and route reports to the right team.
                                         </p>
                                     </div>
                                 )}
@@ -660,7 +660,7 @@ export default function AdminConsole() {
     const reportError = (context: string, err: unknown) => {
         console.error(`${context}:`, err);
         const detail = err instanceof Error ? err.message : String(err ?? '');
-        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Please try again.`);
+        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Try again.`);
         setTimeout(() => setErrorMessage(null), 12000);
     };
     const contentRef = useRef<HTMLDivElement>(null);
@@ -1208,7 +1208,7 @@ export default function AdminConsole() {
         setIsLoading(true);
         try {
             await api.updateSettings(brandingForm);
-            setSaveMessage('Settings saved!');
+            setSaveMessage('Settings saved');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err) {
             reportError('Could not save branding', err);
@@ -1235,7 +1235,7 @@ export default function AdminConsole() {
             }
         } catch (err) {
             console.error('OSM search failed:', err);
-            alert("Failed to search for municipality");
+            alert("Municipality search failed. Try again.");
         } finally {
             setIsSearchingTownship(false);
         }
@@ -1270,11 +1270,11 @@ export default function AdminConsole() {
 
             setTownshipBoundary(geojson);
             setSelectedOsmResult(null);
-            setSaveMessage('Municipality boundary saved successfully!');
+            setSaveMessage('Municipality boundary saved');
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
             console.error('Failed to fetch boundary:', err);
-            alert("Failed to fetch boundary. The boundary may not be available for this location.");
+            alert("Couldn't fetch a boundary for this location.");
         } finally {
             setIsFetchingBoundary(false);
         }
@@ -1464,7 +1464,7 @@ export default function AdminConsole() {
             setShowServiceEditModal(false);
             setEditingService(null);
             loadTabData();
-            setSaveMessage('Service routing updated!');
+            setSaveMessage('Service routing updated');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err: any) {
             console.error('Failed to update service:', err);
@@ -1485,8 +1485,11 @@ export default function AdminConsole() {
             setEditingDepartment(null);
             setNewDepartment({ name: '', description: '', routing_email: '' });
             loadTabData();
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to save department:', err);
+            // Said, not swallowed: a rejected save used to leave the modal
+            // open with no sign anything had gone wrong.
+            alert(err?.message || "Couldn't save the department. Check the name and routing email.");
         }
     };
 
@@ -1978,7 +1981,7 @@ export default function AdminConsole() {
                                         <div className="p-4 rounded-xl bg-primary-500/10 border border-primary-500/20">
                                             <p className="text-sm font-medium text-primary-300 mb-3">Auto-Configure Domain</p>
                                             <p className="text-xs text-white/60 mb-3">
-                                                After setting up your DNS records, enter your domain below and we'll configure Nginx + SSL automatically.
+                                                Once your DNS records are in place, enter your domain and select Configure Domain. HTTPS is set up automatically.
                                             </p>
                                             <div className="flex gap-2">
                                                 <Input
@@ -1990,7 +1993,7 @@ export default function AdminConsole() {
                                                 <Button
                                                     onClick={async () => {
                                                         const domain = (brandingForm as any).custom_domain;
-                                                        if (!domain) { alert("Please enter a domain"); return; }
+                                                        if (!domain) { alert("Enter a domain."); return; }
                                                         setIsLoading(true);
                                                         try {
                                                             const result = await api.configureDomain(domain);
@@ -2025,7 +2028,7 @@ export default function AdminConsole() {
                                                 <li>Log into your domain registrar (GoDaddy, Namecheap, etc.)</li>
                                                 <li>Add an <strong className="text-white">A Record</strong> pointing to: <code className="text-primary-300 bg-black/30 px-1 rounded">132.226.32.116</code></li>
                                                 <li>Wait 5-30 minutes for DNS propagation</li>
-                                                <li>Then enter domain above & click "Configure SSL"</li>
+                                                <li>Enter the domain above and select Configure Domain</li>
                                             </ol>
                                         </div>
 
@@ -2535,19 +2538,19 @@ export default function AdminConsole() {
                                                set up. They are ticks in Setup &
                                                Integrations now. */
                                             { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
-                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works and staff always see it', icon: EyeOff, color: 'slate' },
+                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works, and staff still see it', icon: EyeOff, color: 'slate' },
                                             /* The description is deliberately explicit about what lands
                                                in the town's database, because that is the records
                                                question a clerk has to be able to answer: one
                                                multiple-choice answer and a timestamp, no free text, no
                                                identity. Longer feedback goes to email instead, so it
                                                never becomes a record this town holds. */
-                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous multiple-choice question about whether this platform made reporting easier. Stores only the answer and the date \u2014 no comments, no name, no email, no IP \u2014 so there is nothing resident-written in your records. Longer feedback goes by email to the address below. Aggregates appear on Statistics', icon: MessageSquareHeart, color: 'sky' },
+                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous multiple-choice question about whether reporting was easy. Only the answer and date are stored: no name, no comments. Longer feedback goes to the email below. Results appear on Statistics.', icon: MessageSquareHeart, color: 'sky' },
                                             /* Spelled out because it is the one module that reads
                                                resident PII across reports, and an administrator
                                                turning it on is making a privacy decision. Every
                                                clause below is enforced on the server, not here. */
-                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s earlier reports on each request, and let them search by a resident\u2019s full email address or full name. Exact matches only, limited to reports each staff member can already open, and never another report\u2019s details. Every lookup is recorded in the audit log, without the searched-for email or name', icon: UserSearch, color: 'blue' },
+                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s earlier reports and let them search by full email or name. Staff only see reports they already have access to, and every lookup is logged.', icon: UserSearch, color: 'blue' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
@@ -2620,7 +2623,7 @@ export default function AdminConsole() {
                                                             />
                                                             <p id="platform-feedback-email-help" className="text-white/50 text-xs mt-2">
                                                                 {platformFeedbackEmail.trim()
-                                                                    ? `Residents who answer are offered a "want to tell us more?" link that opens their mail app addressed to ${platformFeedbackEmail.trim()}. Those messages go to that mailbox, never into this database.`
+                                                                    ? `Residents who answer see a "Want to tell us more?" link that emails ${platformFeedbackEmail.trim()}. Those messages are not stored here.`
                                                                     : 'Leave empty and no "tell us more" link is shown. Residents can still answer the one question.'}
                                                             </p>
                                                         </div>
@@ -2705,12 +2708,12 @@ export default function AdminConsole() {
                                             aria-describedby="public-archive-days-help"
                                         />
                                         <p id="public-archive-days-help" className="text-white/50 text-xs mt-2">
-                                            Remove closed reports from the public tracker and map after N days. They stay available by direct link and to staff. Leave empty to keep everything listed.
+                                            Remove closed reports from the public tracker and map after this many days. Staff and direct links still reach them. Leave empty to keep everything listed.
                                         </p>
                                         <p className="text-white/40 text-xs mt-2">
                                             {publicArchiveDays && Number(publicArchiveDays) > 0
-                                                ? `Closed reports drop off the public tracker and map ${publicArchiveDays} days after they are closed. Nothing is deleted, staff keep seeing everything, tracking links keep working, and research exports still include them \u2014 raise or clear this number and the reports come straight back.`
-                                                : 'Not set \u2014 every report a resident has not chosen to unlist stays on the public tracker and map.'}
+                                                ? `Closed reports leave the public tracker and map ${publicArchiveDays} days after closing. Nothing is deleted, and clearing this number brings them back.`
+                                                : 'Not set. All closed reports stay on the public tracker and map unless a resident unlisted them.'}
                                         </p>
                                     </div>
                                 </div>
@@ -2948,7 +2951,7 @@ export default function AdminConsole() {
                                                             try { await api.seedRoads(true); } catch (e) { console.warn("Road seed failed:", e); }
                                                             setTownshipBoundary(geojson);
                                                             setSelectedOsmResult(null);
-                                                            setSaveMessage('GeoJSON boundary uploaded successfully!');
+                                                            setSaveMessage('GeoJSON boundary uploaded');
                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                         } catch (err) {
                                                             console.error('Failed to upload GeoJSON:', err);
@@ -3156,18 +3159,14 @@ export default function AdminConsole() {
                                             <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
                                             <div className="space-y-2">
                                                 <h3 className="text-white font-semibold">
-                                                    Resident personal data is being kept indefinitely
+                                                    No retention period is set
                                                 </h3>
                                                 <p className="text-white/75 text-sm leading-relaxed">
                                                     {retentionPolicy.detail}
                                                 </p>
                                                 <p className="text-white/60 text-sm leading-relaxed">
-                                                    Nothing has been deleted or redacted in the meantime, so no
-                                                    record has been lost to this — closed requests are all still
-                                                    here, including any past the date your published policy gives.
-                                                    That is the safer of the two failures, and it is still a
-                                                    failure: keeping personal data longer than you need it is its
-                                                    own obligation.
+                                                    Nothing has been deleted or redacted. Closed requests are kept,
+                                                    including any older than your published retention schedule allows.
                                                 </p>
                                                 <p className="text-white/50 text-sm leading-relaxed">
                                                     Set a retention period below to start it.
@@ -3342,7 +3341,7 @@ export default function AdminConsole() {
                                             <p className="text-white/50 text-xs mt-1">
                                                 {retentionDays && parseInt(retentionDays) > 0
                                                     ? `${formatYears(parseInt(retentionDays))} — records are cleared once they have been closed this long.`
-                                                    : 'Not set, so nothing is ever cleared. Enter the period in days: 5 years is 1825, 7 years is 2555.'}
+                                                    : 'Not set, so nothing is cleared. Enter days: 5 years is 1825, 7 years is 2555.'}
                                             </p>
                                         </div>
 
@@ -3384,8 +3383,7 @@ export default function AdminConsole() {
                                             <h4 className="font-semibold text-white">What gets cleared</h4>
                                             <p className="text-white/55 text-xs mt-1 mb-4">
                                                 The record stays and still counts in your statistics. Only the
-                                                fields ticked here are emptied, and nothing is ticked until you
-                                                tick it — this list is what a run destroys for good.
+                                                fields you check are permanently cleared.
                                             </p>
                                             {/* auto-rows-fr plus h-full: every card in a row is
                                                 the height of the tallest, so a two-line
@@ -3421,10 +3419,7 @@ export default function AdminConsole() {
                                             </div>
                                             {!scrubFields.some(f => f.selected) && (
                                                 <p className="text-amber-300 text-xs mt-3">
-                                                    Nothing is ticked, so retention will not run at all. A run that
-                                                    cleared nothing would still mark records archived, which takes
-                                                    them out of every future run — the personal data would stay on
-                                                    them permanently, with nothing left to notice.
+                                                    Check at least one field. Retention does not run until you do.
                                                 </p>
                                             )}
                                         </div>
@@ -3457,15 +3452,15 @@ export default function AdminConsole() {
                                                                     </p>
                                                                 )}
                                                                 <p className="text-white/45 text-xs mt-1">
-                                                                    One period for every request, whatever it was about.
-                                                                    Anything you must keep longer needs a legal hold on it.
+                                                                    This period applies to every request. To keep a request
+                                                                    longer, place a legal hold on it.
                                                                 </p>
                                                             </>
                                                         ) : (
                                                             <p className="text-white/70 text-sm">
                                                                 {days > 0
-                                                                    ? 'A period is set but nothing is ticked, so retention will not run.'
-                                                                    : 'No period is set, so retention will not run and resident personal data is kept indefinitely.'}
+                                                                    ? 'A period is set but no fields are checked, so retention will not run.'
+                                                                    : 'No period is set, so retention will not run and closed requests are kept indefinitely.'}
                                                             </p>
                                                         )}
                                                     </div>
@@ -3538,7 +3533,7 @@ export default function AdminConsole() {
                                                 if (plan.blocked === 'legal_hold') {
                                                     await dialog.alert({
                                                         title: 'Legal hold is on',
-                                                        message: 'Nothing will be archived or deleted while the instance-wide legal hold is active. Lift it first if this run is meant to happen.',
+                                                        message: 'Nothing is archived or deleted while the instance-wide legal hold is on. Lift the hold to run retention.',
                                                         variant: 'info',
                                                     });
                                                     return;
@@ -3551,7 +3546,7 @@ export default function AdminConsole() {
                                                     await dialog.alert({
                                                         title: 'No retention schedule is set',
                                                         message: plan.detail
-                                                            || 'Set how long records are kept and what a run removes before running retention. Until both are set there is nothing to measure a record against.',
+                                                            || 'Set a retention period and the fields to clear before running retention.',
                                                         variant: 'warning',
                                                     });
                                                     return;
@@ -3559,7 +3554,7 @@ export default function AdminConsole() {
                                                 if (!plan.eligible) {
                                                     await dialog.alert({
                                                         title: 'Nothing is due yet',
-                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period, so this run would do nothing.`,
+                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period.`,
                                                         variant: 'info',
                                                     });
                                                     return;
@@ -3580,8 +3575,8 @@ export default function AdminConsole() {
                                                             </p>
                                                             <p>
                                                                 {purging
-                                                                    ? 'Every field is emptied — names, contact details, what the resident wrote, photos, comments and the map pin. The rows stay so your totals do not change, but nothing about the people is recoverable.'
-                                                                    : 'Only the fields you ticked are cleared. The rows stay, so the counts and anything you have not ticked are untouched.'}
+                                                                    ? 'Every field is cleared, including names, contact details, descriptions, photos, comments and the map pin. The rows stay so your totals don\u2019t change. This can\u2019t be undone.'
+                                                                    : 'Only the fields you checked are cleared. The rows and all other fields stay.'}
                                                             </p>
                                                             {/* Named, from the server's own list. A
                                                                 clerk approving this should not have
@@ -3595,11 +3590,11 @@ export default function AdminConsole() {
                                                             {!!plan.on_legal_hold && (
                                                                 <p className="text-amber-300">
                                                                     {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under
-                                                                    legal hold and will be left alone.
+                                                                    legal hold and will be skipped.
                                                                 </p>
                                                             )}
                                                             <p className="text-slate-400 text-sm">
-                                                                It works through every eligible record, not the first hundred.
+                                                                The run covers every eligible record.
                                                             </p>
                                                         </div>
                                                     ),
@@ -3710,7 +3705,7 @@ export default function AdminConsole() {
                                                             {v === 'in_progress' ? 'In progress' : v.charAt(0).toUpperCase() + v.slice(1)}
                                                         </label>
                                                     ))}
-                                                    <span className="text-white/40 text-xs self-center">None ticked means all.</span>
+                                                    <span className="text-white/40 text-xs self-center">None checked means all.</span>
                                                 </div>
                                             </div>
 
@@ -3752,9 +3747,8 @@ export default function AdminConsole() {
                                             {/* Said before the download, not after. */}
                                             {exportFields.some(f => f.sensitive && exportChosen.has(f.id)) && (
                                                 <p role="alert" className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                                                    This export will identify the people who filed these reports. Release
-                                                    it only if the request covers their details. It is recorded in the
-                                                    audit log either way.
+                                                    This export identifies the people who filed these reports. Release it
+                                                    only if the request covers their details. Every export is logged.
                                                 </p>
                                             )}
 
@@ -3799,8 +3793,8 @@ export default function AdminConsole() {
                                         <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
                                             {retentionPreview.blocked === 'legal_hold' ? (
                                                 <p className="p-4 text-sm text-amber-200">
-                                                    The instance-wide legal hold is on, so nothing is eligible. Lift it
-                                                    first if this run is meant to happen.
+                                                    The instance-wide legal hold is on, so nothing is eligible. Lift the
+                                                    hold to run retention.
                                                 </p>
                                             ) : retentionPreview.blocked === 'unconfigured' ? (
                                                 /* Not "nothing is eligible". Nothing has been *measured* —
@@ -3808,12 +3802,12 @@ export default function AdminConsole() {
                                                    record is still here regardless of age. */
                                                 <p className="p-4 text-sm text-amber-200">
                                                     {retentionPreview.detail
-                                                        || 'No retention period is set, so there is nothing to measure records against and nothing can run.'}
+                                                        || 'No retention period is set, so retention can\u2019t run.'}
                                                 </p>
                                             ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
                                                 <p className="p-4 text-sm text-white/70">
                                                     Nothing has passed the {(retentionPreview.retention_days ?? 0).toLocaleString()}-day
-                                                    retention period yet. This run would do nothing.
+                                                    retention period yet.
                                                 </p>
                                             ) : (
                                                 <>
@@ -3834,7 +3828,7 @@ export default function AdminConsole() {
                                                         {retentionPreview.summary.truncated && (
                                                             <p className="text-xs text-amber-200/90 mt-1">
                                                                 Showing the {retentionPreview.summary.showing} oldest. The run
-                                                                works through all {retentionPreview.summary.total.toLocaleString()}.
+                                                                covers all {retentionPreview.summary.total.toLocaleString()}.
                                                             </p>
                                                         )}
                                                         {!!retentionPreview.scrub_fields?.length && (
@@ -4127,7 +4121,7 @@ export default function AdminConsole() {
                         <p className="text-xs text-white/40">Username</p>
                         <p className="text-sm text-white/70 font-mono">@{editingUser?.username}</p>
                         <p className="text-[11px] text-white/35 mt-1">
-                            Cannot be changed — it is how this person&apos;s history is recorded.
+                            The username can&apos;t be changed because this person&apos;s history is tied to it.
                         </p>
                     </div>
                     <Input
@@ -4156,7 +4150,7 @@ export default function AdminConsole() {
                         options={[
                             { value: 'staff', label: 'Staff — works reports' },
                             { value: 'admin', label: 'Admin — full access, including this page' },
-                            { value: 'researcher', label: 'Researcher — read-only, anonymised data' },
+                            { value: 'researcher', label: 'Researcher — read-only, anonymized data' },
                         ]}
                     />
                     <div>
@@ -4192,8 +4186,8 @@ export default function AdminConsole() {
                             Active
                             <span className="block text-[11px] text-white/40">
                                 {editingUser?.id === user?.id
-                                    ? 'You cannot deactivate your own account.'
-                                    : 'Unticking keeps all their history but stops them signing in.'}
+                                    ? 'You can\u2019t deactivate your own account.'
+                                    : 'Turn off to block sign-in. Their history is kept.'}
                             </span>
                         </span>
                     </label>
@@ -4311,7 +4305,7 @@ export default function AdminConsole() {
                             {eligiblePreview.summary.truncated && (
                                 <p className="text-xs text-amber-200/90">
                                     Showing the {eligiblePreview.summary.showing} oldest of{' '}
-                                    {eligiblePreview.summary.total.toLocaleString()}. A run works through all of them.
+                                    {eligiblePreview.summary.total.toLocaleString()}. A run covers all of them.
                                 </p>
                             )}
                             <div className="space-y-3 max-h-[60vh] overflow-y-auto">
@@ -4590,8 +4584,8 @@ export default function AdminConsole() {
                             </label>
                         </div>
                         <p className="text-xs text-white/50">
-                            Target time from submission to closure for this category. Leave blank for no
-                            target — categories without one are simply excluded from SLA reporting.
+                            Target time from submission to closure. Leave blank to exclude this category
+                            from SLA reporting.
                         </p>
                         <div className="flex items-center gap-2">
                             <input
@@ -4711,7 +4705,7 @@ export default function AdminConsole() {
                                                     ))}
                                             </div>
                                             {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
-                                                <p className="text-xs text-amber-400">No staff selected - will route to all staff</p>
+                                                <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
                                             )}
                                         </div>
                                     )}
@@ -4726,7 +4720,7 @@ export default function AdminConsole() {
                             <h4 className="font-bold text-purple-300 flex items-center gap-2 text-sm tracking-wide">
                                 <AlertTriangle className="w-4 h-4 text-purple-400" /> Third Party Only (Blocks Portal Submission)
                             </h4>
-                            <p className="text-xs text-white/60">Residents cannot submit requests directly in portal; they are provided redirection links & contacts.</p>
+                            <p className="text-xs text-white/60">Residents can’t submit this category in the portal. They see your message and the contacts below instead.</p>
 
                             <div className="space-y-2">
                                 <label className="block text-sm font-medium text-white/70">Message to Display</label>
@@ -4925,7 +4919,7 @@ export default function AdminConsole() {
                                                     ))}
                                             </div>
                                             {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
-                                                <p className="text-xs text-amber-400">No staff selected - will route to all staff</p>
+                                                <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
                                             )}
                                         </div>
                                     )}
@@ -5107,7 +5101,7 @@ export default function AdminConsole() {
 
                                 {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
                                     <div className="p-5 rounded-3xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
-                                        No 3rd party agencies added yet. Click "+ Add 3rd Party Agency" above to list agencies like PennDOT or Mercer County DPW.
+                                        No 3rd party agencies added yet. Select "+ Add 3rd Party Agency" above to add agencies like PennDOT or Mercer County DPW.
                                     </div>
                                 )}
 
@@ -5289,7 +5283,7 @@ export default function AdminConsole() {
                     onSubmit={async (e) => {
                         e.preventDefault();
                         if (!newLayer.name || !newLayer.geojson) {
-                            alert("Please provide a name and upload a GeoJSON file");
+                            alert("Enter a name and upload a GeoJSON file.");
                             return;
                         }
                         try {
@@ -5308,7 +5302,7 @@ export default function AdminConsole() {
                                     routing_config: newLayer.routing_config,
                                     visible_on_map: newLayer.visible_on_map,
                                 });
-                                setSaveMessage('Layer updated!');
+                                setSaveMessage('Layer updated');
                             } else {
                                 await api.createMapLayer({
                                     name: newLayer.name,
@@ -5324,7 +5318,7 @@ export default function AdminConsole() {
                                     routing_config: newLayer.routing_config,
                                     visible_on_map: newLayer.visible_on_map,
                                 });
-                                setSaveMessage('Layer created!');
+                                setSaveMessage('Layer created');
                             }
                             setShowLayerModal(false);
                             loadTabData();
@@ -5638,7 +5632,7 @@ export default function AdminConsole() {
                                 )}
                                 <p className="text-xs text-white/40 mt-1">
                                     {newLayer.service_codes.length === 0
-                                        ? '⚠️ Layer will be hidden (select at least one category)'
+                                        ? 'Layer is hidden until you select at least one category'
                                         : newLayer.service_codes.length === services.length
                                             ? '✓ Layer visible for all categories'
                                             : `Layer visible for ${newLayer.service_codes.length} ${newLayer.service_codes.length === 1 ? 'category' : 'categories'}`

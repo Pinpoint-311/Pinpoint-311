@@ -89,7 +89,7 @@ def test_a_credential_is_refused_until_a_store_is_chosen(unset):
     assert caught.value.status_code == 409
     # The refusal has to say what to do about it, and that the database is an
     # allowed answer -- otherwise it reads as "go and buy a cloud vault".
-    assert "encrypted database is one of the answers" in caught.value.detail
+    assert "encrypted database is one of the options" in caught.value.detail
 
 
 def test_choosing_the_encrypted_database_lets_credentials_through(chose):

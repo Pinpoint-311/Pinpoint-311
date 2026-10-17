@@ -933,7 +933,7 @@ def build_email(
     language: str = "en",
     preheader: str = "",
     tagline: str = DEFAULT_TAGLINE,
-    no_reply_note: str = "Please do not reply directly to this email.",
+    no_reply_note: str = "Do not reply directly to this email.",
 ) -> Dict[str, str]:
     """Render one email. Returns `{"subject", "html", "text"}`.
 

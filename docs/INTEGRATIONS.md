@@ -311,7 +311,7 @@ instead"* in the wizard and needs the town's own Client ID and Secret.
 - Comments are deduplicated by their `external_id`.
 - Rate limited to 60/minute **per connection**, not per source address: one
   vendor's egress IP serves every town on their platform, so a per-IP bucket let
-  a busy neighbour exhaust yours.
+  a busy neighbor exhaust yours.
 - Authenticated by the per-integration token, compared with a constant-time
   check.
 - A connection whose sync direction is `push` answers 403 — it is configured to

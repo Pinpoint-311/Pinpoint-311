@@ -321,7 +321,7 @@ quiet ones:
 
 | Path | What happens | Window |
 |---|---|---|
-| Azure subscription cancelled | Subscription deleted, resources with it | ~90 days after cancellation |
+| Azure subscription canceled | Subscription deleted, resources with it | ~90 days after cancellation |
 | AWS account closed | Resources deleted after the post-closure period | 90 days |
 | Google project deleted | Takes the key ring; material erased | 30-day destruction window, erased within 45 days |
 
@@ -377,7 +377,7 @@ failure is recoverable but only if somebody knows it is happening.
 ### If it has already happened
 
 Check whether the deletion is still pending. On AWS a scheduled deletion can be
-cancelled with `CancelKeyDeletion` any time inside the waiting period; on Azure
+canceled with `CancelKeyDeletion` any time inside the waiting period; on Azure
 a soft-deleted key can be recovered within the retention period; on Google a
 destroy-scheduled key version can be restored before its scheduled time. In all
 three the key stops working at the *start* of that period, so the system being

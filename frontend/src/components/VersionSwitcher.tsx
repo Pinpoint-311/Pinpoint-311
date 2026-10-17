@@ -265,7 +265,7 @@ export default function VersionSwitcher() {
                     fetchCurrentVersion();
                     fetchReleases();
                 } else {
-                    setError('⚠️ Deployment may have succeeded but server health check timed out. Please refresh the page.');
+                    setError('The server health check timed out. Refresh the page to see whether the deployment succeeded.');
                 }
                 return;
             }
@@ -325,7 +325,7 @@ export default function VersionSwitcher() {
                 fetchCurrentVersion();
                 fetchReleases();
             } else {
-                setError(`Failed to deploy: ${err.message}. Server may still be restarting — try refreshing in a minute.`);
+                setError(`Deployment failed: ${err.message}. If the server is restarting, refresh in a minute.`);
             }
         } finally {
             setIsSwitching(false);

@@ -43,7 +43,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Google Maps",
         "description": (
             "The default. One API key, about ten minutes to set up, and the "
-            "imagery residents already recognise from their phones."
+            "imagery residents already recognize from their phones."
         ),
         "boundary": "Commercial (Google Cloud)",
         "credential_fields": [
@@ -90,7 +90,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
             ),
             "ARCGIS_API_KEY": (
                 "ArcGIS Developers -> Dashboard -> API keys -> New API key. Scope "
-                "it to 'Basemaps' and 'Geocoding'. If your organisation has an "
+                "it to 'Basemaps' and 'Geocoding'. If your organization has an "
                 "ArcGIS Online account, your GIS staff can issue this."
             ),
             "ARCGIS_BASEMAP_ID": (
@@ -106,7 +106,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure Maps",
-        "description": "Fits a town already standardised on Azure for its other services.",
+        "description": "Fits a town already standardized on Azure for its other services.",
         "boundary": "Commercial (Microsoft Azure)",
         "credential_fields": [
             {"key": "AZURE_MAPS_KEY", "label": "Server subscription key", "secret": True, "required": True},

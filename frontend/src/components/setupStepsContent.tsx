@@ -75,15 +75,14 @@ const TemplateSourceNote = ({ from }: { from: TemplateBase }) => (
     from.source === 'instance' ? (
         <span className="mt-1.5 block text-[11px] text-white/40">
             Your cloud fetches the template from this Pinpoint install, at{' '}
-            <C>{from.base}/</C>… — so it is the version this build knows how to consume. That
-            address has to be reachable from the internet, which it is if residents can reach
-            your portal.
+            <C>{from.base}/</C>…, so it matches this version. If residents can reach your portal,
+            your cloud can reach this address.
         </span>
     ) : (
         <span className="mt-1.5 block text-[11px] text-white/40">
-            This install has no public address a cloud provider could fetch from, so the button
-            uses the published copy on GitHub instead. That copy follows the latest release
-            rather than your build. Setting the town's domain switches it to serving its own.
+            This install has no public address yet, so the button uses the published copy on
+            GitHub, which tracks the latest release. Once the town's domain is set, the template
+            comes from this install instead.
         </span>
     )
 );
@@ -135,7 +134,7 @@ defineCloudFork('azure', (ctx) => ({
     launch: {
         href: azureDeployUrl(templateBase(ctx.origin).base),
         label: 'Open the Azure deployment form',
-        line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Pick a subscription and press <B>Create new</B> under Resource group — there is nothing to set up in the portal first. Nothing is created until you press Create on Azure's own review page.</>,
+        line: <>Azure's Custom deployment form, with our template already loaded: the key vault, purge protection and the RSA key, plus the OpenAI, Translator and Vision resources if you want them. Pick a subscription and press <B>Create new</B> under Resource group. Nothing is created until you press Create on Azure's review page.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
     templateExtras: AZURE_TEMPLATE_EXTRAS(ctx),
@@ -161,7 +160,7 @@ defineCloudFork('aws', (ctx) => ({
     launch: {
         href: awsDeployUrl(templateBase(ctx.origin).base),
         label: 'Open the CloudFormation console',
-        line: <>CloudFormation's Create stack page, with our template already loaded. Set your region in the console's top-right picker before you start; there is nothing else to set up first. It lists every resource on a review page before anything is made, and it creates a role rather than an access key.</>,
+        line: <>CloudFormation's Create stack page, with our template already loaded. Set your region in the console's top-right picker first. Every resource is listed on a review page before anything is created, and the stack creates a role rather than an access key.</>,
         source: <TemplateSourceNote from={templateBase(ctx.origin)} />,
     },
     templateExtras: AWS_TEMPLATE_EXTRAS(ctx),
@@ -203,8 +202,8 @@ defineSteps('identity', 'auth0', (ctx) => [
             <>
                 Create the account at <L href="https://auth0.com">auth0.com</L>, using a{' '}
                 <B>shared town email address</B> rather than a personal one — whoever replaces you will
-                need to get in. When it asks for a region, pick one in the US if your town or state has a
-                rule about where data is held; it cannot be changed afterwards.
+                need to get in. If your town or state requires data to stay in the US, pick a US region; it
+                can't be changed later.
             </>
         ),
         check: <>the Auth0 dashboard, with your town's name in the top-left corner.</>,
@@ -217,7 +216,7 @@ defineSteps('identity', 'auth0', (ctx) => [
                 Machine. If it then offers to pick a technology, close that; it only shows sample code.
             </>
         ),
-        check: <>a settings page with boxes labelled Domain, Client ID and Client Secret.</>,
+        check: <>a settings page with boxes labeled Domain, Client ID and Client Secret.</>,
     },
     {
         body: (
@@ -272,14 +271,14 @@ defineSteps('identity', 'entra', (ctx) => [
     {
         body: (
             <>
-                Name it something a successor will recognise — <C>Pinpoint 311</C> is fine. Under{' '}
+                Name it something a successor will recognize — <C>Pinpoint 311</C> is fine. Under{' '}
                 <B>Redirect URI</B>, set the type to <B>Web</B> and paste{' '}
                 <CopyValue ctx={ctx} id="enrd" value={CALLBACK(ctx.origin)} />. Leave the account-types
-                option on the default (this directory only) unless your town genuinely shares staff with
-                another tenant. Press <B>Register</B>.
+                option on the default (this directory only) unless your town shares staff with another
+                tenant. Press <B>Register</B>.
             </>
         ),
-        note: <>The redirect type matters. "Single-page application" is offered right below Web and looks equivalent; it is not, and staff sign-in will fail on the way back with an error about the flow.</>,
+        note: <>Choose Web, not "Single-page application". With the wrong type, staff sign-in fails with an error about the flow.</>,
     },
     {
         body: (
@@ -301,7 +300,7 @@ defineSteps('identity', 'entra', (ctx) => [
             </>
         ),
         fields: ['ENTRA_CLIENT_SECRET'],
-        trouble: <>Copy it now. Entra shows the Value once; leave the page and it is dots forever and you have to issue a new one. The <B>Secret ID</B> next to it is not the secret. Note the expiry date somewhere — staff sign-in stops working on that day, and it is a long way from here to that diagnosis.</>,
+        trouble: <>Copy it now. Entra shows the Value only once; if you leave the page, create a new secret. The <B>Secret ID</B> next to it is not the secret. Record the expiry date: staff sign-in stops working when the secret expires.</>,
     },
 ]);
 
@@ -376,7 +375,7 @@ defineSteps('identity', 'okta', (ctx) => [
             </>
         ),
         fields: ['OKTA_ISSUER'],
-        note: <>You can check the value before saving: paste <C>{'<issuer>'}/.well-known/openid-configuration</C> into a browser. A page of JSON means it is right; a 404 or an error means it is not. That takes ten seconds and saves diagnosing a login loop.</>,
+        note: <>You can check the value before saving: paste <C>{'<issuer>'}/.well-known/openid-configuration</C> into a browser. A page of JSON means it is right; a 404 or an error means it is not.</>,
     },
 ]);
 
@@ -404,9 +403,9 @@ defineSteps('identity', 'oidc', (ctx) => [
     {
         body: (
             <>
-                Ask for the <B>issuer URL</B> — the base address, not the full endpoint. You can check it
-                yourself: <C>{'<issuer>'}/.well-known/openid-configuration</C> should return a page of
-                JSON in a browser. If it 404s, the issuer is wrong.
+                Ask for the <B>issuer URL</B> — the base address, not the full endpoint. To check it, open{' '}
+                <C>{'<issuer>'}/.well-known/openid-configuration</C> in a browser. A page of JSON means it
+                is right; a 404 means it is wrong.
             </>
         ),
         fields: ['OIDC_ISSUER'],
@@ -442,11 +441,10 @@ defineSteps('maps', 'google', (ctx) => [
         check: <>an "API Enabled" banner on each of the three, and a billing account listed under Billing.</>,
         trouble: (
             <>
-                Two things catch people here. The payment method is not optional and it is the step
-                people skip — Google will issue a key without it, the key will look correct, and the map
-                will show a grey box saying "this page can't load Google Maps correctly". Second,{' '}
-                <C>Places API (New)</C> and <C>Places API</C> are separate products — enable both, or
-                the map draws while the address box offers no suggestions.
+                Billing is required. Google will issue a key without it, but the map then shows a gray box
+                saying "this page can't load Google Maps correctly". Also,{' '}
+                <C>Places API (New)</C> and <C>Places API</C> are separate products. Enable both, or
+                the address box offers no suggestions.
             </>
         ),
     },
@@ -458,26 +456,26 @@ defineSteps('maps', 'google', (ctx) => [
                 <br /><br />
                 <B>Browser key</B> — restrict to <B>Websites</B>, add{' '}
                 <CopyValue ctx={ctx} id="gmref" value={`${ctx.origin}/*`} /> (the <C>/*</C> matters), and
-                tick all four: <C>Maps Embed API</C>, <C>Maps JavaScript API</C>,{' '}
+                check all four: <C>Maps Embed API</C>, <C>Maps JavaScript API</C>,{' '}
                 <C>Places API (New)</C> and <C>Places API</C>.
                 <br /><br />
-                <B>Server key</B> — restrict to <B>IP addresses</B>, add this server's, and tick{' '}
+                <B>Server key</B> — restrict to <B>IP addresses</B>, add this server's, and check{' '}
                 <C>Geocoding API</C> and <C>Places API (New)</C>.
             </>
         ),
         check: <>two keys: one restricted to your site with the four map and Places APIs, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
         trouble: (
             <>
-                An unrestricted key can be lifted off your site and run up a bill on the town's card. A
-                website-restricted key cannot be checked from the server, so the Test button here will
-                say so rather than claim a failure — confirm it by opening the report form.
+                Restrict both keys so they can't be used elsewhere and billed to the town. The Test
+                button can't check a website-restricted key from the server; open the report form to
+                confirm it works.
             </>
         ),
     },
     {
         body: <>Paste both keys in their own boxes. The Map ID is optional — leave it empty. To run one key for both, put the same value in both boxes.</>,
         fields: ['GOOGLE_MAPS_API_KEY', 'GOOGLE_MAPS_BROWSER_API_KEY', 'GOOGLE_MAPS_MAP_ID'],
-        note: <>Changes to a Google key can take up to five minutes. If the map is still grey straight after saving, wait before changing anything else.</>,
+        note: <>Changes to a Google key can take up to five minutes. If the map is still gray right after saving, wait before changing anything else.</>,
     },
 ]);
 
@@ -494,8 +492,8 @@ defineSteps('maps', 'esri', () => [
         body: (
             <>
                 Before anything else, ask your GIS department whether the town already has an ArcGIS
-                organisation. If it does, the key should be created there rather than on a new personal
-                developer account — otherwise it belongs to whoever signed up.
+                organization. If it does, create the key there rather than on a personal developer
+                account, so the town owns it.
             </>
         ),
     },
@@ -504,12 +502,12 @@ defineSteps('maps', 'esri', () => [
             <>
                 Sign in at <L href="https://location.arcgis.com">location.arcgis.com</L>, open the
                 developer dashboard, and create an <B>API key</B> credential. Scope it to the services
-                you need: <B>Basemap styles</B> and <B>Geocoding</B> at minimum. Set an expiry you will
-                remember — ArcGIS API keys are valid for up to a year and then simply stop.
+                you need: <B>Basemap styles</B> and <B>Geocoding</B> at minimum. ArcGIS API keys last up to a
+                year, so set an expiry date you'll track.
             </>
         ),
         check: <>a key string starting <C>AAPK</C>. (<C>AAPT</C> is Esri's prefix for short-lived access tokens — if that is what you have, it is not the right credential.)</>,
-        note: <>Write the expiry date somewhere the town will see it. Keys expire at 00:00:00 GMT on the date you set, and when one lapses the map goes blank with no warning and nothing in the console saying why.</>,
+        note: <>Record the expiry date where the town will see it. Keys expire at 00:00 GMT on that date, and the map goes blank until a new key is saved.</>,
     },
     {
         body: (
@@ -519,11 +517,11 @@ defineSteps('maps', 'esri', () => [
                 locator is the URL of your own address locator service if the GIS department publishes
                 one. Two key boxes: the browser one goes into the page residents load, so scope that
                 credential to <B>Basemaps</B> and set its referrer to your domain; the server one does
-                the geocoding. The same value in both works if you would rather keep one key.
+                the geocoding. To use one key, put the same value in both.
             </>
         ),
         fields: ['ARCGIS_API_KEY', 'ARCGIS_BROWSER_API_KEY', 'ARCGIS_BASEMAP_ID', 'ARCGIS_LOCATOR_URL'],
-        note: <>A town locator is worth asking for. It knows your street names, your address ranges and your recent subdivisions, which a national geocoder often does not.</>,
+        note: <>Ask for the town locator if one exists. It knows your local street names, address ranges and new subdivisions.</>,
     },
 ]);
 
@@ -550,7 +548,7 @@ defineSteps('maps', 'azure', () => [
             </>
         ),
         fields: ['AZURE_MAPS_KEY', 'AZURE_MAPS_BROWSER_KEY'],
-        note: <>Take the primary key and leave the secondary alone. The pair exists so a key can be rotated without downtime — using both at once removes the point of having two. Azure shared keys cannot be restricted by origin, so unless you run a second Maps account for the browser, put the primary key in both boxes.</>,
+        note: <>Use the primary key and keep the secondary for rotation. Azure shared keys can't be restricted by origin, so put the primary key in both boxes unless you run a second Maps account for the browser.</>,
     },
 ]);
 
@@ -567,8 +565,8 @@ defineSteps('maps', 'apple', () => [
         body: (
             <>
                 This needs a paid <L href="https://developer.apple.com/programs/">Apple Developer
-                Program</L> membership held by the town, not by a person. If you do not
-                have one, one of the other map providers will be much less work.
+                Program</L> membership held by the town, not by a person. Without one,
+                choose a different map provider.
             </>
         ),
     },
@@ -585,12 +583,12 @@ defineSteps('maps', 'apple', () => [
     {
         body: (
             <>
-                Then open <B>Keys</B> in the same sidebar, press <B>+</B>, tick <B>MapKit JS</B>, and
+                Then open <B>Keys</B> in the same sidebar, press <B>+</B>, check <B>MapKit JS</B>, and
                 configure it to use the Maps ID you just made. Create the key and press <B>Download</B>.
                 You get a file named <C>AuthKey_XXXXXXXXXX.p8</C>.
             </>
         ),
-        trouble: <>Download it now and keep it. Apple removes the file from their servers after the one download; if you lose it the only remedy is revoking the key and starting again.</>,
+        trouble: <>Download it now and keep it. Apple allows one download; if the file is lost, revoke the key and create a new one.</>,
     },
     {
         body: (
@@ -602,7 +600,7 @@ defineSteps('maps', 'apple', () => [
             </>
         ),
         fields: ['APPLE_MAPKIT_TEAM_ID', 'APPLE_MAPKIT_KEY_ID', 'APPLE_MAPKIT_PRIVATE_KEY'],
-        note: <>Open it with a text editor, not Word — a word processor will add formatting that makes the key unreadable. The header and footer lines are part of the key, not decoration.</>,
+        note: <>Use a plain text editor, not Word, which adds formatting that breaks the key. Include the header and footer lines.</>,
     },
 ]);
 
@@ -625,11 +623,11 @@ defineSteps('ai', 'vertex', () => [
         body: (
             <>
                 Open <B>IAM &amp; Admin → Service Accounts</B> and create one — a name like{' '}
-                <C>pinpoint-311</C> is fine. Grant it the <B>Vertex AI User</B> role. Do not grant Owner
-                or Editor: this account only ever needs to ask the model a question.
+                <C>pinpoint-311</C> is fine. Grant it the <B>Vertex AI User</B> role. Don't grant Owner
+                or Editor; this account only needs to call the model.
             </>
         ),
-        note: <>The broad roles are one click away and it is tempting to take them to avoid a permissions problem later. A leaked key with Vertex AI User can run up a model bill; the same key with Editor can delete the project.</>,
+        note: <>Vertex AI User limits what a leaked key can do. A key with Editor can delete the project.</>,
     },
     {
         body: (
@@ -640,7 +638,7 @@ defineSteps('ai', 'vertex', () => [
             </>
         ),
         fields: ['VERTEX_AI_PROJECT', 'VERTEX_AI_SERVICE_ACCOUNT_KEY'],
-        trouble: <>Delete the downloaded file once it is saved here. It is a password to your cloud account sitting in the Downloads folder of whichever machine did the setup.</>,
+        trouble: <>Delete the downloaded file once it is saved here. It grants access to your cloud account.</>,
     },
 ]);
 
@@ -649,19 +647,18 @@ defineSteps('ai', 'azure', () => [
         body: (
             <>
                 In the <L href="https://portal.azure.com">Azure portal</L>, create an <B>Azure OpenAI</B>{' '}
-                resource in a region your town is allowed to use. No application or approval is needed —
-                every Azure subscription is eligible for the standard models.
+                resource in a region your town is allowed to use. No application or approval is needed for
+                the standard models.
             </>
         ),
-        note: <>Older write-ups describe a registration form and a wait of a day or two. Microsoft removed that for general access; a form is now only required for specific restricted features, none of which Pinpoint uses. If someone tells you to apply and wait, they are working from stale instructions.</>,
+        note: <>Older guides describe a registration form and a wait. Microsoft removed that for general access, and Pinpoint uses none of the restricted features that still require it.</>,
     },
     {
         body: (
             <>
                 Open the resource in <L href="https://ai.azure.com">Microsoft Foundry</L> and deploy a
-                model — <B>Deployments → Deploy model</B>. The <B>deployment name</B> you choose is what
-                goes in the box below, and it is not necessarily the model name: you can call a GPT-4o
-                deployment anything you like, and Pinpoint asks for the deployment.
+                model — <B>Deployments → Deploy model</B>. Enter the <B>deployment name</B> you choose in
+                the box below. It can differ from the model name.
             </>
         ),
         check: <>your deployment listed with status Succeeded.</>,
@@ -670,8 +667,8 @@ defineSteps('ai', 'azure', () => [
         body: (
             <>
                 Back on the Azure resource, open <B>Resource Management → Keys and Endpoint</B> and copy{' '}
-                <B>KEY 1</B> and the <B>Endpoint</B>. Leave the API version box empty unless Microsoft
-                has told you to pin one — it defaults to a current version.
+                <B>KEY 1</B> and the <B>Endpoint</B>. Leave the API version box empty to use the
+                current default.
             </>
         ),
         fields: ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION'],
@@ -684,8 +681,8 @@ defineSteps('ai', 'bedrock', () => [
         body: (
             <>
                 In the <L href="https://console.aws.amazon.com/bedrock">Bedrock console</L>, set the
-                region selector (top right) to the region you intend to use — model availability differs
-                by region and this choice is load-bearing for everything below.
+                region selector (top right) to the region you'll use. Model availability differs by
+                region, and the steps below depend on it.
             </>
         ),
     },
@@ -694,11 +691,11 @@ defineSteps('ai', 'bedrock', () => [
             <>
                 In the left pane under <B>Bedrock configurations</B> choose <B>Model access</B>, then{' '}
                 <B>Modify model access</B>. Select the models you want and submit the use-case form.
-                Access usually appears within a few minutes.
+                Access is typically granted within a few minutes.
             </>
         ),
         check: <>the model showing <B>Access granted</B> rather than Available to request.</>,
-        note: <>If submitting fails, the account may not have AWS Marketplace subscription permission — that lives under <B>Billing → Marketplace settings</B> and usually needs whoever owns the AWS account.</>,
+        note: <>If submitting fails, the account lacks AWS Marketplace subscription permission. The AWS account owner can grant it under <B>Billing → Marketplace settings</B>.</>,
     },
     {
         body: (
@@ -710,7 +707,7 @@ defineSteps('ai', 'bedrock', () => [
             </>
         ),
         fields: ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
-        trouble: <>The secret access key is shown once, on the screen where you create it. There is no way to see it again — only to issue a new one.</>,
+        trouble: <>The secret access key is shown only once. If you miss it, create a new one.</>,
     },
 ]);
 
@@ -732,12 +729,11 @@ defineSteps('translation', 'google', () => [
     {
         body: (
             <>
-                That is the whole job: translation authenticates with the Google service account
-                entered at Setup, so there is nothing to type here — no separate key, and no
-                project ID, which the translator never reads.
+                That's all. Translation uses the Google service account entered at Setup, so there
+                is nothing to enter here.
             </>
         ),
-        note: <>If this card says the service account is missing, it is entered at Setup rather than here — it is the credential that makes the rest of the secret store work, so it is deliberately not editable from a provider card.</>,
+        note: <>If this card says the service account is missing, add it at Setup. It can't be edited from a provider card.</>,
     },
 ]);
 
@@ -774,13 +770,12 @@ const azureTranslatorTemplateSteps: StepBuilder = () => [
             <>
                 Open your <B>AI Services</B> account (the one the deployment created, not a new Translator resource) → <B>Resource Management → Keys and Endpoint</B> and copy{' '}
                 <B>KEY 1</B> and the <B>Location/Region</B> value. Leave the endpoint box empty
-                unless you were given a custom one — the default global endpoint is correct for
-                almost everyone.
+                unless you were given a custom one.
             </>
         ),
         fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
         check: <>a key pasted in and a region like <C>eastus</C> beside it.</>,
-        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
+        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A wrong region shows up as a bad-key error.</>,
     },
 ];
 
@@ -801,13 +796,12 @@ const azureTranslatorManualSteps: StepBuilder = () => [
             <>
                 Open that resource → <B>Resource Management → Keys and Endpoint</B> and copy{' '}
                 <B>KEY 1</B> and the <B>Location/Region</B> value. Leave the endpoint box empty
-                unless you were given a custom one — the default global endpoint is correct for
-                almost everyone.
+                unless you were given a custom one.
             </>
         ),
         fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
         check: <>a key pasted in and a region like <C>eastus</C> beside it.</>,
-        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A mismatched region fails authentication and reports it as a bad key.</>,
+        note: <>The region must be the short form shown on that page, like <C>eastus</C>, not "East US". A wrong region shows up as a bad-key error.</>,
     },
 ];
 
@@ -825,7 +819,7 @@ defineSteps('translation', 'aws', () => [
                 name is what permits translating text.
             </>
         ),
-        note: <>If you already made an IAM user for Bedrock or SES, add this policy to that one rather than creating another set of keys to keep track of.</>,
+        note: <>If you already have an IAM user for Bedrock or SES, add this policy to that user instead of creating new keys.</>,
     },
     {
         body: <>Take an access key from that user's <B>Security credentials</B> tab and enter it with your region.</>,
@@ -842,8 +836,8 @@ defineSteps('email', 'smtp', () => [
         body: (
             <>
                 Ask whoever runs the town's email for the SMTP server address and port, and for a
-                dedicated account to send from. A separate account matters: when residents reply to a
-                status update, the replies land wherever this sends from.
+                dedicated account to send from. Residents' replies to status updates go to this
+                account.
             </>
         ),
         note: <>Microsoft 365 and Google Workspace block plain SMTP by default, and Microsoft retires password-based SMTP entirely in December 2026. On Microsoft 365, SES or Azure Communication Services is the durable choice.</>,
@@ -851,9 +845,8 @@ defineSteps('email', 'smtp', () => [
     {
         body: (
             <>
-                Fill in the server details. Port <C>587</C> with STARTTLS is the usual answer; <C>465</C>{' '}
-                is the older implicit-TLS port and also works — with the TLS box set to{' '}
-                <C>false</C>, because implicit TLS and STARTTLS are different handshakes.
+                Fill in the server details. Use port <C>587</C> with STARTTLS. Port <C>465</C>{' '}
+                (implicit TLS) also works if you set the TLS box to <C>false</C>.
             </>
         ),
         fields: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_USE_TLS'],
@@ -861,9 +854,8 @@ defineSteps('email', 'smtp', () => [
     {
         body: (
             <>
-                Then what residents see in their inbox. Use a monitored address —{' '}
-                <C>311@yourtown.gov</C> rather than <C>noreply@</C>, because people reply to these and a
-                reply that goes nowhere is a complaint you never hear.
+                Then what residents see in their inbox. Use a monitored address such as{' '}
+                <C>311@yourtown.gov</C> rather than <C>noreply@</C>, because residents reply to these.
             </>
         ),
         fields: ['SMTP_FROM_EMAIL', 'SMTP_FROM_NAME'],
@@ -876,8 +868,7 @@ defineSteps('email', 'ses', () => [
             <>
                 In the <L href="https://console.aws.amazon.com/ses">SES console</L>, set your region,
                 then open <B>Identities → Create identity</B> and verify your <B>domain</B> — not just a
-                single address. Verifying the domain lets you send from any address on it, and it is what
-                makes DKIM available.
+                single address. A verified domain lets you send from any address on it and enables DKIM.
             </>
         ),
         check: <>the identity showing <B>Verified</B>. It requires DNS records, so whoever manages the town's DNS needs to be involved.</>,
@@ -886,22 +877,22 @@ defineSteps('email', 'ses', () => [
         body: (
             <>
                 New SES accounts are in the <B>sandbox</B> and can only send to addresses you have also
-                verified — which means residents get nothing. Open <B>Account dashboard</B> and press{' '}
-                <B>Request production access</B>. Approval usually takes about a day.
+                verified, so residents receive nothing. Open <B>Account dashboard</B> and press{' '}
+                <B>Request production access</B>. Approval takes about a day.
             </>
         ),
-        trouble: <>This is the step that quietly breaks a launch. In the sandbox everything looks like it works: SES accepts the message and returns success, and the resident never receives it.</>,
+        trouble: <>Complete this before launch. In the sandbox, SES reports success but residents don't receive the message.</>,
     },
     {
         body: (
             <>
-                Create an IAM user for Pinpoint with the <C>AmazonSESFullAccess</C> policy (or just{' '}
-                <C>ses:SendEmail</C> and <C>ses:SendRawEmail</C> if you would rather be precise), then
+                Create an IAM user for Pinpoint with the <C>AmazonSESFullAccess</C> policy (or only{' '}
+                <C>ses:SendEmail</C> and <C>ses:SendRawEmail</C>), then
                 fill these in. The from address must be on the domain you verified.
             </>
         ),
         fields: ['AWS_REGION', 'SES_FROM_EMAIL', 'SMTP_FROM_NAME', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
-        note: <>The region must be the one where you verified the domain. SES identities do not exist across regions, and a mismatch reports as an unverified sender.</>,
+        note: <>The region must be the one where you verified the domain. A different region reports an unverified sender.</>,
     },
 ]);
 
@@ -911,18 +902,18 @@ defineSteps('email', 'acs', () => [
             <>
                 In the <L href="https://portal.azure.com">Azure portal</L> create two resources:{' '}
                 <B>Communication Services</B>, and <B>Email Communication Services</B>. Both are needed,
-                and they must be in the <B>same geography</B> — you cannot connect them otherwise.
+                and they must be in the <B>same geography</B> to connect.
             </>
         ),
-        note: <>Two resources with near-identical names is genuinely confusing. The Email one owns the domain; the plain Communication Services one owns the endpoint and key.</>,
+        note: <>The names are similar. The Email resource holds the domain; the Communication Services resource holds the endpoint and key.</>,
     },
     {
         body: (
             <>
                 On the Email resource, add a domain. <B>Add a free Azure subdomain</B> is one click and
                 works immediately, but sends from an <C>azurecomm.net</C> address, which residents will
-                not recognise as the town. <B>Set up a custom domain</B> takes DNS records (TXT, SPF and
-                DKIM) and is worth it for anything public-facing.
+                not recognize as the town. <B>Set up a custom domain</B> takes DNS records (TXT, SPF and
+                DKIM) and is the right choice for public-facing email.
             </>
         ),
         check: <>the domain listed with verification complete, and a MailFrom address shown on its page.</>,
@@ -963,7 +954,7 @@ defineSteps('sms', 'twilio', () => [
     {
         body: <>Buy or select a number under <B>Phone Numbers → Manage → Active numbers</B>, and enter it in <C>+1XXXXXXXXXX</C> form.</>,
         fields: ['TWILIO_PHONE_NUMBER'],
-        note: <>It has to be a number you own in Twilio. A trial account can only text numbers you have verified.</>,
+        note: <>Use a number you own in Twilio. A trial account can only text numbers you have verified.</>,
     },
 ]);
 
@@ -976,15 +967,15 @@ defineSteps('sms', 'sns', () => [
                 account is in the <B>SMS sandbox</B> and can only text numbers you have verified there.
             </>
         ),
-        trouble: <>Leave the sandbox before launch, from that same page. Inside it, messages to residents are rejected — and the rejection is in a log, not on the page where somebody would see it.</>,
+        trouble: <>Leave the sandbox from that same page before launch. In the sandbox, messages to residents are rejected and the error appears only in the log.</>,
     },
     {
         body: (
             <>
                 Still on that page, set a <B>monthly spending limit</B> you are comfortable with, then
-                register an origination identity. For a US municipality that normally means a{' '}
-                <B>10DLC</B> number, which requires registering the town as a brand; the carriers filter
-                unregistered traffic heavily.
+                register an origination identity. For a US municipality that is a{' '}
+                <B>10DLC</B> number, which requires registering the town as a brand. Carriers filter
+                unregistered traffic.
             </>
         ),
         note: <>Start the 10DLC registration early. It is a carrier process rather than an AWS one, and it is not immediate.</>,
@@ -993,8 +984,7 @@ defineSteps('sms', 'sns', () => [
         body: (
             <>
                 Create an IAM user for Pinpoint with permission for <C>sns:Publish</C>, and enter its
-                access key with your region. The sender ID box is optional and only has an effect in
-                countries that support alphabetic senders — it is ignored for US numbers.
+                access key with your region. The sender ID box is optional and has no effect on US numbers.
             </>
         ),
         fields: ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'SMS_SENDER_ID'],
@@ -1007,12 +997,11 @@ defineSteps('sms', 'acs', () => [
             <>
                 <B>Register before you try to buy a number.</B> On the Communication Services resource,
                 open <B>Telephony and SMS → Regulatory Documents</B> and complete the 10DLC{' '}
-                <B>brand</B> and <B>campaign</B> registration for the town. In the US, both have to be
-                approved before you can acquire or SMS-enable a number at all — this is not a step you
-                can come back to.
+                <B>brand</B> and <B>campaign</B> registration for the town. In the US, both must be
+                approved before you can acquire or SMS-enable a number.
             </>
         ),
-        note: <>You also need a paid Azure subscription. Phone numbers cannot be acquired on a trial or with free credits, and availability depends on your subscription's billing country.</>,
+        note: <>This requires a paid Azure subscription; trials and free credits can't acquire numbers. Availability depends on your billing country.</>,
     },
     {
         body: (
@@ -1049,24 +1038,21 @@ defineSteps('sms', 'http', () => [
         body: (
             <>
                 Enter the endpoint URL your provider gave you, and the key they issued. The key is sent
-                as a bearer token. If your gateway needs a sender number, add it too; most set the
-                sender themselves, in which case leave it blank.
+                as a bearer token. Add a sender number only if your gateway requires one.
             </>
         ),
         fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY', 'SMS_FROM_NUMBER'],
-        note: <>If their API expects a different shape or a different header, this will fail on every send. Check with them before relying on it, and send yourself a test message from the button below.</>,
+        note: <>The gateway must accept this request format. Confirm with your provider, then send yourself a test message with the button below.</>,
     },
     {
         body: (
             <>
                 If your gateway publishes a URL that reports your balance, quota or key status,
-                paste it here. Everything else on this page can be checked without doing anything
-                a resident would notice; a gateway that only accepts sends cannot, so without this
-                the card can only ever say it does not know.
+                paste it here so this card can check the connection without sending a message.
             </>
         ),
         fields: ['SMS_HTTP_TEST_URL'],
-        note: <>Optional, and it is only ever fetched — nothing is sent to it. Leave it blank and the card will say plainly that it cannot check this one, rather than guessing.</>,
+        note: <>Optional. Pinpoint only reads from this URL. If it's blank, the card shows that the connection can't be checked.</>,
     },
 ]);
 
@@ -1114,7 +1100,7 @@ const ACCOUNT_SURVIVES = (
 const ATTACHED_IDENTITY = (
     <>
         If this server runs on the same cloud, skip creating a credential: grant the role to the
-        machine's own identity instead. Nothing to copy, nothing to expire.
+        machine's own identity instead. There's nothing to copy and nothing expires.
     </>
 );
 
@@ -1129,7 +1115,7 @@ defineSteps('kms', 'google', () => [
         ),
         check: <>your key listed inside your key ring.</>,
         trouble: <>Set the <B>destroy scheduled duration</B> on that same form — it starts at 24 hours, goes up to 120 days, and is only offered at creation.</>,
-        note: <>Needs Cloud KMS Admin or Owner; Project Editor cannot create keys. Azure and AWS have a one-click template and Google has none, because there is no equivalent — the alternative there is Terraform, which needs a toolchain and a state file. This walk is maintained on the same footing as the other two.</>,
+        note: <>Requires Cloud KMS Admin or Owner; Project Editor can't create keys. Google has no one-click template, so set this up by hand.</>,
     },
     {
         body: (
@@ -1140,7 +1126,7 @@ defineSteps('kms', 'google', () => [
             </>
         ),
         check: <>the service account listed in the key's permissions, not only in the project's.</>,
-        trouble: <>Without it the settings save and resident data is quietly encrypted with the application key instead. The health dashboard reports that; nothing else does.</>,
+        trouble: <>Without this role, settings still save, but resident data is quietly encrypted with the application key instead. The health dashboard shows when that happens.</>,
     },
     {
         body: (
@@ -1154,9 +1140,9 @@ defineSteps('kms', 'google', () => [
     {
         body: (
             <>
-                <B>Check who can destroy a version.</B> Rotating is safe — old versions stay and keep
-                decrypting old rows. Destroying a version is not, and the two sit together in the
-                console, so check that no everyday account holds{' '}
+                <B>Check who can destroy a version.</B> Rotating is safe; old versions keep
+                decrypting old rows. Destroying a version is permanent, so make sure no everyday account
+                holds{' '}
                 <C>cloudkms.cryptoKeyVersions.destroy</C> on this key.
             </>
         ),
@@ -1199,7 +1185,7 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>the vault's overview, showing a URL ending <C>.vault.azure.net</C>.</>,
-        trouble: <>Purge protection cannot be turned on later on some configurations, and cannot be turned off once on. Set it now.</>,
+        trouble: <>Turn on purge protection now. Some configurations don't allow it later, and it can't be turned off.</>,
     },
     {
         body: (
@@ -1215,7 +1201,7 @@ const azureManualSteps: StepBuilder = () => [
     {
         body: <>Open the vault's <B>Objects → Keys</B> and use <B>Generate/Import</B> to create an <B>RSA</B> key. 2048 or 4096, either is fine. Note its name.</>,
         check: <>the key listed, status Enabled.</>,
-        trouble: <>"Not authorised to view the contents" means the role above has not arrived yet, or went on something other than the vault.</>,
+        trouble: <>"Not authorized to view the contents" means the role above has not arrived yet, or went on something other than the vault.</>,
     },
     {
         body: (
@@ -1229,7 +1215,7 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
-        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing.</>,
+        trouble: <>Entra shows the Value once. The box beside it labeled <B>Secret ID</B> is a different thing.</>,
     },
     {
         body: (
@@ -1239,23 +1225,23 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>that identity on the vault's role assignments as Key Vault Crypto User.</>,
-        trouble: <>On the older access policy model, grant <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B>. Get alone is not enough, and the failure is silent.</>,
+        trouble: <>On the older access policy model, grant <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B>. Get alone is not enough.</>,
     },
     {
         body: <>Fill these in. The vault URL is the <C>https://yourvault.vault.azure.net/</C> address on the overview.</>,
         fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY', 'AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET', 'AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES'],
-        note: <>On a managed identity the last three stay empty. A client secret expires — put the date in the town's calendar a month ahead, because when it lapses decryption stops and nothing about that points at a calendar.</>,
+        note: <>On a managed identity the last three stay empty. A client secret expires; add a reminder to the town's calendar a month ahead, because decryption stops on that date.</>,
     },
     {
         body: (
             <>
-                Under <B>Settings → Locks</B>, add a <B>Delete</B> lock. It stops the vault being
-                deleted by anyone, including people with permission to. You can drop your own Crypto
-                Officer role now — Pinpoint never uses it.
+                Under <B>Settings → Locks</B>, add a <B>Delete</B> lock. It blocks deletion of the vault,
+                even by accounts with delete permission. You can now remove your own Crypto Officer
+                role; Pinpoint doesn't use it.
             </>
         ),
         check: <>a Delete lock on the vault, and Properties showing soft delete and purge protection enabled.</>,
-        note: <>Worth checking that everyday accounts hold neither Delete nor Purge on keys.</>,
+        note: <>Confirm that everyday accounts hold neither Delete nor Purge on keys.</>,
     },
     {
         body: (
@@ -1266,8 +1252,8 @@ const azureManualSteps: StepBuilder = () => [
                 storage account.
             </>
         ),
-        check: <>a diagnostic setting on the vault with AuditEvent ticked.</>,
-        note: <>Not retroactive: it records from the moment you add it. Skip it deliberately if your town does not need the trail.</>,
+        check: <>a diagnostic setting on the vault with AuditEvent checked.</>,
+        note: <>Logging starts when you add the setting. Skip this step if your town doesn't need the trail.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1287,8 +1273,8 @@ const azureTemplateSteps: StepBuilder = () => [
             <>
                 <B>Paste what the deployment printed.</B> When Azure finishes, open the deployment's{' '}
                 <B>Outputs</B> tab, copy the whole block and paste it into the{' '}
-                <B>Deployment outputs</B> box at the top of this cloud's setup — it fills every one
-                of these. Or type them in individually.
+                <B>Deployment outputs</B> box at the top of this cloud's setup to fill these in, or
+                type them individually.
             </>
         ),
         fields: ['AZURE_KEYVAULT_URL', 'AZURE_KEYVAULT_KEY'],
@@ -1307,7 +1293,7 @@ const azureTemplateSteps: StepBuilder = () => [
         ),
         fields: ['AZURE_TENANT_ID', 'AZURE_KEYVAULT_CLIENT_ID', 'AZURE_KEYVAULT_CLIENT_SECRET', 'AZURE_KEYVAULT_CLIENT_SECRET_EXPIRES'],
         check: <>an Application (client) ID and Directory (tenant) ID on the app's overview, and a copied Value.</>,
-        trouble: <>Entra shows the Value once. The box beside it labelled <B>Secret ID</B> is a different thing. On a managed identity all three of these stay empty.</>,
+        trouble: <>Entra shows the Value once. The box beside it labeled <B>Secret ID</B> is a different thing. On a managed identity all three of these stay empty.</>,
         note: (
             <>
                 Entra caps a client secret at 24 months. Put its expiry date in the box and
@@ -1330,9 +1316,7 @@ const azureTemplateSteps: StepBuilder = () => [
                 nothing. Open the vault → <B>Access control (IAM)</B> → <B>Add role assignment</B>,
                 choose <B>Key Vault Crypto User</B>, then on <B>Members</B> pick{' '}
                 <B>User, group, or service principal</B> — <em>not</em> Managed identity — and
-                search for the app registration <B>by the name you gave it</B>. An app
-                registration is a service principal; the Managed identity list holds the
-                identities Azure attaches to its own resources and will never contain it. Pick{' '}
+                search for the app registration <B>by the name you gave it</B>. Pick{' '}
                 <B>Managed identity</B> only if you left the three boxes above empty because
                 Pinpoint runs on Azure. If this same vault is also Pinpoint's secret store, add{' '}
                 <B>Key Vault Secrets Officer</B> the same way.
@@ -1341,15 +1325,12 @@ const azureTemplateSteps: StepBuilder = () => [
         check: <>that identity on the vault's <B>Role assignments</B> tab as Key Vault Crypto User.</>,
         trouble: (
             <>
-                That search box matches on <em>name</em>, not on the Application (client) ID —
-                pasting the client id returns "No results" even though the app exists. If you do not
-                remember the name, <B>Entra ID → App registrations</B> lists it beside that id.
+                Search by <em>name</em>, not by the Application (client) ID; the client ID returns
+                "No results". <B>Entra ID → App registrations</B> lists the name beside the ID.
                 <br /><br />
-                Skip this step and everything still looks right: the vault exists, the key exists,
-                the credentials are accepted. Key Vault answers <C>403 Forbidden</C> on the first
-                wrap and Pinpoint falls back to its own key, so resident data is encrypted — just
-                not with yours. Press <B>Save &amp; Test</B> on this card; it names this exact
-                failure. Role assignments can take a minute to take effect.
+                Without this role, Key Vault returns <C>403 Forbidden</C> and Pinpoint encrypts
+                resident data with its own key instead of yours. Press <B>Save &amp; Test</B> on this
+                card to confirm. Role assignments take about a minute to apply.
             </>
         ),
     },
@@ -1367,14 +1348,13 @@ const azureTemplateSteps: StepBuilder = () => [
  */
 export const AZURE_TEMPLATE_EXTRAS = (ctx: StepContext) => (
     <>
-        Purge protection and soft delete are already on, and Azure does not allow either to be turned
-        off. Two things the template leaves to you, both optional: a <B>Delete</B> lock under the
-        vault's <B>Settings → Locks</B>, and an audit trail — Azure records no key use until a
-        diagnostic setting for <C>AuditEvent</C> points somewhere, and it is not retroactive.
+        Purge protection and soft delete are already on and can't be turned off. Two optional
+        additions: a <B>Delete</B> lock under the vault's <B>Settings → Locks</B>, and an audit
+        trail, which needs a diagnostic setting for <C>AuditEvent</C> and logs from the time you
+        add it.
         <br /><br />
-        Two boxes on the form itself, also optional. <B>Allowed IP address</B> limits the vault and
-        the AI accounts to one address, so a copied key does not work elsewhere — get the server's
-        with <CopyValue ctx={ctx} id="azip" value="curl -s ifconfig.me" />. <B>Monthly budget</B>{' '}
+        Two optional boxes on the form: <B>Allowed IP address</B> limits the vault and the AI
+        accounts to one address, so a copied key doesn't work elsewhere. Get the server's with <CopyValue ctx={ctx} id="azip" value="curl -s ifconfig.me" />. <B>Monthly budget</B>{' '}
         emails you at 50%, 80% and 100% of an amount you choose.
     </>
 );
@@ -1400,13 +1380,12 @@ const awsManualSteps: StepBuilder = () => [
         body: (
             <>
                 The wizard then asks who administers the key and who may use it. Add the identity this
-                deployment signs in as under <B>key users</B>. {ATTACHED_IDENTITY} On EC2 or ECS that
-                is the instance or task role, which is the better answer: nothing long-lived to leak
-                or expire.
+                deployment signs in as under <B>key users</B>. {ATTACHED_IDENTITY} On EC2 or ECS, use
+                the instance or task role, which has no long-lived credential.
             </>
         ),
         check: <>your role or user listed as a key user on this key and no other.</>,
-        trouble: <>Keep your own administrators in that policy. A key policy that locks out the account owning it cannot be repaired afterwards, including by AWS support.</>,
+        trouble: <>Keep your own administrators in that policy. If a key policy locks out the owning account, it can't be fixed later, even by AWS support.</>,
     },
     {
         body: <>Enter the region and the key ID — the alias works, but the ID is unambiguous.</>,
@@ -1418,12 +1397,12 @@ const awsManualSteps: StepBuilder = () => [
             <>
                 <B>Make deletion deliberate.</B> AWS has no switch for it, so add a statement to the
                 key policy that <B>denies</B> <C>kms:ScheduleKeyDeletion</C> and <C>kms:DisableKey</C>{' '}
-                to everyone. An explicit deny beats every allow, including the account root, so
-                retiring the key later takes one deliberate edit first.
+                to everyone. An explicit deny overrides every allow, including the account root, so
+                retiring the key requires removing this statement first.
             </>
         ),
         check: <>a Deny statement naming both actions in the key policy.</>,
-        trouble: <>A key stops working when deletion is <em>scheduled</em>, not when the 30 days end. Cancelling inside the window restores it; after it closes the data cannot be recovered.</>,
+        trouble: <>A key stops working when deletion is <em>scheduled</em>, not when the 30 days end. Canceling within the window restores it; after that, the data can't be recovered.</>,
     },
     {
         body: (
@@ -1433,8 +1412,8 @@ const awsManualSteps: StepBuilder = () => [
                 selector for KMS, so add one if your town needs to show who decrypted what.
             </>
         ),
-        check: <>a trail with a data event selector naming this key, or a deliberate decision to do without.</>,
-        note: <>Data events are charged per event and a busy portal decrypts often, so this is a cost decision as much as a compliance one. Not retroactive.</>,
+        check: <>a trail with a data event selector naming this key, if your town needs one.</>,
+        note: <>Data events are billed per event, and a busy portal decrypts often, so weigh the cost. Logging starts when you add the selector.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1447,19 +1426,18 @@ const awsTemplateSteps: StepBuilder = () => [
             <>
                 <B>Paste what the stack printed.</B> When CloudFormation finishes, open the stack's{' '}
                 <B>Outputs</B> tab, copy the whole block and paste it into the
-                <B> Deployment outputs</B> box at the top of this cloud's setup — it fills both of
-                these. Or type them in individually.
+                <B> Deployment outputs</B> box at the top of this cloud's setup to fill both in, or
+                type them individually.
             </>
         ),
         fields: ['AWS_REGION', 'AWS_KMS_KEY_ID'],
         check: <>the region and key ID filled in, and saved.</>,
-        note: <>No secret to enter, which is the point of the role below.</>,
+        note: <>No secret is needed; the role below handles access.</>,
     },
     {
         body: (
             <>
-                <B>Attach the identity the stack created.</B> Nothing to paste for this one — it is a
-                change on the AWS side. On EC2, assign the new <B>instance profile</B> to the instance
+                <B>Attach the identity the stack created.</B> This is done on the AWS side. On EC2, assign the new <B>instance profile</B> to the instance
                 running Pinpoint; on ECS, name the new <B>role</B> as the task role. The application
                 picks the identity up from the platform.
             </>
@@ -1475,17 +1453,15 @@ const awsTemplateSteps: StepBuilder = () => [
  */
 export const AWS_TEMPLATE_EXTRAS = (ctx: StepContext) => (
     <>
-        Two things the stack already did, worth confirming on its review page:{' '}
-        <B>PreventAccidentalKeyDeletion</B>, on its default <B>Yes</B>, denies everyone — the account
-        root included — the ability to schedule this key for deletion, and the key carries{' '}
-        <C>DeletionPolicy: Retain</C>, so deleting the stack later leaves the key in place. CloudTrail
-        records no key <em>use</em> without a data event selector, which the template cannot add to a
-        trail it does not own; add one to an existing trail if your town needs it, and note that it is
-        not retroactive.
+        The stack already protects the key: <B>PreventAccidentalKeyDeletion</B> (default{' '}
+        <B>Yes</B>) stops everyone, including the account root, from scheduling it for deletion, and{' '}
+        <C>DeletionPolicy: Retain</C> keeps the key if the stack is deleted. To log key{' '}
+        <em>use</em>, add a KMS data event selector to an existing CloudTrail trail; logging starts
+        when you add it.
         <br /><br />
-        Two boxes on the form itself, also optional. <B>AllowedIpAddress</B> limits Translate,
-        Rekognition, Bedrock and Secrets Manager to one address, so a copied role does not work
-        elsewhere — get the server's with{' '}
+        Two optional boxes on the form: <B>AllowedIpAddress</B> limits Translate, Rekognition,
+        Bedrock and Secrets Manager to one address, so a copied role doesn't work elsewhere. Get
+        the server's with{' '}
         <CopyValue ctx={ctx} id="awsip" value="curl -s ifconfig.me" />. <B>MonthlyBudgetUsd</B>{' '}
         emails you at 50%, 80% and 100% of an amount you choose.
     </>
@@ -1518,7 +1494,7 @@ defineSteps('secrets', 'azure', () => [
             </>
         ),
         check: <>that identity listed twice on the vault's role assignments: Key Vault Crypto User, and Key Vault Secrets Officer.</>,
-        trouble: <>Officer, not User. Pinpoint writes credentials into this vault as well as reading them, and Secrets User can only read — which fails on the first save rather than on the connection test.</>,
+        trouble: <>Use Officer, not User. Pinpoint writes credentials to this vault, and Secrets User can only read.</>,
     },
     {
         body: <>Creating the vault did not give <em>you</em> access to its secrets either.</>,
@@ -1537,7 +1513,7 @@ defineSteps('secrets', 'google', () => [
             </>
         ),
         check: <>the service account listed with Secret Manager Admin on the project's IAM page.</>,
-        trouble: <>Secret Accessor is not enough. Pinpoint creates and updates secrets here, so an accessor-only grant saves the choice and then fails on the first credential written.</>,
+        trouble: <>Secret Accessor is not enough. Pinpoint creates and updates secrets here, so it needs Admin.</>,
     },
 ]);
 
@@ -1545,15 +1521,15 @@ defineSteps('secrets', 'aws', () => [
     {
         body: (
             <>
-                This uses the identity your server already signs in to AWS as — the instance role,
-                ideally — so there is nothing to enter below. Attach a policy allowing{' '}
+                This uses the identity your server already signs in to AWS as, typically the instance
+                role, so there is nothing to enter below. Attach a policy allowing{' '}
                 <C>secretsmanager:CreateSecret</C>, <C>secretsmanager:PutSecretValue</C>,{' '}
                 <C>secretsmanager:GetSecretValue</C>, <C>secretsmanager:DescribeSecret</C> and{' '}
                 <C>secretsmanager:ListSecrets</C> in the region entered on the other AWS cards.
             </>
         ),
         check: <>those five actions on the role or user's attached policy.</>,
-        note: <>Pinpoint names each secret after the credential it holds, so none exists until the first save. That is why create is needed, and why a policy scoped to an existing secret's ARN will not work on a fresh install.</>,
+        note: <>Pinpoint creates each secret on first save, so the policy needs CreateSecret and can't be scoped to existing secret ARNs.</>,
     },
 ]);
 
@@ -1576,25 +1552,24 @@ defineSteps('secrets', 'aws', () => [
  */
 const UNCONFIGURED_DETECTOR = (
     <>
-        Wrong credentials fail <em>quietly</em>: the detector finds nothing, nothing is blurred, the
-        photo is stored, and the card still reads as on — "found nobody" and "could not ask" look
-        identical from here. Check the Photo Redaction line on the health dashboard, then do the test
-        below.
+        With wrong credentials, the detector finds nothing and photos are stored unblurred while
+        this card still shows on. Check the Photo Redaction line on the health dashboard, then run
+        the test below.
     </>
 );
 
 const VERIFY_WITH_A_PHOTO = (
     <>
         <B>Test it once, with a real photo.</B> File a test report from the resident portal with a
-        recognisable face in the picture, then look at the stored image in the staff dashboard. It is
-        the only thing that proves this works. Delete the test report afterwards.
+        recognizable face in the picture, then check the stored image in the staff dashboard. Delete
+        the test report afterward.
     </>
 );
 
 const REDACTION_CHOICE = (
     <>
-        Faces and licence plates are both on by default — residents photograph potholes with cars and
-        neighbours in shot, and none of those people asked to be in a public record.
+        Faces and license plates are both blurred by default, since resident photos often include
+        bystanders and parked cars.
     </>
 );
 
@@ -1619,8 +1594,8 @@ defineSteps('redaction', 'aws', () => [
             <>
                 Amazon Rekognition needs nothing enabled in its console. Add{' '}
                 <C>rekognition:DetectFaces</C> and <C>rekognition:DetectText</C> to the IAM user this
-                deployment uses — plate detection works by reading text in the image, so leaving
-                DetectText off silently disables plates while faces keep working.
+                deployment uses — plate detection works by reading text in the image, so without
+                DetectText, plates aren't blurred.
             </>
         ),
         check: <>both actions listed on the IAM user's policy.</>,
@@ -1637,15 +1612,12 @@ defineSteps('redaction', 'azure', () => [
     {
         body: (
             <>
-                <B>Read this before choosing Azure.</B> Faces and plates come from two different Azure
-                services, so you create two resources, and the face one is gated: Microsoft keeps the{' '}
-                <B>Face API</B> behind a Limited Access review under its Responsible AI Standard.
-                Detection — returning rectangles, which is all Pinpoint does — is the least restricted
-                use, but the subscription still has to be approved before it will answer. If you only
-                want plates, you can skip the face resource entirely.
+                <B>Azure needs two resources.</B> Faces and plates use different Azure services, and the{' '}
+                <B>Face API</B> requires Microsoft's Limited Access approval before it responds, even
+                for detection only. If you only need plates, skip the face resource.
             </>
         ),
-        note: <>If your town cannot get through that review, pick a different detector. Google and Amazon have no equivalent gate, and the on-server option has none at all.</>,
+        note: <>If your town isn't approved, choose a different detector. Google, Amazon and the on-server option need no approval.</>,
     },
     {
         body: (
@@ -1660,14 +1632,12 @@ defineSteps('redaction', 'azure', () => [
     {
         body: (
             <>
-                For plates: create a <B>Computer Vision</B> resource — Microsoft also lists this as{' '}
-                <B>Azure AI Vision</B>, and the two names refer to the same thing. Copy its key and
-                endpoint from the same place. Plates are found by reading the text in the photo, which
-                is why this is a separate service from the one that finds faces.
+                For plates: create a <B>Computer Vision</B> resource — also listed as{' '}
+                <B>Azure AI Vision</B>. Copy its key and endpoint from the same place.
             </>
         ),
         fields: ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
-        note: <>A multi-service Azure AI resource covers the vision half, but not Face — that one is always its own resource.</>,
+        note: <>A multi-service Azure AI resource covers Vision but not Face, which is always a separate resource.</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
 ]);
@@ -1676,24 +1646,21 @@ defineSteps('redaction', 'local', () => [
     {
         body: (
             <>
-                <B>This is what you get if you choose nothing.</B> Detection runs on this server using
-                OpenCV, with no account and no key — and no resident photo ever leaves the
-                building, which is the real reason to keep it.
+                <B>This is the default.</B> Detection runs on this server using OpenCV, with no account
+                or key, and resident photos never leave the server.
             </>
         ),
-        note: <>It is the default because the alternative was worse. A deployment with no cloud credentials used to blur nothing at all while the page displayed Google Cloud Vision as the provider. Imperfect blurring beats none; that is the whole argument, and it is worth knowing which one you are relying on.</>,
+        note: <>It runs whenever no cloud detector is configured.</>,
     },
     {
         body: (
             <>
-                <B>What it misses.</B> It finds faces that are roughly front-on and reasonably large.
-                Small faces, faces in profile, faces in shadow or behind glass are often missed, and
-                plate detection is weaker still. The cloud detectors are meaningfully better at all of
-                those. If your town publishes photos to a public map and a missed face is a serious
-                problem, one of them is worth the setup.
+                <B>Limits.</B> It detects larger, front-facing faces. It misses small faces, profiles and
+                faces in shadow or behind glass more often, and plate detection is weaker. The cloud
+                detectors handle these better.
             </>
         ),
-        note: <>The safest arrangement for a town with no cloud account is to keep this on <em>and</em> have a person look at photos before they are published, rather than treating either one as sufficient on its own.</>,
+        note: <>Without a cloud detector, keep this on <em>and</em> have staff review photos before they are published.</>,
     },
     { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
 ]);
