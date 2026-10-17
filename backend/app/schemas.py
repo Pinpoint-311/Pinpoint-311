@@ -157,6 +157,8 @@ class ServiceCreate(ServiceBase):
     sla_hours: Optional[int] = Field(default=None, ge=1, le=8760)
     # Whether residents are asked for a location; see services/location_policy.
     location_mode: Literal["required", "optional", "hidden"] = "optional"
+    # Keep every report in this category off the public map and list.
+    hidden_from_public: bool = False
 
 
 class ServiceUpdate(BaseModel):
@@ -172,6 +174,7 @@ class ServiceUpdate(BaseModel):
     # Send 0 to explicitly clear the SLA (omitting it leaves the value unchanged).
     sla_hours: Optional[int] = Field(default=None, ge=0, le=8760)
     location_mode: Optional[Literal["required", "optional", "hidden"]] = None
+    hidden_from_public: Optional[bool] = None
 
 
 class ServiceResponse(ServiceBase):
@@ -180,6 +183,7 @@ class ServiceResponse(ServiceBase):
     display_order: int = 0
     sla_hours: Optional[int] = None
     location_mode: str = "optional"
+    hidden_from_public: bool = False
     departments: List[DepartmentResponse] = []
     routing_mode: Optional[str] = "township"
     routing_config: Optional[Dict[str, Any]] = {}

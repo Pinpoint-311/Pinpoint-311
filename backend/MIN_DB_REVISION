@@ -17,7 +17,11 @@
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
 #
-# Head is b3d5f7a9c1e2 (location_mode_and_resident_index) -- a new column on
+# Head is c7d9e1f3a5b6 (category_hidden_from_public) -- one boolean column on
+# service_definitions with a server default of false. Expand, so the floor is its
+# parent, b3d5f7a9c1e2.
+#
+# Before that, head was b3d5f7a9c1e2 (location_mode_and_resident_index) -- a new column on
 # service_definitions with a server default, three nullable columns and two
 # indexes on service_requests, and a new pii_index_keys table. Nothing dropped,
 # narrowed or made NOT NULL without a default, so this is expand and the floor
@@ -53,4 +57,4 @@
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-e4b7c9d2f1a8
+b3d5f7a9c1e2

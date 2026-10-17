@@ -117,6 +117,12 @@ class ServiceDefinition(Base):
     # on every save and would silently drop a key it does not know about.
     # Rules live in services/location_policy.py.
     location_mode = Column(String(16), nullable=False, default="optional", server_default="optional")
+
+    # Every report in this category is kept off the public map and list,
+    # including ones already filed. Evaluated at query time (see
+    # services/public_visibility.py), so turning it off brings them all back.
+    # Hides nothing from staff and deletes, redacts or re-encrypts nothing.
+    hidden_from_public = Column(Boolean, nullable=False, default=False, server_default='false')
     # For third_party: { "url": "...", "message": "..." }
     # For road_based: { 
     #   "default": "township|third_party", 

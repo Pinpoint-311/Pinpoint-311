@@ -1,13 +1,16 @@
 """What the public may see in a listing, in one place.
 
-Three separate reasons a report can be absent from the public tracker and map,
+Four separate reasons a report can be absent from the public tracker and map,
 and none of them deletes, redacts or hides anything from staff:
 
   * the resident asked for it to be unlisted (`is_public = false`) — their
     choice, recorded at submission, and staff must never overwrite it;
   * staff archived this one report from public view (`public_archived = true`);
   * the town's archival policy has aged it out (`public_archive_days`), which
-    is evaluated here at query time and never written to a row.
+    is evaluated here at query time and never written to a row;
+  * an admin has hidden its whole category from public view
+    (`ServiceDefinition.hidden_from_public`), also evaluated at query time, so
+    it covers reports filed before the switch and un-hides them when cleared.
 
 The policy is deliberately not a background job that stamps records. Evaluating
 it in the WHERE clause makes it reversible and retroactive in the only way an
@@ -49,12 +52,12 @@ def archive_cutoff(settings) -> Optional[datetime]:
     return datetime.now(timezone.utc) - timedelta(days=days)
 
 
-def publicly_listed_conditions(settings=None):
+def publicly_listed_conditions(settings=None, hidden_service_codes=()):
     """WHERE clauses defining what appears in a PUBLIC listing.
 
-    Pass the SystemSettings row to apply the town's age-based policy; pass
-    nothing (or None) and only the two per-row rules apply, which is the correct
-    reading of "no policy configured".
+    Pass the SystemSettings row to apply the town's age-based policy, and the
+    codes of categories hidden from public view (`hidden_category_codes`); pass
+    neither and only the two per-row rules apply.
     """
     conditions = [
         ServiceRequest.deleted_at.is_(None),
@@ -64,6 +67,9 @@ def publicly_listed_conditions(settings=None):
         # unarchiving cannot resurrect a report the resident wanted unlisted.
         ServiceRequest.public_archived.is_(False),
     ]
+
+    if hidden_service_codes:
+        conditions.append(ServiceRequest.service_code.notin_(list(hidden_service_codes)))
 
     cutoff = archive_cutoff(settings)
     if cutoff is not None:
@@ -84,3 +90,19 @@ def publicly_listed_conditions(settings=None):
         )
 
     return tuple(conditions)
+
+
+async def hidden_category_codes(db) -> tuple:
+    """Codes of categories an admin has hidden from public view, sorted.
+
+    Fails closed: if the read fails, the public listing is refused rather than
+    served with a sensitive category in it (the caller lets the error raise).
+    Sorted so it can go in a cache key.
+    """
+    from sqlalchemy import select
+    from app.models import ServiceDefinition
+
+    rows = await db.execute(
+        select(ServiceDefinition.service_code).where(ServiceDefinition.hidden_from_public.is_(True))
+    )
+    return tuple(sorted(r[0] for r in rows.all()))

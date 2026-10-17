@@ -789,6 +789,7 @@ export default function AdminConsole() {
         sla_hours: '' as string,
         // Whether residents are asked where. See backend services/location_policy.
         location_mode: 'optional' as LocationMode,
+        hidden_from_public: false,
         routing_config: {
             // Township mode
             route_to: 'all_staff' as 'all_staff' | 'specific_staff',
@@ -1361,6 +1362,7 @@ export default function AdminConsole() {
             icon: service.icon || 'AlertCircle',
             sla_hours: service.sla_hours ? String(service.sla_hours) : '',
             location_mode: service.location_mode || 'optional',
+            hidden_from_public: service.hidden_from_public === true,
             routing_config: {
                 // Township mode
                 route_to: config.route_to || 'all_staff',
@@ -1459,6 +1461,7 @@ export default function AdminConsole() {
                 // 0 explicitly clears the SLA; a value sets it.
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
                 location_mode: serviceRouting.location_mode,
+                hidden_from_public: serviceRouting.hidden_from_public,
             });
 
             setShowServiceEditModal(false);
@@ -4551,6 +4554,49 @@ export default function AdminConsole() {
                             <p className="text-xs text-white/45">
                                 These reports won't appear on the map, and any location an outside app sends is discarded.
                             </p>
+                        )}
+                    </div>
+
+                    {/* Public visibility for the whole category */}
+                    <div className="space-y-2.5">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Public visibility</label>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={serviceRouting.hidden_from_public}
+                            onClick={() => setServiceRouting(p => ({ ...p, hidden_from_public: !p.hidden_from_public }))}
+                            className={`w-full p-4 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3 ${serviceRouting.hidden_from_public
+                                ? 'bg-gradient-to-br from-slate-500/20 via-indigo-500/10 to-purple-500/10 border-primary-400 ring-1 ring-primary-400/40'
+                                : 'bg-white/[0.03] border-white/10 hover:border-white/25 hover:bg-white/[0.06]'}`}
+                        >
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${serviceRouting.hidden_from_public
+                                ? 'bg-slate-500/25 border-slate-400/30 text-slate-200' : 'bg-white/5 border-white/10 text-white/50'}`}>
+                                <EyeOff className="w-4 h-4" aria-hidden="true" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-white tracking-tight">Hide this category from public view</div>
+                                <div className="text-xs text-white/50 mt-0.5">Keeps every report in this category off the public map and list.</div>
+                            </div>
+                            <span className={`mt-1 w-10 h-6 rounded-full p-0.5 transition-colors shrink-0 ${serviceRouting.hidden_from_public ? 'bg-primary-500' : 'bg-white/15'}`} aria-hidden="true">
+                                <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${serviceRouting.hidden_from_public ? 'translate-x-4' : ''}`} />
+                            </span>
+                        </button>
+                        {serviceRouting.hidden_from_public && (
+                            <div className="p-4 rounded-2xl bg-slate-800/50 border border-white/10 space-y-2">
+                                <p className="text-xs font-semibold text-white/80">What this does</p>
+                                <ul className="text-xs text-white/60 space-y-1.5 list-disc pl-4">
+                                    <li>Reports in this category, including ones already filed, don't appear on the public map or list. Turning this off brings them back.</li>
+                                    <li>Staff see and work these reports as usual.</li>
+                                    <li>Residents can still open their own report with its tracking link, and anyone they share the link with can see it.</li>
+                                    <li>Residents see a notice about this when they choose the category.</li>
+                                </ul>
+                                <p className="text-xs font-semibold text-white/80 pt-1">What it doesn't do</p>
+                                <ul className="text-xs text-white/60 space-y-1.5 list-disc pl-4">
+                                    <li>Nothing is deleted, redacted, or encrypted differently.</li>
+                                    <li>These reports are still public records and can be released in response to a records request.</li>
+                                    <li>They're still counted in statistics and included in anonymized research exports.</li>
+                                </ul>
+                            </div>
                         )}
                     </div>
 

@@ -27,6 +27,7 @@ import {
     AlertTriangle,
     Search,
     MapPinOff,
+    EyeOff,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
@@ -1743,10 +1744,32 @@ export default function ResidentPortal() {
                                             </div>
                                         </Card>
 
+                                        {/* A category the town keeps off the public map. Said before
+                                            submitting, so the resident knows who will see the report. */}
+                                        {selectedService.hidden_from_public && (
+                                            <Card>
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-9 h-9 rounded-xl bg-slate-500/20 border border-slate-400/25 flex items-center justify-center shrink-0">
+                                                        <EyeOff className="w-4 h-4 text-slate-200" aria-hidden="true" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-medium text-white">This report won't be shown publicly</p>
+                                                        <p className="text-xs text-white/55 mt-1 leading-relaxed">
+                                                            Reports in this category don't appear on the public map or list. Town staff
+                                                            see your report and handle it as usual, and you can follow it with your
+                                                            tracking link. Anyone you share that link with can also view it. Like other
+                                                            municipal records, it can be released in response to a public records request.
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </Card>
+                                        )}
+
                                         {/* Public-feed visibility. Only offered when the town has
                                             turned the Unlisted Reports module on. Sharing is the
-                                            default; hiding is a deliberate, unchecked-by-default box. */}
-                                        {(settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
+                                            default; hiding is a deliberate, unchecked-by-default box.
+                                            Not offered for a category that is already hidden. */}
+                                        {!selectedService.hidden_from_public && (settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
                                             <Card>
                                                 <label className="flex items-start gap-3 cursor-pointer">
                                                     <input

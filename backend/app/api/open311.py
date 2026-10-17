@@ -215,11 +215,15 @@ async def list_public_requests(
 
     settings_row = await read_settings_row(db)
     archive_days = getattr(settings_row, "public_archive_days", None) or 0
+    # In the key for the same reason as the archive policy: hiding a category
+    # must take its reports off the map now, not when the cache expires.
+    from app.services.public_visibility import hidden_category_codes
+    hidden_codes = await hidden_category_codes(db)
 
     cache_key = (
         f"public_requests:{','.join(sorted(statuses)) if statuses else 'all'}"
         f":{','.join(sorted(service_codes)) if service_codes else 'all'}:{limit}:{offset}"
-        f":arch{archive_days}"
+        f":arch{archive_days}:hide{','.join(hidden_codes) or '-'}"
     )
 
     # Try cache first
@@ -230,12 +234,12 @@ async def list_public_requests(
     except redis.RedisError:
         logger.debug("Redis unavailable for cache read, proceeding without cache")
 
-    # Three ways to be absent from this list, none of which deletes anything:
+    # Four ways to be absent from this list, none of which deletes anything:
     # the resident asked for it to be unlisted, staff archived it from public
-    # view, or the town's policy aged it out. All of them remain reachable by
+    # view, the town's policy aged it out, or its category is hidden. All of them remain reachable by
     # direct tracking link (the by-id endpoints below) and fully visible to
     # staff. See app/services/public_visibility.py.
-    query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row))
+    query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row, hidden_codes))
 
     if statuses:
         query = query.where(ServiceRequest.status.in_(statuses))

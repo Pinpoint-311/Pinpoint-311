@@ -135,6 +135,7 @@ async def create_service(
         icon=service_data.icon,
         sla_hours=service_data.sla_hours,
         location_mode=service_data.location_mode,
+        hidden_from_public=service_data.hidden_from_public,
         display_order=service_data.display_order if service_data.display_order else max_order + 1
     )
     service.departments = departments
@@ -273,6 +274,12 @@ async def update_service(
         service.sla_hours = service_data.sla_hours or None
     if service_data.location_mode is not None:
         service.location_mode = service_data.location_mode
+    visibility_changed = (
+        service_data.hidden_from_public is not None
+        and bool(service_data.hidden_from_public) != bool(service.hidden_from_public)
+    )
+    if service_data.hidden_from_public is not None:
+        service.hidden_from_public = service_data.hidden_from_public
     # Checked on the resulting state, so switching routing to road-based on a
     # category that hides location is refused as well as the reverse.
     try:
@@ -290,6 +297,15 @@ async def update_service(
         service.departments = departments
     
     await db.commit()
+
+    # Its own audit event: taking a whole category off the public map is a
+    # records decision someone may later need to show was made, and by whom.
+    if visibility_changed:
+        await record_admin_action(
+            db, event_type="service_public_visibility", actor=_,
+            details={"service_code": service.service_code, "service_name": service.service_name,
+                     "hidden_from_public": bool(service.hidden_from_public)},
+        )
     
     result = await db.execute(
         select(ServiceDefinition)

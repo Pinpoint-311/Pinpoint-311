@@ -552,6 +552,10 @@ export default function StaffDashboard() {
         setFilterPhotoReview(false);
     };
 
+    // Whether an admin has hidden this report's whole category from public view.
+    const categoryHidden = !!(selectedRequest
+        && services.find(s => s.service_code === selectedRequest.service_code)?.hidden_from_public);
+
     const hasActiveFilters = searchQuery.trim() || filterDepartment !== null || filterService !== null || filterAssignment !== 'all' || mapPriorityFilter !== 'all' || filterPhotoReview;
 
     /* How many reports are holding a photo nobody has decided about yet.
@@ -2746,6 +2750,15 @@ export default function StaffDashboard() {
                                                 <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
                                                     <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
+                                                    {categoryHidden && (
+                                                        <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-400/30">
+                                                            <EyeOff className="w-3 h-3" aria-hidden="true" />
+                                                            Category hidden from public
+                                                            <span className="sr-only">
+                                                                — reports in this category are kept off the public map and list. Work it normally.
+                                                            </span>
+                                                        </span>
+                                                    )}
                                                     {(selectedRequest as any).is_public === false &&(
                                                         /* The explanation was `title`-only, so
                                                             keyboard and touch users saw the word
@@ -2997,6 +3010,11 @@ export default function StaffDashboard() {
                                             watching their own report simply saw it
                                             disappear. Restoring is not confirmed: putting
                                             a report back is not the risky direction. */}
+                                        {categoryHidden ? (
+                                            <p className="text-[11px] text-white/45 text-center py-1">
+                                                This category is hidden from public view, so this report is already off the public map and list.
+                                            </p>
+                                        ) : (<>
                                         <button
                                             type="button"
                                             aria-pressed={selectedRequest.public_archived === true}
@@ -3042,6 +3060,7 @@ export default function StaffDashboard() {
                                                 Off the public tracker and map. The report stays &mdash; residents with the link still see it, and it is still in research exports.
                                             </p>
                                         )}
+                                        </>)}
                                     </div>
 
                                     {/* Scrollable Content - Professional Government Styling */}

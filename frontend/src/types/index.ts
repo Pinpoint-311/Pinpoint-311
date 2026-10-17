@@ -84,6 +84,8 @@ export interface ServiceDefinition {
     /** Optional SLA target in hours from submission to closure. null = no SLA. */
     sla_hours?: number | null;
     location_mode?: LocationMode;
+    /** Every report in this category is kept off the public map and list. */
+    hidden_from_public?: boolean;
     departments: Department[];
     routing_mode?: 'township' | 'third_party' | 'road_based';
     routing_config?: {
