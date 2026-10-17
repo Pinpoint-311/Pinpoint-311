@@ -173,7 +173,13 @@ async def update_user(
     _: User = Depends(get_current_admin)
 ):
     """Update user (admin only)"""
-    result = await db.execute(select(User).where(User.id == user_id))
+    # Departments loaded up front: assigning `user.departments` makes SQLAlchemy
+    # read the old collection to diff it, and a lazy load inside an async
+    # session raises (MissingGreenlet) -- every edit that touched departments,
+    # which the edit form always sends, came back as a 500 "Request failed".
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(selectinload(User.departments))
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -218,7 +224,13 @@ async def update_user(
             **({"department_ids": department_ids} if department_ids is not None else {}),
         },
     )
-    return user
+
+    # Reloaded for the response, as create_user does: the commits above expire
+    # the departments, and serialising them would lazy-load in async again.
+    result = await db.execute(
+        select(User).where(User.id == user.id).options(selectinload(User.departments))
+    )
+    return result.scalar_one()
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -46,6 +46,18 @@ def test_the_handler_no_longer_setattrs_department_ids():
         "departments must be assigned as a relationship"
 
 
+def test_departments_are_loaded_before_they_are_replaced():
+    """Assigning a relationship makes SQLAlchemy load the old value to diff it,
+    and a lazy load in an async session raises. Live, every edit from the form
+    (which always sends department_ids) was a 500 "Request failed"."""
+    import inspect
+    from app.api import users
+
+    src = inspect.getsource(users.update_user)
+    assert src.count("selectinload(User.departments)") >= 2, \
+        "load departments before assigning them, and again for the response"
+
+
 # ---- what the schema accepts -------------------------------------------------
 
 def test_phone_is_editable():
