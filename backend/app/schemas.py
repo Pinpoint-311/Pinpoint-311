@@ -131,6 +131,21 @@ class DepartmentCreate(DepartmentBase):
     pass
 
 
+class DepartmentUpdate(BaseModel):
+    """Editable after creation. Omitted fields are left as they are; a blank
+    routing email clears it."""
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    description: Optional[str] = None
+    routing_email: Optional[EmailStr] = None
+
+    @field_validator("routing_email", mode="before")
+    @classmethod
+    def _blank_routing_email_is_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
+
 class DepartmentResponse(DepartmentBase):
     id: int
     is_active: bool
@@ -162,7 +177,7 @@ class ServiceCreate(ServiceBase):
 
 
 class ServiceUpdate(BaseModel):
-    service_name: Optional[str] = None
+    service_name: Optional[str] = Field(default=None, min_length=2, max_length=100)
     description: Optional[str] = None
     icon: Optional[str] = None
     is_active: Optional[bool] = None

@@ -91,6 +91,11 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
     user_password_reset: d => d.target_username ? `Reset the password for ${d.target_username}` : null,
     department_created: d => d.name ? `Created department "${d.name}"` : null,
     department_deleted: d => d.name ? `Deleted department "${d.name}"` : null,
+    department_updated: d => d.name
+        ? `Updated department "${d.name}"` + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : '')
+        : null,
+    service_updated: d => `Updated service category "${d.service_name || d.service_code || '?'}"`
+        + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : ''),
     service_created: d => `Created service category "${d.service_name || d.service_code || '?'}"`,
     service_deleted: d => `Deleted service category "${d.service_name || d.service_code || '?'}"`,
     service_public_visibility: d => `${d.hidden_from_public ? 'Hid' : 'Showed'} the "${d.service_name || d.service_code || '?'}" category ${d.hidden_from_public ? 'from' : 'on'} the public map and list`,

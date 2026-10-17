@@ -128,3 +128,21 @@ def test_every_category_endpoint_loads_the_assigned_department():
     src = (Path(__file__).resolve().parents[1] / "app" / "api" / "services.py").read_text()
     assert src.count("selectinload(ServiceDefinition.departments)") == \
         src.count("selectinload(ServiceDefinition.assigned_department)")
+
+
+def test_departments_can_be_edited():
+    """The admin console's Edit Department form called PUT /departments/{id},
+    which did not exist, so every edit failed."""
+    from app.api.departments import router
+    assert any(r.path == "/{dept_id}" and "PUT" in r.methods for r in router.routes)
+    from app.schemas import DepartmentUpdate
+    assert DepartmentUpdate(routing_email="").routing_email is None
+    assert DepartmentUpdate(name="Public Works").model_dump(exclude_unset=True) == {"name": "Public Works"}
+
+
+def test_renaming_a_category_follows_through_to_its_reports():
+    import inspect
+    from app.api import services
+    src = inspect.getsource(services.update_service)
+    assert "ServiceRequest.service_code == service.service_code" in src
+    assert 'event_type="service_updated"' in src

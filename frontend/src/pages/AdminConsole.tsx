@@ -282,7 +282,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
                         onClick={() => onEdit(service)}
                         className="rounded-2xl px-5"
                     >
-                        Configure Routing
+                        Edit category
                     </Button>
                     <button
                         onClick={() => onDelete(service.id)}
@@ -772,6 +772,8 @@ export default function AdminConsole() {
         // Whether residents are asked where. See backend services/location_policy.
         location_mode: 'optional' as LocationMode,
         hidden_from_public: false,
+        service_name: '',
+        description: '',
         routing_config: {
             // Township mode
             route_to: 'all_staff' as 'all_staff' | 'specific_staff',
@@ -1349,6 +1351,8 @@ export default function AdminConsole() {
             sla_hours: service.sla_hours ? String(service.sla_hours) : '',
             location_mode: service.location_mode || 'optional',
             hidden_from_public: service.hidden_from_public === true,
+            service_name: service.service_name || '',
+            description: service.description || '',
             routing_config: {
                 // Township mode
                 route_to: config.route_to || 'all_staff',
@@ -1448,6 +1452,8 @@ export default function AdminConsole() {
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
                 location_mode: serviceRouting.location_mode,
                 hidden_from_public: serviceRouting.hidden_from_public,
+                service_name: serviceRouting.service_name.trim() || editingService.service_name,
+                description: serviceRouting.description,
             });
 
             setShowServiceEditModal(false);
@@ -4447,9 +4453,33 @@ export default function AdminConsole() {
                     setShowServiceEditModal(false);
                     setEditingService(null);
                 }}
-                title={`Configure Routing: ${editingService?.service_name || ''}`}
+                title={`Edit category: ${editingService?.service_name || ''}`}
             >
                 <form onSubmit={handleSaveServiceRouting} className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
+                    {/* Name and description, as residents see them */}
+                    <div className="space-y-3 p-4 rounded-3xl bg-slate-800/50 border border-white/20">
+                        <Input
+                            label="Category name"
+                            value={serviceRouting.service_name}
+                            onChange={(e) => setServiceRouting(p => ({ ...p, service_name: e.target.value }))}
+                            required
+                            minLength={2}
+                            maxLength={100}
+                        />
+                        <div>
+                            <label htmlFor="service-edit-description" className="block text-sm font-medium text-white/70 mb-1.5">Description</label>
+                            <textarea
+                                id="service-edit-description"
+                                value={serviceRouting.description}
+                                onChange={(e) => setServiceRouting(p => ({ ...p, description: e.target.value }))}
+                                rows={2}
+                                placeholder="What residents should report here"
+                                className="w-full rounded-xl bg-white/[0.06] border border-white/15 text-sm text-white placeholder-white/35 px-3 py-2 focus:outline-none focus:border-primary-400/60"
+                            />
+                            <p className="text-xs text-white/40 mt-1">Shown to residents under the category name. Renaming also updates existing reports in this category.</p>
+                        </div>
+                    </div>
+
                     {/* Routing Mode */}
                     <div className="space-y-2.5">
                         <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Routing Mode</label>
@@ -4560,7 +4590,7 @@ export default function AdminConsole() {
                                 <EyeOff className="w-4 h-4" aria-hidden="true" />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <div className="font-semibold text-sm text-white tracking-tight">Hide this category from public view</div>
+                                <div className="font-semibold text-sm text-white tracking-tight">Hide reports for {serviceRouting.service_name || editingService?.service_name || 'this category'} from standard public view</div>
                                 <div className="text-xs text-white/50 mt-0.5">Keeps every report in this category off the public map and list.</div>
                             </div>
                             <span className={`mt-1 w-10 h-6 rounded-full p-0.5 transition-colors shrink-0 ${serviceRouting.hidden_from_public ? 'bg-primary-500' : 'bg-white/15'}`} aria-hidden="true">
@@ -4592,7 +4622,7 @@ export default function AdminConsole() {
                         <CategoryIconPicker
                             value={serviceRouting.icon}
                             onChange={(name) => setServiceRouting(p => ({ ...p, icon: name }))}
-                            categoryName={`${editingService?.service_name || ''} ${editingService?.description || ''}`}
+                            categoryName={`${serviceRouting.service_name} ${serviceRouting.description}`}
                         />
                     </div>
 

@@ -253,8 +253,12 @@ async def update_service(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
+    old_name = service.service_name
+    _tracked = ("service_name", "description", "icon", "is_active", "routing_mode", "routing_config",
+                "assigned_department_id", "display_order", "sla_hours", "location_mode", "hidden_from_public")
+    before = {f: getattr(service, f, None) for f in _tracked}
     if service_data.service_name is not None:
-        service.service_name = service_data.service_name
+        service.service_name = service_data.service_name.strip()
     if service_data.description is not None:
         service.description = service_data.description
     if service_data.icon is not None:
@@ -296,7 +300,28 @@ async def update_service(
                 departments.append(dept)
         service.departments = departments
     
+    # Reports carry the category name they were filed under, for lists and the
+    # public map. A rename is a correction to the label, so it follows through
+    # to them; the category itself (service_code) is unchanged.
+    if service.service_name != old_name:
+        from sqlalchemy import update as sa_update
+        from app.models import ServiceRequest
+        await db.execute(
+            sa_update(ServiceRequest)
+            .where(ServiceRequest.service_code == service.service_code)
+            .values(service_name=service.service_name)
+        )
+
     await db.commit()
+
+    # What actually changed, not what the form sent (it sends everything).
+    changed_fields = sorted(f for f in _tracked if getattr(service, f, None) != before[f])
+    if changed_fields:
+        await record_admin_action(
+            db, event_type="service_updated", actor=_,
+            details={"service_code": service.service_code, "service_name": service.service_name,
+                     "fields": changed_fields},
+        )
 
     # Its own audit event: taking a whole category off the public map is a
     # records decision someone may later need to show was made, and by whom.
