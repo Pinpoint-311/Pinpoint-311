@@ -8,6 +8,7 @@ config. Default is google — existing deployments are unchanged.
 
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -18,6 +19,27 @@ TRANSLATION_PROVIDER_KEY = "TRANSLATION_PROVIDER"
 GOOGLE_TRANSLATE_API_URL = "https://translation.googleapis.com/language/translate/v2"
 # Azure Translator: global host by default; Gov cloud uses ...microsofttranslator.us
 DEFAULT_AZURE_TRANSLATOR_ENDPOINT = "https://api.cognitive.microsofttranslator.com"
+# Where Translator lives on a resource's own subdomain.
+AZURE_CUSTOM_DOMAIN_TRANSLATOR_PATH = "/translator/text/v3.0"
+
+
+def normalise_azure_translator_endpoint(endpoint: Optional[str]) -> str:
+    """Return the base URL that `/translate` is appended to.
+
+    The global and Gov hosts serve Translator at the root. A resource's own
+    subdomain (`NAME.cognitiveservices.azure.com`, which is what the Azure
+    portal shows as "Endpoint" for an AI Services / Foundry resource) serves it
+    under /translator/text/v3.0 and answers a bare /translate with a 404 --
+    which is what a town saw live, with nothing in the error to say the path
+    was the problem. Any path pasted along with such a host (the portal's
+    sample request, or the right prefix already) is replaced by the one
+    Translator actually uses.
+    """
+    raw = (endpoint or "").strip() or DEFAULT_AZURE_TRANSLATOR_ENDPOINT
+    parts = urlsplit(raw)
+    if parts.scheme and ".cognitiveservices.azure." in parts.netloc.lower():
+        return urlunsplit((parts.scheme, parts.netloc, AZURE_CUSTOM_DOMAIN_TRANSLATOR_PATH, "", ""))
+    return raw.rstrip("/")
 
 
 class TranslationProvider:
@@ -63,7 +85,7 @@ class AzureTranslationProvider(TranslationProvider):
     def __init__(self, api_key: str, region: str, endpoint: Optional[str] = None):
         self.api_key = api_key
         self.region = region
-        self.endpoint = (endpoint or DEFAULT_AZURE_TRANSLATOR_ENDPOINT).rstrip("/")
+        self.endpoint = normalise_azure_translator_endpoint(endpoint)
 
     async def translate(self, texts, source_lang, target_lang):
         if not self.api_key:
