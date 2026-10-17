@@ -6,6 +6,7 @@ import logging
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 
@@ -138,7 +139,11 @@ class EmailProvider:
             
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = f"{sender_name} <{self.from_email}>"
+            # formataddr quotes a name that needs it. Unquoted, a comma in the
+            # name ("Stafford, NJ Pilot") splits the header into two addresses,
+            # and smtplib sent MAIL FROM:<Stafford> -- live, every email failed
+            # with 501 "Was expecting MAIL arg syntax of FROM:<address>".
+            msg["From"] = formataddr((sender_name, self.from_email))
             msg["To"] = to
             
             if body_text:
@@ -295,7 +300,7 @@ class SESEmailProvider:
             logger.warning("[SES] region/from_email not configured")
             return False
         try:
-            sender = f"{from_name or self.from_name} <{self.from_email}>"
+            sender = formataddr((from_name or self.from_name, self.from_email))
             body: Dict[str, Any] = {"Html": {"Data": body_html, "Charset": "UTF-8"}}
             if body_text:
                 body["Text"] = {"Data": body_text, "Charset": "UTF-8"}
