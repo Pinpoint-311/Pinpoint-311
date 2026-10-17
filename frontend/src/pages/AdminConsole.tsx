@@ -25,40 +25,19 @@ import {
     ExternalLink,
     GitFork,
     Edit,
-    Phone,
     UserCheck,
     AlertCircle,
-    Car,
-    Trash,
-    Lightbulb,
-    TreePine,
-    Building,
-    Hammer,
-    Droplet,
-    Bug,
-    PaintBucket,
-    Wrench,
     Route,
     MapPin,
     Home,
-    Zap,
     Shield,
-    Heart,
-    Star,
-    Flag,
-    Bell,
-    Camera,
     Clock,
-    FileText,
     Settings,
-    HelpCircle,
     Info,
     Layers,
     Upload,
     BarChart3,
     Terminal,
-
-
     ChevronDown,
     GripVertical,
     User as UserIcon,
@@ -87,6 +66,8 @@ import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer, ResearchPackSwitch } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact, LocationMode } from '../types';
+import CategoryIconPicker from '../components/CategoryIconPicker';
+import { categoryIconFor, DEFAULT_CATEGORY_ICON, isDefaultOrUnknownIcon, suggestCategoryIcon } from '../components/categoryIcons';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
@@ -115,37 +96,7 @@ export function formatSlaTarget(hours: number): string {
 }
 
 // Icon library for service categories
-const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
-    { name: 'AlertCircle', icon: AlertCircle },
-    { name: 'Car', icon: Car },
-    { name: 'Trash', icon: Trash },
-    { name: 'Lightbulb', icon: Lightbulb },
-    { name: 'TreePine', icon: TreePine },
-    { name: 'Building', icon: Building },
-    { name: 'Hammer', icon: Hammer },
-    { name: 'Droplet', icon: Droplet },
-    { name: 'Bug', icon: Bug },
-    { name: 'PaintBucket', icon: PaintBucket },
-    { name: 'Wrench', icon: Wrench },
-    { name: 'Route', icon: Route },
-    { name: 'MapPin', icon: MapPin },
-    { name: 'Home', icon: Home },
-    { name: 'Zap', icon: Zap },
-    { name: 'Shield', icon: Shield },
-    { name: 'Heart', icon: Heart },
-    { name: 'Star', icon: Star },
-    { name: 'Flag', icon: Flag },
-    { name: 'Bell', icon: Bell },
-    { name: 'Camera', icon: Camera },
-    { name: 'Mail', icon: Mail },
-    { name: 'Phone', icon: Phone },
-    { name: 'Clock', icon: Clock },
-    { name: 'FileText', icon: FileText },
-    { name: 'Settings', icon: Settings },
-    { name: 'HelpCircle', icon: HelpCircle },
-    { name: 'Info', icon: Info },
-    { name: 'Users', icon: Users },
-];
+// Category icons come from the shared municipal set in components/categoryIcons.ts.
 
 type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
 
@@ -258,13 +209,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
         opacity: isDragging ? 0.85 : 1,
     };
 
-    const getIconComponent = (iconName?: string) => {
-        if (!iconName) return Grid3X3;
-        const found = ICON_LIBRARY.find(i => i.name === iconName);
-        return found ? found.icon : Grid3X3;
-    };
-
-    const IconComp = getIconComponent((service as any).icon);
+    const IconComp = categoryIconFor((service as any).icon);
 
     const getModeBadge = (mode?: string) => {
         if (mode === 'third_party') return (
@@ -391,6 +336,29 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
         }
     };
 
+    // Categories still on the default (or a retired) icon that the shared set
+    // has a confident suggestion for. Applied only on request, and never to an
+    // icon somebody chose.
+    const iconSuggestions = services
+        .filter(s => isDefaultOrUnknownIcon(s.icon))
+        .map(s => ({ service: s, icon: suggestCategoryIcon(s.service_name, s.description) }))
+        .filter((x): x is { service: ServiceDefinition; icon: string } => !!x.icon);
+    const [applyingIcons, setApplyingIcons] = useState(false);
+    const applyIconSuggestions = async () => {
+        setApplyingIcons(true);
+        try {
+            for (const { service, icon } of iconSuggestions) {
+                await api.updateService(service.id, { icon });
+            }
+        } catch (err) {
+            console.error('Failed to apply icon suggestions:', err);
+            alert("Couldn't apply every suggested icon. Try again.");
+        } finally {
+            setApplyingIcons(false);
+            loadTabData();
+        }
+    };
+
     const roadBasedCount = services.filter(s => s.routing_mode === 'road_based').length;
     const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
     const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
@@ -421,13 +389,27 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
                     <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Service Categories</h1>
                     <p className="text-sm text-white/50 mt-1">Configure portal categories, assignment rules, and automated spatial routing</p>
                 </div>
-                <Button
-                    leftIcon={<Plus className="w-4 h-4" />}
-                    onClick={() => setShowServiceModal(true)}
-                    className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
-                >
-                    Add Category
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    {iconSuggestions.length > 0 && (
+                        <Button
+                            variant="secondary"
+                            leftIcon={<Sparkles className="w-4 h-4" />}
+                            onClick={applyIconSuggestions}
+                            disabled={applyingIcons}
+                            className="w-full sm:w-auto"
+                            title="Pick an icon from each category's name, for categories still using the default icon"
+                        >
+                            {applyingIcons ? 'Applying…' : `Suggest icons (${iconSuggestions.length})`}
+                        </Button>
+                    )}
+                    <Button
+                        leftIcon={<Plus className="w-4 h-4" />}
+                        onClick={() => setShowServiceModal(true)}
+                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                    >
+                        Add Category
+                    </Button>
+                </div>
             </div>
 
             {/* 3 Premium Stat Cards (Matching User Management Page) */}
@@ -1323,7 +1305,11 @@ export default function AdminConsole() {
     const handleCreateService = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            await api.createService(newService);
+            // A new category gets an icon from its name unless one was chosen.
+            const icon = newService.icon && newService.icon !== DEFAULT_CATEGORY_ICON
+                ? newService.icon
+                : (suggestCategoryIcon(newService.service_name, newService.description) || DEFAULT_CATEGORY_ICON);
+            await api.createService({ ...newService, icon });
             setShowServiceModal(false);
             setNewService({ service_code: '', service_name: '', description: '', icon: 'AlertCircle' });
             loadTabData();
@@ -4603,22 +4589,11 @@ export default function AdminConsole() {
                     {/* Icon Picker */}
                     <div className="space-y-2.5 p-4 rounded-3xl bg-slate-800/50 border border-white/20 shadow-xl backdrop-blur-xl">
                         <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Category Icon</label>
-                        <div className="grid grid-cols-10 gap-2 p-2.5 rounded-2xl bg-white/[0.04] border border-white/10 max-h-28 overflow-y-auto">
-                            {ICON_LIBRARY.map(({ name, icon: IconComponent }) => (
-                                <button
-                                    type="button"
-                                    key={name}
-                                    onClick={() => setServiceRouting(p => ({ ...p, icon: name }))}
-                                    className={`p-2.5 rounded-2xl transition-all duration-200 flex items-center justify-center ${serviceRouting.icon === name
-                                        ? 'bg-gradient-to-r from-primary-500 to-indigo-600 text-white shadow-lg shadow-primary-500/40 scale-110 ring-2 ring-white/30'
-                                        : 'bg-white/5 text-white/60 hover:bg-white/15 hover:text-white'
-                                        }`}
-                                    title={name}
-                                >
-                                    <IconComponent className="w-4 h-4" />
-                                </button>
-                            ))}
-                        </div>
+                        <CategoryIconPicker
+                            value={serviceRouting.icon}
+                            onChange={(name) => setServiceRouting(p => ({ ...p, icon: name }))}
+                            categoryName={`${editingService?.service_name || ''} ${editingService?.description || ''}`}
+                        />
                     </div>
 
                     {/* Optional SLA target */}

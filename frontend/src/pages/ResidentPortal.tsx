@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
+import { categoryIconFor } from '../components/categoryIcons';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -7,14 +8,7 @@ import {
     MapPin,
     CheckCircle2,
     Send,
-    AlertCircle,
-    Circle,
-    Lightbulb,
-    Trash2,
-    Footprints,
     SignpostBig,
-    Volume2,
-    HelpCircle,
     Sparkles, Home,
     Phone,
     ClipboardList,
@@ -46,17 +40,8 @@ import { ServiceDefinition, ServiceRequestCreate, ServiceRequest } from '../type
 import { usePageNavigation } from '../hooks/usePageNavigation';
 
 // Icon mapping for service categories
-const iconMap: Record<string, React.FC<{ className?: string }>> = {
-    Circle,
-    Lightbulb,
-    Trash2,
-    Footprints,
-    SignpostBig,
-    Volume2,
-    HelpCircle,
-    AlertCircle,
-    Spray: AlertCircle, // Fallback
-};
+// Category icons resolve through the shared set (components/categoryIcons.ts),
+// the same one the admin picker offers, so every icon an admin picks shows here.
 
 type Step = 'categories' | 'form' | 'success';
 
@@ -830,7 +815,7 @@ export default function ResidentPortal() {
     };
 
     const getIcon = (iconName: string) => {
-        const IconComponent = iconMap[iconName] || AlertCircle;
+        const IconComponent = categoryIconFor(iconName);
         return <IconComponent className="w-8 h-8" />;
     };
 
