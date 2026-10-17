@@ -645,7 +645,7 @@ class SystemSettings(Base):
         "unlisted_reports": False,
         "research_portal": False,
         "platform_feedback": False,
-        # Staff see a resident's earlier reports and can search by resident
+        # Staff see a resident's other reports and can search by resident
         # email or full name. Off by default; see api/resident_history.py.
         "resident_history": False,
     })

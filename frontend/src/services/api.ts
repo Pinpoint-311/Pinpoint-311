@@ -495,7 +495,7 @@ class ApiClient {
         });
     }
 
-    /** Earlier reports from the same resident email as this report. Staff
+    /** Other reports from the same resident email as this report. Staff
      *  only; 404s unless the Resident History module is on. Audited. */
     async getResidentHistory(serviceRequestId: string): Promise<ResidentHistory> {
         return this.request<ResidentHistory>(

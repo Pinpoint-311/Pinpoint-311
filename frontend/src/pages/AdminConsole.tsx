@@ -2539,7 +2539,7 @@ export default function AdminConsole() {
                                                resident PII across reports, and an administrator
                                                turning it on is making a privacy decision. Every
                                                clause below is enforced on the server, not here. */
-                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s earlier reports and let them search by full email or name. Staff only see reports they already have access to, and every lookup is logged.', icon: UserSearch, color: 'blue' },
+                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s other reports and let them search by full email or name. Staff only see reports they already have access to, and every lookup is logged.', icon: UserSearch, color: 'blue' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];

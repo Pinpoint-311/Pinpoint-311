@@ -41,7 +41,7 @@ const rows = [
 ];
 
 describe('ResidentHistoryCard', () => {
-    it('lists earlier reports and says how they were matched and that viewing is logged', async () => {
+    it('lists other reports and says how they were matched and that viewing is logged', async () => {
         api.getResidentHistory.mockResolvedValue({ matched_by: 'email', total: 2, reports: rows });
         const { ResidentHistoryCard } = await import('./ResidentHistory');
         const onOpen = vi.fn();
@@ -88,6 +88,12 @@ describe('ResidentSearch', () => {
         const { ResidentSearch } = await import('./ResidentHistory');
         const onOpen = vi.fn();
         await act(async () => { root.render(React.createElement(ResidentSearch, { onOpen })); });
+        // Collapsed until opened.
+        expect(host.querySelector('input')).toBeNull();
+        const toggle = host.querySelector('button[aria-expanded]') as HTMLButtonElement;
+        expect(toggle.textContent).toContain('Search by resident');
+        await act(async () => { toggle.click(); });
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
         return onOpen;
     }
 

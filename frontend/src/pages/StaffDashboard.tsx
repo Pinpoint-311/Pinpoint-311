@@ -754,10 +754,17 @@ export default function StaffDashboard() {
      * all, and below 1024px, where the panel is a `fixed inset-0` overlay, the
      * next Tab walked the list *behind* the overlay with no visible focus ring
      * anywhere on screen. */
+    /* Keyed on the request's id, not the object. The open request is replaced
+     * by a fresh copy every 30 seconds (every 5 while its AI analysis is still
+     * coming), and by every status change, comment or archive. When this
+     * depended on the object, each of those counted as "a new request was
+     * opened": the panel jumped back to the top and focus was pulled to the
+     * heading -- out of a half-typed comment -- while staff were using it. */
+    const openRequestId = selectedRequest?.service_request_id;
     useEffect(() => {
-        if (selectedRequest) {
-            updateHash(`${currentView}/request/${selectedRequest.service_request_id}`);
-            updateTitle(`Request ${selectedRequest.service_request_id}`);
+        if (openRequestId) {
+            updateHash(`${currentView}/request/${openRequestId}`);
+            updateTitle(`Request ${openRequestId}`);
             // Scroll detail panel to top when a new request is selected
             if (detailPanelRef.current) {
                 detailPanelRef.current.scrollTo({ top: 0, behavior: 'instant' });
@@ -778,7 +785,7 @@ export default function StaffDashboard() {
         if (restoreTo?.isConnected && (document.activeElement === document.body || document.activeElement === null)) {
             restoreTo.focus({ preventScroll: true });
         }
-    }, [selectedRequest, currentView, updateHash, updateTitle]);
+    }, [openRequestId, currentView, updateHash, updateTitle]);
 
     /* Below the `lg` breakpoint the detail panel is `fixed inset-0 z-50` — a
      * full-screen overlay laid over the list, which stays in the DOM behind it,

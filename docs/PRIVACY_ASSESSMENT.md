@@ -18,7 +18,7 @@
 | Data Element | Purpose | Retention |
 |--------------|---------|-----------|
 | Name | Identify requester | Per state retention law |
-| Email | Send updates; with the Resident History module on, match a resident's earlier requests (§3.1) | Per state retention law |
+| Email | Send updates; with the Resident History module on, match a resident's other requests (§3.1) | Per state retention law |
 | Phone (optional) | Alternative contact | Per state retention law |
 | Address | Request location. Not collected for categories an administrator sets to "Not collected" | Per state retention law |
 | Email / name fingerprints | Resident History lookups only (§3.1); a keyed one-way HMAC, not the value. Exist only while the module is on | Erased when the module is turned off, and when the email or name is scrubbed under retention |
@@ -40,7 +40,7 @@ Data is used solely for:
 2. Communicating status updates to requesters
 3. Generating anonymized analytics for municipal planning
 4. Security auditing and incident response
-5. When the municipality enables it, showing staff a resident's earlier requests (§3.1)
+5. When the municipality enables it, showing staff a resident's other requests (§3.1)
 
 ### 3.1 Resident History module (optional, off by default)
 

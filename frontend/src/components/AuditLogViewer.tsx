@@ -106,7 +106,7 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
     // Resident history. The searched-for email or name is never recorded --
     // only that a lookup happened, on which report or by which kind, and the count.
     resident_history_viewed: d => d.service_request_id
-        ? `Viewed earlier reports from the resident on ${d.service_request_id}`
+        ? `Viewed other reports from the resident on ${d.service_request_id}`
             + (typeof d.results === 'number' ? ` (${d.results} ${d.results === 1 ? 'match' : 'matches'})` : '')
         : null,
     resident_search: d => `Searched reports by resident ${d.searched_by === 'name' ? 'name' : 'email'}`

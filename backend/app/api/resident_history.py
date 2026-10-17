@@ -1,9 +1,9 @@
-"""Resident history: a resident's earlier reports, and search by resident.
+"""Resident history: a resident's other reports, and search by resident.
 
 An optional module, off by default (system_settings.modules.resident_history).
 Two staff-only endpoints:
 
-    GET  /api/resident-history/requests/{id}   earlier reports from the same
+    GET  /api/resident-history/requests/{id}   other reports from the same
                                                  email as this one
     POST /api/resident-history/search          exact search by full email
                                                  address or full name
@@ -152,7 +152,7 @@ async def history_for_request(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff),
 ):
-    """Earlier reports from the same email address as this report.
+    """Other reports from the same email address as this report.
 
     By email only, not name: two residents can share a name, and showing one
     person's reports on another's record is the error this card must not make.

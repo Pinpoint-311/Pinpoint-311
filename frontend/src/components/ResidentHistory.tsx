@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { History, Lock, Loader2, Mail, Search, UserRound, ChevronRight } from 'lucide-react';
+import { History, Lock, Loader2, Mail, Search, UserRound, ChevronRight, ChevronDown, UserSearch } from 'lucide-react';
 
 import { api } from '../services/api';
 import type { ResidentHistoryItem } from '../types';
@@ -8,8 +8,9 @@ import type { ResidentHistoryItem } from '../types';
 /**
  * The opt-in "Resident history" module, staff side.
  *
- * Two pieces: a card on a request showing the same resident's earlier reports
- * (matched by email), and a "Find a resident" search by full email or full name.
+ * Two pieces: a card on a request showing the same resident's other reports
+ * (matched by email), and a collapsible "Search by resident" option for an exact
+ * full email or full name.
  * Both only render when an administrator has switched the module on, and the
  * server enforces everything that matters regardless of what this file draws:
  * the module switch, department scoping, minimal fields, exact matching, and an
@@ -75,7 +76,7 @@ function AuditFooter({ children }: { children: React.ReactNode }) {
     );
 }
 
-/** Earlier reports from the same resident email, on a request's detail view. */
+/** Other reports from the same resident email, on a request's detail view. */
 export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
     serviceRequestId: string;
     onOpen: (id: string) => void;
@@ -112,7 +113,7 @@ export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
                         <History className="w-4 h-4 text-primary-300" aria-hidden="true" />
                     </div>
                     <h3 id={`resident-history-${serviceRequestId}`} className="font-medium text-white">
-                        Earlier reports from this resident
+                        Other reports from this resident
                     </h3>
                 </div>
                 {state.kind === 'ready' && state.matched && (
@@ -124,7 +125,7 @@ export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
 
             {state.kind === 'loading' && (
                 <div className="flex items-center gap-2 py-3 text-sm text-white/50" role="status">
-                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Checking earlier reports…
+                    <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> Checking other reports…
                 </div>
             )}
             {state.kind === 'error' && (
@@ -134,7 +135,7 @@ export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
                 <p className="py-2 text-sm text-white/50">This report has no email address to match on.</p>
             )}
             {state.kind === 'ready' && state.matched && state.reports.length === 0 && (
-                <p className="py-2 text-sm text-white/50">This is the first report from this email address that you have access to.</p>
+                <p className="py-2 text-sm text-white/50">No other reports from this email address that you have access to.</p>
             )}
             {state.kind === 'ready' && state.reports.length > 0 && (
                 <>
@@ -150,8 +151,10 @@ export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
     );
 }
 
-/** "Find a resident": exact search by full email address or full name. */
+/** "Search by resident": exact search by full email address or full name.
+ *  Collapsed until opened, so it does not crowd the request list. */
 export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
+    const [open, setOpen] = useState(false);
     const [mode, setMode] = useState<'email' | 'name'>('email');
     const [value, setValue] = useState('');
     const [busy, setBusy] = useState(false);
@@ -194,9 +197,29 @@ export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
     };
 
     return (
-        <div className="p-3 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/50">Find a resident</span>
+        <div className="rounded-xl bg-white/[0.03] border border-white/10">
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                aria-expanded={open}
+                aria-controls="resident-search-panel"
+                className="w-full flex items-center gap-2 px-3 py-2.5 text-left rounded-xl hover:bg-white/[0.04] transition-colors"
+            >
+                <UserSearch className="w-4 h-4 text-primary-300" aria-hidden="true" />
+                <span className="text-sm font-medium text-white/80 flex-1">Search by resident</span>
+                <ChevronDown className={`w-4 h-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+            </button>
+            <AnimatePresence initial={false}>
+            {open && (
+            <motion.div
+                id="resident-search-panel"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="overflow-hidden"
+            >
+            <div className="px-3 pb-3 space-y-2.5">
+            <div className="flex items-center justify-end gap-2">
                 <div className="inline-flex p-0.5 rounded-lg bg-white/5 border border-white/10" role="radiogroup" aria-label="Search by">
                     {([['email', 'Email', Mail], ['name', 'Name', UserRound]] as const).map(([key, label, Icon]) => (
                         <button
@@ -257,6 +280,10 @@ export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
             </AnimatePresence>
 
             <AuditFooter>Exact match on the full {mode === 'email' ? 'address' : 'name'}. Searches are logged without what you typed.</AuditFooter>
+            </div>
+            </motion.div>
+            )}
+            </AnimatePresence>
         </div>
     );
 }

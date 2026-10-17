@@ -374,7 +374,7 @@ export interface SystemSettings {
          *  town says otherwise; the server 404s the endpoints when it is off,
          *  so this flag only decides whether the UI is drawn. */
         platform_feedback?: boolean;
-        /** Staff see a resident's earlier reports and can search by resident
+        /** Staff see a resident's other reports and can search by resident
          *  email or full name. Off by default; the server 404s the endpoints
          *  when it is off and audits every lookup when it is on. */
         resident_history?: boolean;

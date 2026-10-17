@@ -92,3 +92,22 @@ def test_a_failed_read_is_not_cached(vault):
     state["fail"] = False
     assert _run(sm.get_secret("SMTP_HOST")) == "smtp.example.org", \
         "a vault blip must not hide the key for the whole TTL"
+
+
+def test_a_vault_that_could_not_be_asked_is_not_cached_as_not_set(vault, monkeypatch):
+    """Live: one failed Key Vault token request made the AI key read as absent
+    for the cache's whole lifetime, and new reports skipped AI analysis."""
+    from app.core import azure_keyvault
+    store, calls, _ = vault
+    monkeypatch.setattr(azure_keyvault, "get_secret",
+                        lambda name: (_ for _ in ()).throw(RuntimeError("no Key Vault access token")))
+    assert _run(sm.get_secret("SMTP_HOST")) is None
+    monkeypatch.setattr(azure_keyvault, "get_secret", lambda name: store.get(name))
+    assert _run(sm.get_secret("SMTP_HOST")) == "smtp.example.org"
+
+
+def test_the_azure_reader_raises_instead_of_answering_not_set(monkeypatch):
+    from app.core import azure_keyvault
+    monkeypatch.setattr(azure_keyvault, "_get_token", lambda: None)
+    with pytest.raises(RuntimeError):
+        azure_keyvault.get_secret("SMTP_HOST")

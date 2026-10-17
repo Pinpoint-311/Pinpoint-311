@@ -29,7 +29,7 @@ Your information is used exclusively for municipal service purposes:
 
 - Processing and tracking your service requests
 - Routing requests to the appropriate department
-- Handling related reports consistently: if your municipality turns this on, staff handling a request can see a list of your earlier requests filed with the same email address, and can look up requests by your full email address or full name (see "Staff Access to Your Earlier Requests" below)
+- Handling related reports consistently: if your municipality turns this on, staff handling a request can see a list of your other requests filed with the same email address, and can look up requests by your full email address or full name (see "Staff Access to Your Other Requests" below)
 - Communicating with you about your request status
 - Improving our services based on aggregate data
 - Complying with public records laws
@@ -39,7 +39,7 @@ Your information is used exclusively for municipal service purposes:
 - Use your information for marketing purposes
 - Share your information with third parties for commercial purposes
 
-## Staff Access to Your Earlier Requests
+## Staff Access to Your Other Requests
 
 This applies only if your municipality has turned on the Resident History feature. It is off unless they do.
 

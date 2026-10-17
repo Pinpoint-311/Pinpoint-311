@@ -215,9 +215,16 @@ def _secret_id(name: str) -> str:
 
 
 def get_secret(name: str) -> Optional[str]:
+    """The secret's value, or None only when Key Vault says it does not exist.
+
+    Anything else raises. "Could not ask" used to return None too, which reads
+    as "not set": secret_manager caches that answer, so one failed token
+    request made the AI key look absent for fifteen minutes and reports were
+    filed with AI analysis skipped.
+    """
     token = _get_token()
     if not token:
-        return None
+        raise RuntimeError("no Key Vault access token")
     url = f"{_vault_url()}/secrets/{_secret_id(name)}?api-version={_api_version()}"
     resp = httpx.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
     if resp.status_code == 404:

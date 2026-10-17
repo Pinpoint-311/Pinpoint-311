@@ -102,7 +102,7 @@ When an external secret store is configured, integration and provider credential
 
 ### Resident History (optional module, off by default)
 
-Lets staff see a resident's earlier requests on a request's detail view, and search requests by an exact full email address or full name. Resident PII stays encrypted as above; matching uses separate keyed fingerprints.
+Lets staff see a resident's other requests on a request's detail view, and search requests by an exact full email address or full name. Resident PII stays encrypted as above; matching uses separate keyed fingerprints.
 
 | Property | Value |
 |----------|-------|

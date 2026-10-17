@@ -73,17 +73,23 @@ def _client():
 
 
 def get_secret(name: str) -> Optional[str]:
+    """The secret's value, or None only when the secret does not exist.
+
+    Any other failure raises, so the caller does not cache "not set" for a key
+    that merely could not be read (see azure_keyvault.get_secret).
+    """
     client = _client()
     if not client:
-        return None
+        raise RuntimeError("AWS Secrets Manager client unavailable")
     try:
         resp = client.get_secret_value(SecretId=_secret_id(name))
         return resp.get("SecretString")
     except Exception as e:
         # ResourceNotFoundException is the common, expected path for unset keys.
-        if e.__class__.__name__ != "ResourceNotFoundException":
-            logger.warning("AWS Secrets Manager read failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e)))
-        return None
+        if e.__class__.__name__ == "ResourceNotFoundException":
+            return None
+        logger.warning("AWS Secrets Manager read failed for %s: %s", sanitize_for_log(name), sanitize_for_log(str(e)))
+        raise
 
 
 def set_secret(name: str, value: str) -> bool:
