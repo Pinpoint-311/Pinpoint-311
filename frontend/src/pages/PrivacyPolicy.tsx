@@ -11,7 +11,7 @@ const DEFAULT_PRIVACY_POLICY = `
 When you submit a service request, we collect only the information necessary to process and respond to your request:
 
 - **Contact Information**: Name, email address, and/or phone number (email is required for all submissions)
-- **Location Data**: Address or geographic coordinates related to your service request
+- **Location Data**: Address or geographic coordinates related to your service request. Request types that don't need a location don't ask for one, and none is stored for them
 - **Request Details**: Description of the issue, photos, and any additional context you provide
 - **Technical Data**: Browser type, device information, and IP address for security purposes
 
@@ -29,6 +29,7 @@ Your information is used exclusively for municipal service purposes:
 
 - Processing and tracking your service requests
 - Routing requests to the appropriate department
+- Handling related reports consistently: if your municipality turns this on, staff handling a request can see a list of your earlier requests filed with the same email address, and can look up requests by your full email address or full name (see "Staff Access to Your Earlier Requests" below)
 - Communicating with you about your request status
 - Improving our services based on aggregate data
 - Complying with public records laws
@@ -37,6 +38,17 @@ Your information is used exclusively for municipal service purposes:
 - Sell your personal information
 - Use your information for marketing purposes
 - Share your information with third parties for commercial purposes
+
+## Staff Access to Your Earlier Requests
+
+This applies only if your municipality has turned on the Resident History feature. It is off unless they do.
+
+When it is on, municipal staff working on one of your requests can see a short list of your other requests that were filed with the same email address, and can search for requests by an exact full email address or full name. This helps them recognise a recurring problem or follow up on an earlier report. Safeguards:
+
+- Staff see only requests their own department can already access, and only each request's number, category, status and date — not its description, location or your contact details
+- Matching uses a one-way, keyed fingerprint of your email address or name. Your contact details remain encrypted, and the fingerprint cannot be turned back into your email or name
+- Every lookup is recorded in the municipality's audit log: who looked, when, and how many requests matched. The email address or name that was searched for is not recorded
+- When your contact details are removed under the retention schedule, the fingerprint is removed with them, so older requests can no longer be linked to you
 
 ## Information Sharing
 

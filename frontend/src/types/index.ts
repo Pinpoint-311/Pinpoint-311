@@ -69,6 +69,10 @@ export interface RoutingContact {
     roads?: string[];
 }
 
+/** Whether a category asks residents for a location. `hidden` means no map on
+ *  the form, and the server drops a location sent anyway. */
+export type LocationMode = 'required' | 'optional' | 'hidden';
+
 export interface ServiceDefinition {
     id: number;
     service_code: string;
@@ -79,6 +83,7 @@ export interface ServiceDefinition {
     display_order: number;
     /** Optional SLA target in hours from submission to closure. null = no SLA. */
     sla_hours?: number | null;
+    location_mode?: LocationMode;
     departments: Department[];
     routing_mode?: 'township' | 'third_party' | 'road_based';
     routing_config?: {
@@ -126,6 +131,29 @@ export interface ServiceCreate {
     routing_mode?: string;
     routing_config?: Record<string, any>;
     assigned_department_id?: number;
+    location_mode?: LocationMode;
+}
+
+/** One row of the resident-history card or a resident search: the minimum a
+ *  clerk needs to recognise a report and open it. Never another report's
+ *  description, address or contact details. */
+export interface ResidentHistoryItem {
+    service_request_id: string;
+    service_name: string | null;
+    status: string | null;
+    requested_datetime: string | null;
+}
+
+export interface ResidentHistory {
+    matched_by: 'email' | null;
+    total: number;
+    reports: ResidentHistoryItem[];
+}
+
+export interface ResidentSearchResult {
+    searched_by: 'email' | 'name';
+    total: number;
+    reports: ResidentHistoryItem[];
 }
 
 // Service Request types
@@ -344,6 +372,10 @@ export interface SystemSettings {
          *  town says otherwise; the server 404s the endpoints when it is off,
          *  so this flag only decides whether the UI is drawn. */
         platform_feedback?: boolean;
+        /** Staff see a resident's earlier reports and can search by resident
+         *  email or full name. Off by default; the server 404s the endpoints
+         *  when it is off and audits every lookup when it is on. */
+        resident_history?: boolean;
     };
     /** Where "want to tell us more?" points when platform_feedback is on.
      *  null/'' means no such line is rendered — a dead mailto is worse than

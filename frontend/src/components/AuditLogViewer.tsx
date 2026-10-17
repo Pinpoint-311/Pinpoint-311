@@ -102,6 +102,14 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
                 ? ` including sensitive fields (${listOf(d.sensitive_fields)})` : '')
         : null,
     data_export_pii: d => `Exported service requests including resident PII (${d.format || 'csv'})`,
+    // Resident history. The searched-for email or name is never recorded --
+    // only that a lookup happened, on which report or by which kind, and the count.
+    resident_history_viewed: d => d.service_request_id
+        ? `Viewed earlier reports from the resident on ${d.service_request_id}`
+            + (typeof d.results === 'number' ? ` (${d.results} ${d.results === 1 ? 'match' : 'matches'})` : '')
+        : null,
+    resident_search: d => `Searched reports by resident ${d.searched_by === 'name' ? 'name' : 'email'}`
+        + (typeof d.results === 'number' ? ` (${d.results} ${d.results === 1 ? 'match' : 'matches'})` : ''),
     backup_key_generated: () => 'Generated a new backup encryption key',
     pii_reencryption: d => `Re-encrypted resident records (${plural(d.rows ?? 0, 'row')}, ${plural(d.fields ?? 0, 'field')})`,
     gcp_configured: d => d.project_id ? `Connected Google Cloud project ${d.project_id}` : null,
@@ -401,6 +409,8 @@ export default function AuditLogViewer() {
                                 <option value="connector_alerts_muted" className="bg-slate-800">Alerts Muted</option>
                                 <option value="public_records_export" className="bg-slate-800">Records Export</option>
                                 <option value="data_export_pii" className="bg-slate-800">PII Export</option>
+                                <option value="resident_history_viewed" className="bg-slate-800">Resident History Viewed</option>
+                                <option value="resident_search" className="bg-slate-800">Resident Search</option>
                             </optgroup>
                         </select>
                     </div>

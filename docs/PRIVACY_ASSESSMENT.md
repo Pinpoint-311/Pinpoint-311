@@ -18,9 +18,10 @@
 | Data Element | Purpose | Retention |
 |--------------|---------|-----------|
 | Name | Identify requester | Per state retention law |
-| Email | Send updates | Per state retention law |
+| Email | Send updates; with the Resident History module on, match a resident's earlier requests (§3.1) | Per state retention law |
 | Phone (optional) | Alternative contact | Per state retention law |
-| Address | Request location | Per state retention law |
+| Address | Request location. Not collected for categories an administrator sets to "Not collected" | Per state retention law |
+| Email / name fingerprints | Resident History lookups only (§3.1); a keyed one-way HMAC, not the value | Cleared when the email or name is scrubbed under retention |
 | Photos | Document issue | Per state retention law |
 | IP Address | Security/audit | 90 days |
 
@@ -39,6 +40,42 @@ Data is used solely for:
 2. Communicating status updates to requesters
 3. Generating anonymized analytics for municipal planning
 4. Security auditing and incident response
+5. When the municipality enables it, showing staff a resident's earlier requests (§3.1)
+
+### 3.1 Resident History module (optional, off by default)
+
+**Purpose.** Lets staff handling a request see the same resident's other
+requests, and find requests by a resident's exact email address or full name,
+so related reports are handled consistently. It is a use of the data for
+processing and resolving service requests; it is off unless an administrator
+turns it on under Modules, and that choice is recorded in the audit log.
+
+**How matching works without weakening encryption.** Resident name, email
+and phone remain encrypted (AES-256-GCM, random nonce per value, data key
+wrapped by the configured KMS). Matching uses separate fingerprint columns:
+HMAC-SHA256 of the normalised email and of the normalised full name, under a
+random 256-bit key that is itself wrapped by the same KMS envelope. Without
+that key a fingerprint reveals nothing, and it cannot be reversed into the
+value. A single first or last name is never fingerprinted.
+
+**Controls, all enforced server-side.**
+
+| Control | Detail |
+|---------|--------|
+| Opt-in | Module off by default; endpoints answer 404 while it is off |
+| Least privilege | Staff and administrators only, limited to requests their department scoping already permits |
+| Data minimisation | Returns request number, category, status and date only — never another request's description, location or contact details |
+| Exact match only | Full email address or full name; no partial or fuzzy search over PII |
+| Accountability | Every lookup writes an audit event (`resident_history_viewed`, `resident_search`) with actor, request or search type, and result count — never the searched value. If the audit write fails, no results are returned |
+| No PII in URLs | Search is a POST; values never appear in URLs, proxy logs or browser history |
+| Abuse limits | Rate limited per client |
+| Retention | Scrubbing a request's email or name clears its fingerprints, so archived requests cannot be linked to a resident |
+| No disclosure outward | Fingerprints are never included in exports, work orders or connector payloads |
+
+**Residual risk.** Someone holding both a database copy and access to the
+KMS key could test whether a specific email filed requests. That is no more
+than they could learn by decrypting the email column itself with the same
+access.
 
 ---
 
@@ -87,8 +124,10 @@ or off per town.
 ### 5.1 Technical Controls
 - TLS 1.3 encryption in transit
 - AES-256 encryption at rest
-- Role-based access control
-- Audit logging of all access
+- Role-based access control, with department scoping for staff
+- Audit logging of every change, every export containing resident PII, and
+  every Resident History lookup. Ordinary viewing of a single request by its
+  assigned staff is not individually logged
 
 ### 5.2 Administrative Controls
 - Staff security training requirements
@@ -131,7 +170,7 @@ Residents may:
 | Unauthorized access | Low | High | MFA, RBAC, audit logs |
 | Data breach | Low | High | Encryption, monitoring |
 | Data loss | Low | Medium | Daily backups |
-| Misuse by staff | Low | Medium | Audit logs, training |
+| Misuse by staff | Low | Medium | Audit logs, training; Resident History lookups individually audited and department-scoped |
 
 ---
 

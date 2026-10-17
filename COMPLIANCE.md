@@ -96,9 +96,25 @@ When an external secret store is configured, integration and provider credential
 |----------|-------|
 | Scheme | AES-256-GCM data key per value, wrapped by the configured cloud key service |
 | Portability | A value stays decryptable under whichever key service wrapped it (tagged wrap), so switching clouds does not orphan existing data |
-| Protected fields | Email, phone, name, address |
+| Protected fields | Email, phone, first and last name. The service address and coordinates are stored in plain text, because they are mapped, routed by jurisdiction and (unless a report is unlisted) shown on the public map. Categories set to "Not collected" store no location at all |
 | Local fallback | Fernet (AES-128-CBC + HMAC-SHA256) derived from `SECRET_KEY` |
 | Provider guarantees | HSM backing, rotation, and certifications are the cloud provider's, not Pinpoint's — verify them against your requirements |
+
+### Resident History (optional module, off by default)
+
+Lets staff see a resident's earlier requests on a request's detail view, and search requests by an exact full email address or full name. Resident PII stays encrypted as above; matching uses separate keyed fingerprints.
+
+| Property | Value |
+|----------|-------|
+| Matching | HMAC-SHA256 of the normalised email and of the normalised full name, in their own indexed columns. One-way; the encrypted PII columns are unchanged |
+| Fingerprint key | 256 random bits per deployment, generated on first use, stored wrapped by the PII envelope (so by the configured cloud KMS). Not derived from `SECRET_KEY` |
+| Access | Staff and admin roles only, within the caller's department scope; the module switch is checked server-side on every call |
+| Disclosure | Request number, category, status and date only |
+| Audit | Every lookup is an audit event (`resident_history_viewed`, `resident_search`) with actor and result count, never the searched value; results are withheld if the audit write fails |
+| Retention | Scrubbing a request's email or name clears its fingerprints |
+| Egress | Fingerprints are excluded from exports, work orders and connector payloads |
+
+See `docs/PRIVACY_ASSESSMENT.md` §3.1 for the purpose statement and residual risk.
 
 ### Content Moderation (public inputs)
 

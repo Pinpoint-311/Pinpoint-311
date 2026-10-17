@@ -18,6 +18,8 @@ import {
     Department,
     RequestComment,
     PublicServiceRequest,
+    ResidentHistory,
+    ResidentSearchResult,
 } from '../types';
 
 const API_BASE = '/api';
@@ -490,6 +492,22 @@ class ApiClient {
         return this.request<ServiceDefinition>(`/services/${id}`, {
             method: 'PUT',
             body: JSON.stringify(data),
+        });
+    }
+
+    /** Earlier reports from the same resident email as this report. Staff
+     *  only; 404s unless the Resident History module is on. Audited. */
+    async getResidentHistory(serviceRequestId: string): Promise<ResidentHistory> {
+        return this.request<ResidentHistory>(
+            `/resident-history/requests/${encodeURIComponent(serviceRequestId)}`);
+    }
+
+    /** Exact search by a resident's full email address or full name. POST so
+     *  the value never sits in a URL or a log line. Audited without the value. */
+    async searchResidents(query: { email: string } | { name: string }): Promise<ResidentSearchResult> {
+        return this.request<ResidentSearchResult>('/resident-history/search', {
+            method: 'POST',
+            body: JSON.stringify(query),
         });
     }
 

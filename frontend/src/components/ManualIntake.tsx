@@ -3,7 +3,7 @@ import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../ma
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Phone, Mail, Footprints, Search, CheckCircle, Loader2, Sparkles,
-    ChevronDown, MapPin, User as UserIcon, X, AlertCircle, EyeOff, SignpostBig,
+    ChevronDown, MapPin, MapPinOff, User as UserIcon, X, AlertCircle, EyeOff, SignpostBig,
 } from 'lucide-react';
 
 import { Modal } from './ui';
@@ -540,37 +540,46 @@ export default function ManualIntake({ isOpen, onClose, services, onCreated }: M
 
                 {/* Location — the same picker residents use: search an address or
                     drop a pin on the map, geolocated identically to an online report. */}
-                <div>
-                    {/* Only the fallback branch is a single labelable control;
-                        the picker is a composite, so it gets a group label
-                        rather than a `for` pointing at nothing. */}
-                    {mapProviderReady(mapsRaw)
-                        ? <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
-                        : <label htmlFor="intake-address" className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></label>}
-                    {mapProviderReady(mapsRaw) ? (
-                        <LocationPicker
-                            key={mapKey}
-                            config={mapConfig}
-                            townshipBoundary={townshipBoundary}
-                            customLayers={mapLayers.filter(layer => {
-                                if ((layer as any).visible_on_map === false) return false;
-                                const codes = layer.service_codes || [];
-                                if (codes.length === 0) return true;
-                                return selected ? codes.includes(selected.service_code) : false;
-                            })}
-                            value={{ address, lat, lng }}
-                            onChange={(loc) => { setAddress(loc.address); setLat(loc.lat); setLng(loc.lng); }}
-                            onAssetSelect={(asset) => setMatchedAsset(asset)}
-                            placeholder="Search for an address or click on the map…"
-                        />
-                    ) : (
-                        <div className="relative">
-                            <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
-                            <input id="intake-address" value={address} onChange={e => setAddress(e.target.value)}
-                                placeholder="123 Main St, or nearest intersection" className={`${inputCls} pl-9`} />
-                        </div>
-                    )}
-                </div>
+                {/* A category that collects no location gets none, from a clerk
+                    either -- the server drops one sent anyway. */}
+                {selected?.location_mode === 'hidden' ? (
+                    <div className="flex items-center gap-3 p-3.5 rounded-xl bg-white/[0.04] border border-white/10 text-white/55">
+                        <MapPinOff className="w-4 h-4 shrink-0 text-white/40" aria-hidden="true" />
+                        <p className="text-sm">{selected.service_name} doesn't collect a location.</p>
+                    </div>
+                ) : (
+                    <div>
+                        {/* Only the fallback branch is a single labelable control;
+                            the picker is a composite, so it gets a group label
+                            rather than a `for` pointing at nothing. */}
+                        {mapProviderReady(mapsRaw)
+                            ? <span className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></span>
+                            : <label htmlFor="intake-address" className={labelCls}>Location <span className="normal-case tracking-normal text-white/40 font-normal ml-1">(optional)</span></label>}
+                        {mapProviderReady(mapsRaw) ? (
+                            <LocationPicker
+                                key={mapKey}
+                                config={mapConfig}
+                                townshipBoundary={townshipBoundary}
+                                customLayers={mapLayers.filter(layer => {
+                                    if ((layer as any).visible_on_map === false) return false;
+                                    const codes = layer.service_codes || [];
+                                    if (codes.length === 0) return true;
+                                    return selected ? codes.includes(selected.service_code) : false;
+                                })}
+                                value={{ address, lat, lng }}
+                                onChange={(loc) => { setAddress(loc.address); setLat(loc.lat); setLng(loc.lng); }}
+                                onAssetSelect={(asset) => setMatchedAsset(asset)}
+                                placeholder="Search for an address or click on the map…"
+                            />
+                        ) : (
+                            <div className="relative">
+                                <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" aria-hidden="true" />
+                                <input id="intake-address" value={address} onChange={e => setAddress(e.target.value)}
+                                    placeholder="123 Main St, or nearest intersection" className={`${inputCls} pl-9`} />
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Optional caller contact */}
                 <div>

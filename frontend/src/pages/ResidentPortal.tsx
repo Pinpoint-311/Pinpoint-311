@@ -26,6 +26,7 @@ import {
     Linkedin,
     AlertTriangle,
     Search,
+    MapPinOff,
 } from 'lucide-react';
 import { Button, Input, Textarea, Card } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
@@ -87,6 +88,9 @@ export default function ResidentPortal() {
     const [step, setStep] = useState<Step>('categories');
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
+    /** Whether this category asks where. Set per category by an administrator;
+     *  absent on an older server, which means the map was always optional. */
+    const locationMode = selectedService?.location_mode || 'optional';
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -557,6 +561,13 @@ export default function ResidentPortal() {
         if (formData.phone && !isValidPhone(formData.phone)) {
             errors.phone = 'Please enter a valid phone number, e.g. (555) 123-4567';
         }
+        // The server refuses it too; checking here saves the round trip.
+        if (locationMode === 'required') {
+            const hasPin = formData.lat != null && formData.long != null;
+            if (!(formData.address || '').trim() && !hasPin) {
+                errors.address = 'Choose a spot on the map or enter an address';
+            }
+        }
 
         // Validate required custom questions
         const questions = selectedService?.routing_config?.custom_questions;
@@ -636,8 +647,14 @@ export default function ResidentPortal() {
             const inlineFallback: Record<string, string> = {};
             usable.forEach((p) => { if (p.handle) inlineFallback[p.handle] = p.original; });
 
+            // A category that collects no location sends none, and an empty
+            // address is no address -- the server normalises both the same way.
+            const blankAddress = !(formData.address || '').trim();
             const result = await api.createRequest({
                 ...formData,
+                address: locationMode === 'hidden' || blankAddress ? undefined : formData.address,
+                lat: locationMode === 'hidden' ? undefined : formData.lat,
+                long: locationMode === 'hidden' ? undefined : formData.long,
                 preferred_language: language,  // Capture user's selected language for notifications
                 media_urls: usable.map((p) => p.handle || p.original),
                 matched_asset: matchedAsset,
@@ -1314,11 +1331,22 @@ export default function ResidentPortal() {
                                                     required
                                                 />
 
-                                                {/* Google Maps Location Picker */}
-                                                {mapProviderReady(mapsRaw) ? (
-                                                    <div>
+                                                {/* Location: per category, required, optional or not collected */}
+                                                {locationMode === 'hidden' ? (
+                                                    <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/10 text-white/60">
+                                                        <MapPinOff className="w-5 h-5 shrink-0 text-white/40" aria-hidden="true" />
+                                                        <p className="text-sm">This request doesn't need a location.</p>
+                                                    </div>
+                                                ) : mapProviderReady(mapsRaw) ? (
+                                                    <div id={FIELD_IDS.address} tabIndex={-1} className="outline-none">
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
                                                             {"Location / Address"}
+                                                            {locationMode === 'optional' && (
+                                                                <span className="ml-1.5 font-normal text-white/40">(optional)</span>
+                                                            )}
+                                                            {locationMode === 'required' && (
+                                                                <span className="ml-1 text-red-400" aria-hidden="true">*</span>
+                                                            )}
                                                         </label>
                                                         <LocationPicker
                                                             config={mapConfig}
@@ -1383,6 +1411,9 @@ export default function ResidentPortal() {
                                                             <p className="text-sm">The interactive map needs a map provider to be configured</p>
                                                         </div>
                                                     </>
+                                                )}
+                                                {locationMode !== 'hidden' && formErrors.address && (
+                                                    <p className="text-sm text-red-400 -mt-2">{formErrors.address}</p>
                                                 )}
 
                                                 {/* Which road the pin landed on. Shown whether or not anything

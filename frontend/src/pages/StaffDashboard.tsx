@@ -53,6 +53,7 @@ import { CommentCard, CommentEmptyState } from '../components/commentUI';
 import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData, PlatformFeedbackStatistics } from '../types';
@@ -2486,6 +2487,13 @@ export default function StaffDashboard() {
                                     )}
                                 </div>
 
+                                {/* Search by resident: a server lookup over encrypted PII,
+                                    so it is its own audited control rather than part of the
+                                    instant filter above. Only when the module is on. */}
+                                {settings?.modules?.resident_history && (
+                                    <ResidentSearch onOpen={(id) => loadRequestDetail(id)} />
+                                )}
+
                                 {/* Sort Order */}
                                 <div>
                                     <label htmlFor="request-sort-order" className="text-xs text-white/50 mb-1 block">Sort order</label>
@@ -3664,6 +3672,23 @@ export default function StaffDashboard() {
                                                 )}
                                             </div>
                                         </div>
+
+                                        {/* Resident history: opt-in module; the server scopes, minimises and audits. */}
+                                        {settings?.modules?.resident_history && (
+                                            <ResidentHistoryCard
+                                                serviceRequestId={selectedRequest.service_request_id}
+                                                onOpen={(id) => loadRequestDetail(id)}
+                                            />
+                                        )}
+
+                                        {/* A report from a category that collects no location, or one
+                                            the resident skipped: said, rather than leaving a gap. */}
+                                        {!selectedRequest.address && selectedRequest.lat == null && (
+                                            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-slate-800/40 border border-white/[0.06] text-sm text-white/50">
+                                                <MapPin className="w-4 h-4 text-white/30" aria-hidden="true" />
+                                                No location on this report
+                                            </div>
+                                        )}
 
                                         {/* ═══ SECTION 2: Location & Map ═══ */}
                                         {

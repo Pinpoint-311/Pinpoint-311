@@ -77,13 +77,16 @@ import {
     MessageSquareHeart,
     CircleCheck,
     Pencil,
+    MapPinned,
+    MapPinOff,
+    UserSearch,
 } from 'lucide-react';
 import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
 import { api, MapLayer, ResearchPackSwitch } from '../services/api';
-import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact } from '../types';
+import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact, LocationMode } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
@@ -784,6 +787,8 @@ export default function AdminConsole() {
         icon: 'AlertCircle',
         // Optional SLA target in hours; '' means no SLA for this category.
         sla_hours: '' as string,
+        // Whether residents are asked where. See backend services/location_policy.
+        location_mode: 'optional' as LocationMode,
         routing_config: {
             // Township mode
             route_to: 'all_staff' as 'all_staff' | 'specific_staff',
@@ -871,7 +876,7 @@ export default function AdminConsole() {
      * another. They live in `capability_switches` now, with the ticks in Setup
      * Instructions; what is left here has no provider, no credentials and
      * nothing to switch off at the dispatch layer. */
-    const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false, platform_feedback: false });
+    const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false, platform_feedback: false, resident_history: false });
     // Where longer platform feedback is emailed. Held as a string because the
     // input is a text box and '' is a meaningful answer: it is how an admin
     // says "make no such offer", and the server stores '' as NULL.
@@ -1074,6 +1079,7 @@ export default function AdminConsole() {
                 research_portal: settings.modules?.research_portal || false,
                 unlisted_reports: settings.modules?.unlisted_reports ?? (settings.modules as any)?.private_reports ?? false,
                 platform_feedback: settings.modules?.platform_feedback || false,
+                resident_history: settings.modules?.resident_history || false,
             });
             setPlatformFeedbackEmail(settings.platform_feedback_email || '');
             setPublicArchiveDays(settings.public_archive_days ? String(settings.public_archive_days) : '');
@@ -1354,6 +1360,7 @@ export default function AdminConsole() {
             assigned_department_id: service.assigned_department_id || null,
             icon: service.icon || 'AlertCircle',
             sla_hours: service.sla_hours ? String(service.sla_hours) : '',
+            location_mode: service.location_mode || 'optional',
             routing_config: {
                 // Township mode
                 route_to: config.route_to || 'all_staff',
@@ -1451,6 +1458,7 @@ export default function AdminConsole() {
                 icon: serviceRouting.icon,
                 // 0 explicitly clears the SLA; a value sets it.
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
+                location_mode: serviceRouting.location_mode,
             });
 
             setShowServiceEditModal(false);
@@ -2535,6 +2543,11 @@ export default function AdminConsole() {
                                                identity. Longer feedback goes to email instead, so it
                                                never becomes a record this town holds. */
                                             { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous multiple-choice question about whether this platform made reporting easier. Stores only the answer and the date \u2014 no comments, no name, no email, no IP \u2014 so there is nothing resident-written in your records. Longer feedback goes by email to the address below. Aggregates appear on Statistics', icon: MessageSquareHeart, color: 'sky' },
+                                            /* Spelled out because it is the one module that reads
+                                               resident PII across reports, and an administrator
+                                               turning it on is making a privacy decision. Every
+                                               clause below is enforced on the server, not here. */
+                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s earlier reports on each request, and let them search by a resident\u2019s full email address or full name. Exact matches only, limited to reports each staff member can already open, and never another report\u2019s details. Every lookup is recorded in the audit log, without the searched-for email or name', icon: UserSearch, color: 'blue' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
@@ -4469,7 +4482,14 @@ export default function AdminConsole() {
                                     <button
                                         type="button"
                                         key={mode.value}
-                                        onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
+                                        onClick={() => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_mode: mode.value as any,
+                                            // Road rules are decided from the pin, so a road-routed
+                                            // category cannot go without one.
+                                            location_mode: mode.value === 'road_based' && p.location_mode === 'hidden'
+                                                ? 'optional' : p.location_mode,
+                                        }))}
                                         className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
                                             ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
                                             : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
@@ -4484,6 +4504,60 @@ export default function AdminConsole() {
                                 );
                             })}
                         </div>
+                    </div>
+
+                    {/* Location: whether residents are asked where */}
+                    <div className="space-y-2.5">
+                        <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Location</label>
+                            <p className="text-xs text-white/45 mt-1">What residents are asked for when they pick this category.</p>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" role="radiogroup" aria-label="Location">
+                            {([
+                                { value: 'required', label: 'Required', desc: 'A pin or an address is needed to submit', icon: MapPinned, color: 'text-rose-300' },
+                                { value: 'optional', label: 'Optional', desc: 'Map is shown and can be skipped', icon: MapPin, color: 'text-sky-300' },
+                                { value: 'hidden', label: 'Not collected', desc: 'No map on the form', icon: MapPinOff, color: 'text-slate-300' },
+                            ] as const).map(option => {
+                                const IconComponent = option.icon;
+                                const isSelected = serviceRouting.location_mode === option.value;
+                                const unavailable = option.value === 'hidden' && serviceRouting.routing_mode === 'road_based';
+                                return (
+                                    <button
+                                        type="button"
+                                        key={option.value}
+                                        role="radio"
+                                        aria-checked={isSelected}
+                                        aria-disabled={unavailable}
+                                        onClick={() => {
+                                            if (unavailable) return;
+                                            setServiceRouting(p => ({ ...p, location_mode: option.value }));
+                                        }}
+                                        className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
+                                            ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
+                                            : unavailable
+                                                ? 'bg-white/[0.02] border-white/5 text-white/30 cursor-not-allowed'
+                                                : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-2.5 mb-1.5">
+                                            <IconComponent className={`w-4 h-4 ${isSelected ? 'text-primary-300' : option.color}`} />
+                                            <div className="font-semibold text-sm text-white tracking-tight">{option.label}</div>
+                                        </div>
+                                        <div className="text-xs text-white/50 leading-relaxed">{option.desc}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {serviceRouting.routing_mode === 'road_based' && (
+                            <p className="text-xs text-amber-300/80">
+                                Road-based routing decides from the pin, so this category always offers the map.
+                            </p>
+                        )}
+                        {serviceRouting.location_mode === 'hidden' && (
+                            <p className="text-xs text-white/45">
+                                These reports won't appear on the map, and any location an outside app sends is discarded.
+                            </p>
+                        )}
                     </div>
 
                     {/* Icon Picker */}
