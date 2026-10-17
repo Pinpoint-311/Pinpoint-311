@@ -51,7 +51,7 @@ if SENTRY_DSN:
         before_send=_crash_reporting_wanted,
     )
 
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates, resident_history
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -420,6 +420,13 @@ async def lifespan(app: FastAPI):
     if _state == "suspended":
         logger.warning("[Managed] Instance is SUSPENDED — API serves 503 until the state resumes it")
 
+    # Fingerprint reports that predate the resident-history index. In a thread:
+    # it decrypts every older row once, and must not hold up startup or the
+    # event loop. Idempotent and lock-guarded, so the worker running it too is
+    # harmless. See core/resident_index.backfill.
+    from app.core import resident_index as _resident_index
+    index_backfill = asyncio.create_task(asyncio.to_thread(_resident_index.backfill))
+
     # Start background uptime monitoring task
     uptime_task = asyncio.create_task(uptime_monitor())
     logger.info("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
@@ -586,6 +593,9 @@ app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTe
 # on it checks system_settings.modules.platform_feedback and 404s when the
 # town has not enabled it, so mounting it costs a disabled town nothing.
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Platform Feedback"])
+# Optional module, off by default, same shape as feedback: always mounted, every
+# route 404s unless system_settings.modules.resident_history is on.
+app.include_router(resident_history.router, prefix="/api/resident-history", tags=["Resident History"])
 # Public and unauthenticated by design: Azure and AWS fetch the file themselves,
 # anonymously, when an operator presses a deploy button on the setup page. The
 # templates hold resource definitions and no secret -- see the module docstring

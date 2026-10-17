@@ -240,6 +240,10 @@ NEVER = {
     # share_pii flag; these are the ciphertext and must never be sent at all.
     "_first_name_encrypted", "_last_name_encrypted",
     "_email_encrypted", "_phone_encrypted",
+    # Keyed fingerprints of the resident's email and name, for the staff-only
+    # resident-history lookup. Meaningless outside this town and must not leave
+    # it: a vendor holding them could link a resident's reports across exports.
+    "resident_email_index", "resident_name_index", "pii_index_version",
     # Written by staff, for staff.
     "staff_notes",
     # The legal hold and the content-moderation flag, plus the moderation text

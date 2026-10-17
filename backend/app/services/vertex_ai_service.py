@@ -342,11 +342,17 @@ async def get_historical_context(db, address: str, service_code: str, lat: Optio
         "past_resolution_quality": None
     }
     
+    # No address is not an address. Matching `address == ""` made every
+    # location-less report in a category a "recurrence" of all the others (and
+    # chronic at five), so a blank address matches nothing instead.
+    from sqlalchemy import false
+    addr_filter = (ServiceRequest.address == address) if (address or "").strip() else false()
+
     try:
         # 1. Chronic Factor: Count reports at this address in last 90 days
         three_months_ago = datetime.now() - timedelta(days=90)
         addr_history_query = select(ServiceRequest.id, ServiceRequest.service_request_id, ServiceRequest.requested_datetime).where(
-            ServiceRequest.address == address,
+            addr_filter,
             ServiceRequest.service_code == service_code,  # Category-specific check
             ServiceRequest.requested_datetime >= three_months_ago,
             ServiceRequest.deleted_at.is_(None)
@@ -368,7 +374,7 @@ async def get_historical_context(db, address: str, service_code: str, lat: Optio
         
         # 2. Past Resolution Quality (Last closed report at this address)
         last_res_query = select(ServiceRequest.service_request_id, ServiceRequest.closed_substatus, ServiceRequest.completion_message, ServiceRequest.status).where(
-            ServiceRequest.address == address,
+            addr_filter,
             ServiceRequest.status == "closed",
             ServiceRequest.deleted_at.is_(None)
         )

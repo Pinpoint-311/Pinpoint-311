@@ -656,8 +656,11 @@ async def get_service_definition(service_code: str, db: AsyncSession = Depends(g
     if not service:
         raise HTTPException(status_code=404, detail=f"Service not found: {service_code}")
     
+    from app.services import location_policy
+    location_mode = location_policy.normalise_mode(getattr(service, "location_mode", None))
+
     # Build Open311 v2 service_definition response with extended attributes
-    return {
+    definition = {
         "service_code": service.service_code,
         "service_name": service.service_name,
         "description": service.description,
@@ -746,9 +749,26 @@ async def get_service_definition(service_code: str, db: AsyncSession = Depends(g
             }
         ],
         "routing_mode": service.routing_mode or "township",
+        "location_mode": location_mode,
         "translations_available": list((service.translations or {}).keys()),
         "departments": [d.name for d in (service.departments or [])]
     }
+
+    # The location attributes say what this category actually asks for. A
+    # category that collects no location does not list them at all; one that
+    # requires a location marks the address required (lat/long are the other
+    # way to satisfy it, which GeoReport cannot express as a flag).
+    location_codes = {"address", "lat", "long"}
+    if location_mode == location_policy.HIDDEN:
+        definition["attributes"] = [a for a in definition["attributes"]
+                                    if a.get("code") not in location_codes]
+    elif location_mode == location_policy.REQUIRED:
+        for attr in definition["attributes"]:
+            if attr.get("code") == "address":
+                attr["required"] = True
+                attr["datatype_description"] = (
+                    "Street address of the issue (required unless lat and long are given)")
+    return definition
 
 
 @router.get("/tokens/{service_request_id}.json")
@@ -1031,6 +1051,15 @@ async def create_request(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid service code: {request_data.service_code}"
         )
+
+    # The category's location rule, before photos or moderation do any work:
+    # refused if it needs a location and has none, dropped if it collects none.
+    from app.services import location_policy
+    try:
+        request_data.address, request_data.lat, request_data.long = location_policy.apply(
+            service.location_mode, request_data.address, request_data.lat, request_data.long)
+    except location_policy.LocationMissing as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     # Content moderation: reject explicit/abusive text or images before the
     # report is created. Text uses better-profanity plus the cloud text moderator
@@ -1689,6 +1718,13 @@ async def create_manual_intake(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid service code"
         )
+
+    # A clerk may not have a location yet, so "required" is not enforced here;
+    # a category that collects no location still drops one.
+    from app.services import location_policy
+    intake_data.address, intake_data.lat, intake_data.long = location_policy.apply(
+        service.location_mode, intake_data.address, intake_data.lat, intake_data.long,
+        enforce_required=False)
 
     # Same redaction as a resident submission. A photo emailed in or attached
     # by a clerk from a phone call is no less likely to have a bystander in it,

@@ -87,6 +87,12 @@ class Department(Base):
 
 class ServiceDefinition(Base):
     __tablename__ = "service_definitions"
+    __table_args__ = (
+        CheckConstraint(
+            "location_mode IN ('required', 'optional', 'hidden')",
+            name="ck_service_definitions_location_mode",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     service_code = Column(String(50), unique=True, index=True, nullable=False)
@@ -104,6 +110,13 @@ class ServiceDefinition(Base):
 
     routing_mode = Column(String(50), default="township")  # township, third_party, road_based
     routing_config = Column(JSON, default={})
+
+    # Whether residents are asked where: "required", "optional" or "hidden"
+    # (no map; a location sent anyway is dropped). A column rather than a key in
+    # routing_config because the admin editor rebuilds routing_config wholesale
+    # on every save and would silently drop a key it does not know about.
+    # Rules live in services/location_policy.py.
+    location_mode = Column(String(16), nullable=False, default="optional", server_default="optional")
     # For third_party: { "url": "...", "message": "..." }
     # For road_based: { 
     #   "default": "township|third_party", 
@@ -129,6 +142,16 @@ class ServiceDefinition(Base):
         secondary=service_departments,
         back_populates="services"
     )
+
+
+class PiiIndexKey(Base):
+    """The key behind ServiceRequest.resident_*_index, wrapped by the PII
+    envelope (and so by the town's KMS when one is configured). One row."""
+    __tablename__ = "pii_index_keys"
+
+    id = Column(Integer, primary_key=True)
+    wrapped_key = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class ServiceRequest(Base):
@@ -175,6 +198,40 @@ class ServiceRequest(Base):
     _last_name_encrypted = Column("last_name", Text)   # Encrypted storage
     _email_encrypted = Column("email", Text, nullable=False)  # Encrypted storage
     _phone_encrypted = Column("phone", Text)  # Encrypted storage
+
+    # Keyed fingerprints of the normalised email and full name, for the opt-in
+    # "Resident history" lookup. Never the value itself; see core/resident_index.
+    # Kept in step by the setters below, so a retention scrub (which rewrites
+    # the fields to sentinels) clears them too.
+    resident_email_index = Column(String(64), index=True)
+    resident_name_index = Column(String(64), index=True)
+    # NULL until fingerprinted; rows predating the index are filled by
+    # resident_index.backfill() at startup.
+    pii_index_version = Column(Integer)
+
+    def _reindex_email(self, plaintext):
+        from app.core import resident_index
+        try:
+            self.resident_email_index = resident_index.email_index(plaintext)
+            self.pii_index_version = resident_index.VERSION
+        except Exception:
+            # Key service unreachable: leave it for the backfill rather than
+            # fail the resident's submission over an optional staff feature.
+            self.resident_email_index = None
+            self.pii_index_version = None
+
+    def _reindex_name(self, **changed):
+        from app.core import resident_index
+        pending = self.__dict__.setdefault("_pii_plain_names", {})
+        pending.update(changed)
+        first = pending["first"] if "first" in pending else self.first_name
+        last = pending["last"] if "last" in pending else self.last_name
+        try:
+            self.resident_name_index = resident_index.name_index(first, last)
+            self.pii_index_version = resident_index.VERSION
+        except Exception:
+            self.resident_name_index = None
+            self.pii_index_version = None
     
     @hybrid_property
     def first_name(self):
@@ -195,6 +252,7 @@ class ServiceRequest(Base):
             self._first_name_encrypted = encrypt_pii(value)
         else:
             self._first_name_encrypted = None
+        self._reindex_name(first=value)
     
     @hybrid_property
     def last_name(self):
@@ -215,6 +273,7 @@ class ServiceRequest(Base):
             self._last_name_encrypted = encrypt_pii(value)
         else:
             self._last_name_encrypted = None
+        self._reindex_name(last=value)
     
     @hybrid_property
     def email(self):
@@ -235,6 +294,7 @@ class ServiceRequest(Base):
             self._email_encrypted = encrypt_pii(value)
         else:
             self._email_encrypted = ""
+        self._reindex_email(value)
     
     @hybrid_property
     def phone(self):
@@ -577,6 +637,9 @@ class SystemSettings(Base):
         "unlisted_reports": False,
         "research_portal": False,
         "platform_feedback": False,
+        # Staff see a resident's earlier reports and can search by resident
+        # email or full name. Off by default; see api/resident_history.py.
+        "resident_history": False,
     })
     # Where a resident is sent if they want to say more than the one-tap
     # platform-feedback question allows: a plain `mailto:` target, rendered as a

@@ -9,6 +9,7 @@ from app.models import ServiceDefinition, Department, User
 from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate, ServiceReorderRequest
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.admin_audit import record_admin_action
+from app.services import location_policy
 
 router = APIRouter()
 
@@ -107,6 +108,11 @@ async def create_service(
             detail="Service code already exists"
         )
     
+    try:
+        location_policy.validate_routing(service_data.location_mode, service_data.routing_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
     departments = []
     if service_data.department_ids:
         for dept_id in service_data.department_ids:
@@ -126,6 +132,7 @@ async def create_service(
         description=service_data.description,
         icon=service_data.icon,
         sla_hours=service_data.sla_hours,
+        location_mode=service_data.location_mode,
         display_order=service_data.display_order if service_data.display_order else max_order + 1
     )
     service.departments = departments
@@ -260,6 +267,14 @@ async def update_service(
     if service_data.sla_hours is not None:
         # 0 explicitly clears the SLA back to "none"; omitting the field leaves it.
         service.sla_hours = service_data.sla_hours or None
+    if service_data.location_mode is not None:
+        service.location_mode = service_data.location_mode
+    # Checked on the resulting state, so switching routing to road-based on a
+    # category that hides location is refused as well as the reverse.
+    try:
+        location_policy.validate_routing(service.location_mode, service.routing_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     if service_data.department_ids is not None:
         departments = []

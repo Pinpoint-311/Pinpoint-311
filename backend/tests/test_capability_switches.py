@@ -184,8 +184,10 @@ def test_modules_no_longer_carries_a_provider_backed_flag():
     # The provider-free product features, and only those. `platform_feedback`
     # joined the list in 2026-08: one anonymous question asked by the app
     # itself, with no vendor, no credential and no card to configure.
+    # `resident_history` joined in 2026-10 on the same terms: staff lookups over
+    # the town's own records, nothing external to set up.
     assert set(default) == {
-        "unlisted_reports", "research_portal", "platform_feedback",
+        "unlisted_reports", "research_portal", "platform_feedback", "resident_history",
     }, default
     # The specific regression: none of the capability-backed switches may
     # reappear here, whatever else the list grows.

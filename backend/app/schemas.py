@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 import re
@@ -145,6 +145,8 @@ class ServiceCreate(ServiceBase):
     display_order: Optional[int] = 0
     # Optional SLA target in hours; omit or null for no SLA.
     sla_hours: Optional[int] = Field(default=None, ge=1, le=8760)
+    # Whether residents are asked for a location; see services/location_policy.
+    location_mode: Literal["required", "optional", "hidden"] = "optional"
 
 
 class ServiceUpdate(BaseModel):
@@ -159,6 +161,7 @@ class ServiceUpdate(BaseModel):
     display_order: Optional[int] = None
     # Send 0 to explicitly clear the SLA (omitting it leaves the value unchanged).
     sla_hours: Optional[int] = Field(default=None, ge=0, le=8760)
+    location_mode: Optional[Literal["required", "optional", "hidden"]] = None
 
 
 class ServiceResponse(ServiceBase):
@@ -166,6 +169,7 @@ class ServiceResponse(ServiceBase):
     is_active: bool
     display_order: int = 0
     sla_hours: Optional[int] = None
+    location_mode: str = "optional"
     departments: List[DepartmentResponse] = []
     routing_mode: Optional[str] = "township"
     routing_config: Optional[Dict[str, Any]] = {}
@@ -540,6 +544,7 @@ class SystemSettingsBase(BaseModel):
         "unlisted_reports": False,
         "research_portal": False,
         "platform_feedback": False,
+        "resident_history": False,
     }
     # Where "want to tell us more?" points when the platform-feedback module is
     # on. None or "" means the offer is simply not made -- see the column

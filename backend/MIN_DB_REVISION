@@ -17,7 +17,13 @@
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
 #
-# Head is e4b7c9d2f1a8 (widen_encrypted_pii_columns) — the four encrypted PII
+# Head is b3d5f7a9c1e2 (location_mode_and_resident_index) -- a new column on
+# service_definitions with a server default, three nullable columns and two
+# indexes on service_requests, and a new pii_index_keys table. Nothing dropped,
+# narrowed or made NOT NULL without a default, so this is expand and the floor
+# is its parent, e4b7c9d2f1a8.
+#
+# Previously: head was e4b7c9d2f1a8 (widen_encrypted_pii_columns) — the four encrypted PII
 # columns on service_requests go from varchar(500) to text. Widening loses
 # nothing and old code reads and writes a text column exactly as it did a
 # varchar, so this is expand, and the floor moves to the revision immediately
@@ -47,4 +53,4 @@
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-d8f0b2c4e6a3
+e4b7c9d2f1a8
