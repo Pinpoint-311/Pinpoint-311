@@ -226,17 +226,71 @@ def get_secret(name: str) -> Optional[str]:
     return resp.json().get("value")
 
 
+# How long to wait for Key Vault's soft-delete state changes, which are
+# asynchronous: a delete takes a moment to land in the recycle bin, and a
+# recovery a moment to come back. About a second each, measured live.
+_SOFT_DELETE_WAIT_SECONDS = 20.0
+
+
+def _inner_code(resp) -> str:
+    try:
+        err = resp.json().get("error") or {}
+        return (err.get("innererror") or {}).get("code") or err.get("code") or ""
+    except Exception:
+        return ""
+
+
+def _wait_for(check) -> bool:
+    deadline = time.time() + _SOFT_DELETE_WAIT_SECONDS
+    while True:
+        if check():
+            return True
+        if time.time() >= deadline:
+            return False
+        time.sleep(1.0)
+
+
+def _recover_deleted(secret_id: str, headers: dict) -> None:
+    """Bring a soft-deleted secret back so its name can be written again.
+
+    Soft-delete is on by default and cannot be turned off on a new vault. A
+    deleted secret keeps its name for the retention period (90 days by
+    default) and a PUT to that name answers 409 ObjectIsDeletedButRecoverable.
+    The secret-store self-test deletes its probe key every run, so live, every
+    test after the first failed as "would not accept a test write" -- and a
+    credential removed on disconnect could not be saved again on reconnect.
+
+    Recover rather than purge: recover is in the same Secrets Officer role as
+    write and works with purge protection on; purge is neither.
+    """
+    base, version = _vault_url(), _api_version()
+    deleted_url = f"{base}/deletedsecrets/{secret_id}?api-version={version}"
+    # Right after a delete the secret is "being deleted" and cannot be
+    # recovered until it has landed in the recycle bin.
+    _wait_for(lambda: httpx.get(deleted_url, headers=headers, timeout=15.0).status_code == 200)
+    resp = httpx.post(f"{base}/deletedsecrets/{secret_id}/recover?api-version={version}",
+                      headers=headers, timeout=15.0)
+    resp.raise_for_status()
+    live_url = f"{base}/secrets/{secret_id}?api-version={version}"
+    _wait_for(lambda: httpx.get(live_url, headers=headers, timeout=15.0).status_code == 200)
+
+
 def set_secret(name: str, value: str) -> bool:
     token = _get_token()
     if not token:
         return False
-    url = f"{_vault_url()}/secrets/{_secret_id(name)}?api-version={_api_version()}"
-    resp = httpx.put(
-        url,
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"value": value},
-        timeout=15.0,
-    )
+    secret_id = _secret_id(name)
+    url = f"{_vault_url()}/secrets/{secret_id}?api-version={_api_version()}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def put():
+        return httpx.put(url, headers=headers, json={"value": value}, timeout=15.0)
+
+    resp = put()
+    if resp.status_code == 409 and _inner_code(resp) in (
+            "ObjectIsDeletedButRecoverable", "ObjectIsBeingDeleted"):
+        _recover_deleted(secret_id, headers)
+        resp = put()
     resp.raise_for_status()
     return True
 
