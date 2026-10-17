@@ -116,6 +116,16 @@ class DepartmentBase(BaseModel):
     description: Optional[str] = None
     routing_email: Optional[EmailStr] = None
 
+    # The form sends "" for an empty optional field, and "" is not a valid
+    # email, so every department saved without a routing email was a 422 the
+    # console swallowed. Blank means "none".
+    @field_validator("routing_email", mode="before")
+    @classmethod
+    def _blank_routing_email_is_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class DepartmentCreate(DepartmentBase):
     pass

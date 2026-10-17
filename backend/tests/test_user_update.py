@@ -106,3 +106,15 @@ def test_departments_can_be_cleared():
     absent field."""
     sent = UserUpdate(department_ids=[]).model_dump(exclude_unset=True)
     assert sent == {"department_ids": []}
+
+
+def test_a_department_with_no_routing_email_can_be_saved():
+    """The form sends "" for an empty routing email; that was a 422 the admin
+    console swallowed, so the department silently never saved."""
+    from app.schemas import DepartmentCreate
+    assert DepartmentCreate(name="Public Works", routing_email="").routing_email is None
+    assert DepartmentCreate(name="Public Works", routing_email="  ").routing_email is None
+    assert DepartmentCreate(name="Public Works", routing_email="dpw@town.gov").routing_email == "dpw@town.gov"
+    import pytest
+    with pytest.raises(Exception):
+        DepartmentCreate(name="Public Works", routing_email="not-an-email")
