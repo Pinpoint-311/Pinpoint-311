@@ -2323,6 +2323,18 @@ async def _test_secrets(db=None) -> dict:
         # encrypted database is a supported place for secrets to live.
         from app.services.storage_maintenance import store_reachable
         if not store_reachable():
+            if provider in ("", "database"):
+                # Not "Google Secret Manager is not configured": that read, live, as
+                # if the town had picked Google, when it had picked nothing yet
+                # (or its choice was pinned to the database by the environment).
+                pinned = (" This deployment pins it with the SECRETS_PROVIDER environment "
+                          "variable, so a choice made on this page cannot take effect."
+                          if os.getenv("SECRETS_PROVIDER") else "")
+                return _unverifiable(
+                    "No external secret store is selected — credentials are held encrypted "
+                    "in the database, which is supported, so there is nothing to check. "
+                    "Choose Google Secret Manager, Azure Key Vault or AWS Secrets Manager "
+                    f"and they move across on their own.{pinned}")
             return _unverifiable(
                 f"{label} is not configured, so there is nothing to check. Credentials are "
                 f"held encrypted in the database, which is supported — they move across on "

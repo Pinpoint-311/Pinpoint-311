@@ -415,6 +415,25 @@ def test_no_secret_store_at_all_is_not_a_failure(monkeypatch):
     assert result["recorded"] is False, "must not be written down as a fault"
 
 
+@pytest.mark.parametrize("provider", ["", "database"])
+def test_no_store_chosen_is_not_reported_as_google(monkeypatch, provider):
+    """Live, a town that had not got Azure Key Vault saved was told "Google
+    Secret Manager is not configured" -- naming a store nobody picked."""
+    from app.services import secret_manager, storage_maintenance
+
+    async def refuse(key, value):
+        return False
+
+    monkeypatch.setattr(secret_manager, "set_secret", refuse)
+    monkeypatch.setattr(secret_manager, "_secrets_provider", lambda: provider)
+    monkeypatch.setattr(storage_maintenance, "store_reachable", lambda: False)
+
+    result = _run(system._test_secrets())
+    assert result["recorded"] is False
+    assert "Google Secret Manager is not configured" not in result["detail"]
+    assert "No external secret store" in result["detail"]
+
+
 def test_a_configured_store_that_refuses_a_write_is_a_failure(monkeypatch):
     """This is the outage: `set_secret` returns False, the credential quietly
     stays in the database, and the card that saved it still shows a tick."""
