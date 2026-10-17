@@ -14,7 +14,9 @@ from app.core import resident_index as ri
 
 @pytest.fixture
 def fixed_key(monkeypatch):
+    """The key loaded and the module on, as maintain() leaves a process."""
     monkeypatch.setattr(ri, "_key", b"k" * 32)
+    monkeypatch.setattr(ri, "_enabled", True)
     yield
     ri.reset_key_cache()
 
@@ -32,6 +34,19 @@ def test_full_name_only():
     assert ri.normalise_name("  Jane ", "Q  Doe") == "jane q doe"
     assert ri.normalise_name("Jane", None) is None
     assert ri.normalise_name(None, None) is None
+
+
+def test_placeholder_addresses_have_no_fingerprint():
+    """Connector imports without an email all share one placeholder; giving it a
+    fingerprint would make every import look like one resident's history."""
+    assert ri.normalise_email("integration-seeclickfix@intake.local") is None
+    assert ri.normalise_email("manual-1a2b3c4d@intake.local") is None
+    assert ri.normalise_email("someone@local") is None
+
+
+def test_unicode_forms_agree():
+    composed, decomposed = "Jos\u00e9", "Jose\u0301"
+    assert ri.normalise_name(composed, "Doe") == ri.normalise_name(decomposed, "Doe")
 
 
 def test_retention_sentinels_have_no_fingerprint():
@@ -55,7 +70,8 @@ def test_fingerprint_is_not_the_value(fixed_key):
 
 def test_email_and_name_fingerprints_are_domain_separated(fixed_key):
     """A name that happens to equal an email string must not collide with it."""
-    assert ri._mac(b"email", "a b") != ri._mac(b"name", "a b")
+    k = b"k" * 32
+    assert ri._mac(k, b"email", "a b") != ri._mac(k, b"name", "a b")
 
 
 def test_search_box_name_splits_first_and_rest(fixed_key):
@@ -65,9 +81,21 @@ def test_search_box_name_splits_first_and_rest(fixed_key):
 
 def test_the_key_is_random_and_wrapped_not_derived_from_secret_key():
     src = inspect.getsource(ri._load_or_create_key)
-    assert "os.urandom(32)" in src
-    assert "encrypt_pii(" in src, "the key must be wrapped by the PII envelope / KMS"
+    assert "os.urandom(32)" in src and "_wrap(" in src
     assert "secret_key" not in src.lower()
+
+
+def test_the_key_is_never_wrapped_by_the_silent_fallback():
+    """encrypt_pii drops to a SECRET_KEY-only scheme when the KMS call fails;
+    the index key must be created under the real envelope or not at all."""
+    src = inspect.getsource(ri._wrap)
+    assert "pii_crypto.encrypt(" in src and "encrypt_pii(" not in src.split('"""')[-1]
+
+
+def test_a_value_that_will_not_decrypt_raises_instead_of_reading_as_empty(monkeypatch):
+    pytest.importorskip("cryptography")
+    with pytest.raises(Exception):
+        ri._decrypt_strict("pii2:bm90:YQ==:YQ==")
 
 
 # ---- the model keeps fingerprints in step -----------------------------------
@@ -79,24 +107,41 @@ def test_setting_and_scrubbing_a_record_updates_its_fingerprints(fixed_key):
     rec = ServiceRequest(first_name="Jane", last_name="Doe", email="jane@example.org")
     assert rec.resident_email_index == ri.email_index("jane@example.org")
     assert rec.resident_name_index == ri.name_index("Jane", "Doe")
-    assert rec.pii_index_version == ri.VERSION
+    assert rec.pii_index_version is None, "left for maintain() to confirm"
 
     apply_scrub(rec, ["name", "email"])
     assert rec.resident_email_index is None
     assert rec.resident_name_index is None
 
 
-def test_a_key_service_outage_does_not_fail_the_submission(monkeypatch):
-    """An optional staff feature must never stop a resident filing a report."""
+def test_setters_never_load_the_key(monkeypatch):
+    """The setters run on the request path: no key loaded means no fingerprint
+    now (maintain() fills it), never a database or KMS call."""
     from app.models import ServiceRequest
 
     def boom():
-        raise ri.IndexKeyUnavailable("kms down")
+        raise AssertionError("setter tried to load the key")
 
-    monkeypatch.setattr(ri, "_get_key", boom)
-    rec = ServiceRequest(email="jane@example.org")
-    assert rec.resident_email_index is None
-    assert rec.pii_index_version is None, "left for the backfill to retry"
+    monkeypatch.setattr(ri, "ensure_key", boom)
+    monkeypatch.setattr(ri, "_key", None)
+    monkeypatch.setattr(ri, "_enabled", True)
+    rec = ServiceRequest(first_name="Jane", last_name="Doe", email="jane@example.org")
+    assert rec.resident_email_index is None and rec.resident_name_index is None
+    assert rec.pii_index_version is None
+
+
+def test_nothing_is_fingerprinted_while_the_module_is_off(monkeypatch):
+    from app.models import ServiceRequest
+    monkeypatch.setattr(ri, "_key", b"k" * 32)
+    monkeypatch.setattr(ri, "_enabled", False)
+    rec = ServiceRequest(first_name="Jane", last_name="Doe", email="jane@example.org")
+    assert rec.resident_email_index is None and rec.resident_name_index is None
+
+
+def test_turning_the_module_off_erases_fingerprints():
+    src = inspect.getsource(ri.maintain)
+    assert "SET resident_email_index = NULL" in src
+    assert "resident_name_index = NULL" in src
 
 
 # ---- the API's safeguards ---------------------------------------------------
@@ -109,8 +154,8 @@ def _src(fn):
 def _needs_app_stack(request):
     """CI installs only the crypto and HTTP libraries; tests touching the
     models or the API skip there rather than fail collection."""
-    if request.node.name.startswith(("test_setting_and_scrubbing", "test_a_key_service",
-                                     "test_the_module_defaults")):
+    if request.node.name.startswith(("test_setting_and_scrubbing", "test_setters_never",
+                                     "test_nothing_is_fingerprinted", "test_the_module_defaults")):
         pytest.importorskip("sqlalchemy")
     if request.node.name.startswith(("test_both_endpoints", "test_results_are", "test_only_minimal",
                                      "test_every_lookup", "test_the_audit_never", "test_search_is_a_post",

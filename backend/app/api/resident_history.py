@@ -31,6 +31,8 @@ in the UI:
   * Rate limited.
   * Retention: scrubbed reports have no fingerprint, so they never match.
 """
+import asyncio
+import hashlib
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -51,7 +53,19 @@ from app.services.admin_audit import record_admin_action
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-limiter = Limiter(key_func=rate_limit_key)
+
+
+def _per_account_key(request: Request) -> str:
+    """Rate-limit per signed-in account, not per address: staff behind one town
+    hall NAT would otherwise share a single allowance, and one account could
+    spread its lookups across machines. The bearer token is hashed, never kept."""
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer ") and len(auth) > 7:
+        return "acct:" + hashlib.sha256(auth[7:].encode("utf-8")).hexdigest()[:32]
+    return rate_limit_key(request)
+
+
+limiter = Limiter(key_func=_per_account_key)
 
 MODULE_KEY = "resident_history"
 CARD_LIMIT = 20
@@ -96,6 +110,11 @@ async def _module_enabled(db: AsyncSession) -> bool:
 
 def _off() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+def _key_unavailable() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                         detail="Resident lookup is unavailable because the key service can't be reached.")
 
 
 def _audit_failed() -> HTTPException:
@@ -144,11 +163,22 @@ async def history_for_request(
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service request not found")
 
-    if not target.resident_email_index:
+    from app.core import resident_index
+    try:
+        # Off the event loop: the first call in a process reads the key through
+        # the town's KMS.
+        key = await asyncio.to_thread(resident_index.ensure_key)
+    except resident_index.IndexKeyUnavailable:
+        raise _key_unavailable()
+    # From the stored fingerprint, or computed now for a report written before
+    # maintenance reached it -- the card should not say "no email" for that.
+    fingerprint = target.resident_email_index or resident_index.email_index(target.email, key=key)
+
+    if not fingerprint:
         result = HistoryResponse(matched_by=None)
     else:
         total, reports = await _matches(db, current_user, ServiceRequest.resident_email_index,
-                                        target.resident_email_index, CARD_LIMIT, exclude_id=target.id)
+                                        fingerprint, CARD_LIMIT, exclude_id=target.id)
         result = HistoryResponse(matched_by="email", total=total, reports=reports)
 
     recorded = await record_admin_action(
@@ -181,21 +211,22 @@ async def search_by_resident(
                             detail="Search by either a full email address or a full name.")
 
     try:
-        if email:
-            searched_by, column = "email", ServiceRequest.resident_email_index
-            fingerprint = resident_index.email_index(email)
-            if not fingerprint:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                    detail="Enter the resident's full email address.")
-        else:
-            searched_by, column = "name", ServiceRequest.resident_name_index
-            fingerprint = resident_index.name_index_from_full(name)
-            if not fingerprint:
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
-                                    detail="Enter the resident's first and last name.")
+        key = await asyncio.to_thread(resident_index.ensure_key)
     except resident_index.IndexKeyUnavailable:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                            detail="Resident search is unavailable because the key service can't be reached.")
+        raise _key_unavailable()
+
+    if email:
+        searched_by, column = "email", ServiceRequest.resident_email_index
+        fingerprint = resident_index.email_index(email, key=key)
+        if not fingerprint:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Enter the resident's full email address.")
+    else:
+        searched_by, column = "name", ServiceRequest.resident_name_index
+        fingerprint = resident_index.name_index_from_full(name, key=key)
+        if not fingerprint:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Enter the resident's first and last name.")
 
     total, reports = await _matches(db, current_user, column, fingerprint, SEARCH_LIMIT)
 

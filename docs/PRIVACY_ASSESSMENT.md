@@ -21,7 +21,7 @@
 | Email | Send updates; with the Resident History module on, match a resident's earlier requests (§3.1) | Per state retention law |
 | Phone (optional) | Alternative contact | Per state retention law |
 | Address | Request location. Not collected for categories an administrator sets to "Not collected" | Per state retention law |
-| Email / name fingerprints | Resident History lookups only (§3.1); a keyed one-way HMAC, not the value | Cleared when the email or name is scrubbed under retention |
+| Email / name fingerprints | Resident History lookups only (§3.1); a keyed one-way HMAC, not the value. Exist only while the module is on | Erased when the module is turned off, and when the email or name is scrubbed under retention |
 | Photos | Document issue | Per state retention law |
 | IP Address | Security/audit | 90 days |
 
@@ -62,7 +62,7 @@ value. A single first or last name is never fingerprinted.
 
 | Control | Detail |
 |---------|--------|
-| Opt-in | Module off by default; endpoints answer 404 while it is off |
+| Opt-in | Module off by default; endpoints answer 404 while it is off. Fingerprints are only created while it is on, and are erased when it is turned off |
 | Least privilege | Staff and administrators only, limited to requests their department scoping already permits |
 | Data minimisation | Returns request number, category, status and date only — never another request's description, location or contact details |
 | Exact match only | Full email address or full name; no partial or fuzzy search over PII |

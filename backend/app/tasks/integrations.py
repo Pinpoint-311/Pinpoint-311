@@ -518,15 +518,21 @@ async def _import_external_record(db, integration, record):
     if not service:
         return None
 
+    # Same location rule as every other intake path; see location_policy.
+    from app.services import location_policy
+    address, lat, lng = location_policy.apply(
+        getattr(service, "location_mode", None), record.address, record.lat, record.long,
+        enforce_required=False)
+
     from app.api.open311 import generate_request_id
     sr = ServiceRequest(
         service_request_id=generate_request_id(),
         service_code=service.service_code,
         service_name=service.service_name,
         description=record.description or f"Imported from {integration.display_name} (#{record.external_id})",
-        address=record.address,
-        lat=record.lat,
-        long=record.long,
+        address=address,
+        lat=lat,
+        long=lng,
         email=f"integration-{integration.platform}@intake.local",
         source=f"integration_{integration.platform}",
         status=record.status or "open",

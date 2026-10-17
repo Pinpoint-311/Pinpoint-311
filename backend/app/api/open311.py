@@ -1060,6 +1060,9 @@ async def create_request(
             service.location_mode, request_data.address, request_data.lat, request_data.long)
     except location_policy.LocationMissing as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if location_policy.normalise_mode(service.location_mode) == location_policy.HIDDEN:
+        # A matched asset is a position too (and its properties can name one).
+        request_data.matched_asset = None
 
     # Content moderation: reject explicit/abusive text or images before the
     # report is created. Text uses better-profanity plus the cloud text moderator
@@ -1725,6 +1728,9 @@ async def create_manual_intake(
     intake_data.address, intake_data.lat, intake_data.long = location_policy.apply(
         service.location_mode, intake_data.address, intake_data.lat, intake_data.long,
         enforce_required=False)
+    if location_policy.normalise_mode(service.location_mode) == location_policy.HIDDEN \
+            and hasattr(intake_data, "matched_asset"):
+        intake_data.matched_asset = None
 
     # Same redaction as a resident submission. A photo emailed in or attached
     # by a clerk from a phone call is no less likely to have a bystander in it,

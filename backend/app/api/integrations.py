@@ -1419,15 +1419,23 @@ async def integration_webhook(
     if not service:
         raise HTTPException(status_code=400, detail="No active service categories configured")
 
+    # The category's location rule. Not "required" -- a connector cannot be asked
+    # for a pin it does not have -- but a category that collects no location
+    # drops one, the same as every other intake path.
+    from app.services import location_policy
+    address, lat, lng = location_policy.apply(
+        getattr(service, "location_mode", None), payload.address, payload.lat, payload.long,
+        enforce_required=False)
+
     from app.api.open311 import generate_request_id
     sr = ServiceRequest(
         service_request_id=generate_request_id(),
         service_code=service.service_code,
         service_name=service.service_name,
         description=payload.description,
-        address=payload.address,
-        lat=payload.lat,
-        long=payload.long,
+        address=address,
+        lat=lat,
+        long=lng,
         first_name=payload.first_name,
         last_name=payload.last_name,
         email=payload.email or f"integration-{integration.platform}@intake.local",

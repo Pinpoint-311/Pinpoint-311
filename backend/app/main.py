@@ -420,12 +420,20 @@ async def lifespan(app: FastAPI):
     if _state == "suspended":
         logger.warning("[Managed] Instance is SUSPENDED — API serves 503 until the state resumes it")
 
-    # Fingerprint reports that predate the resident-history index. In a thread:
-    # it decrypts every older row once, and must not hold up startup or the
-    # event loop. Idempotent and lock-guarded, so the worker running it too is
-    # harmless. See core/resident_index.backfill.
+    # Resident-history fingerprints follow the module switch: built while it is
+    # on, erased when it is off (core/resident_index.maintain). Always in a
+    # thread -- it reads the key through the town's KMS and decrypts older rows,
+    # none of which may run on the event loop -- and repeated so that a KMS
+    # outage at startup, or a report written before the key was loaded, is
+    # picked up within minutes. Settings saves also trigger it immediately.
     from app.core import resident_index as _resident_index
-    index_backfill = asyncio.create_task(asyncio.to_thread(_resident_index.backfill))
+
+    async def resident_index_maintenance():
+        while True:
+            await asyncio.to_thread(_resident_index.maintain)
+            await asyncio.sleep(300)
+
+    index_task = asyncio.create_task(resident_index_maintenance())
 
     # Start background uptime monitoring task
     uptime_task = asyncio.create_task(uptime_monitor())
@@ -433,7 +441,8 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown: Cancel background task
+    # Shutdown: Cancel background tasks
+    index_task.cancel()
     uptime_task.cancel()
     try:
         await uptime_task

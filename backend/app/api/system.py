@@ -3055,6 +3055,11 @@ async def set_cloud_profile(
     }
 
 
+# Strong references for fire-and-forget tasks, which asyncio otherwise only
+# weakly holds and may collect before they finish.
+_background_tasks: set = set()
+
+
 @router.post("/settings", response_model=SystemSettingsResponse)
 async def update_settings(
     settings_data: SystemSettingsBase,
@@ -3077,6 +3082,16 @@ async def update_settings(
     
     await db.commit()
     await db.refresh(settings)
+
+    # Switching Resident History on builds its fingerprints and switching it off
+    # erases them. Started now rather than at the next scheduled pass, so "off"
+    # means off within seconds. In a thread: it goes through the town's KMS.
+    if "modules" in settings_data.model_fields_set:
+        import asyncio
+        from app.core import resident_index
+        task = asyncio.create_task(asyncio.to_thread(resident_index.maintain))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
     return settings
 
 

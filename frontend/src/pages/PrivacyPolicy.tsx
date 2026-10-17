@@ -48,7 +48,7 @@ When it is on, municipal staff working on one of your requests can see a short l
 - Staff see only requests their own department can already access, and only each request's number, category, status and date — not its description, location or your contact details
 - Matching uses a one-way, keyed fingerprint of your email address or name. Your contact details remain encrypted, and the fingerprint cannot be turned back into your email or name
 - Every lookup is recorded in the municipality's audit log: who looked, when, and how many requests matched. The email address or name that was searched for is not recorded
-- When your contact details are removed under the retention schedule, the fingerprint is removed with them, so older requests can no longer be linked to you
+- Fingerprints exist only while the feature is on, and are deleted if it is turned off. When your contact details are removed under the retention schedule, the fingerprint is removed with them, so older requests can no longer be linked to you
 
 ## Information Sharing
 

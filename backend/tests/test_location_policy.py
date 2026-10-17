@@ -60,6 +60,19 @@ def test_the_create_paths_apply_the_policy():
     assert "location_policy.apply(" in staff and "enforce_required=False" in staff
 
 
+def test_connector_intake_applies_the_policy_too():
+    """Connectors are trusted not to have a pin, but a category that collects no
+    location still drops one -- the admin screen promises exactly that."""
+    pytest.importorskip("fastapi.routing")
+    import inspect
+    from app.api import integrations
+    from app.tasks import integrations as task_integrations
+
+    for module in (integrations, task_integrations):
+        src = inspect.getsource(module)
+        assert "location_policy.apply(" in src and "enforce_required=False" in src
+
+
 def test_a_blank_address_never_counts_as_a_recurrence():
     pytest.importorskip("sqlalchemy")
     import inspect

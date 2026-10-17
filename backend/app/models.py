@@ -205,34 +205,36 @@ class ServiceRequest(Base):
     # the fields to sentinels) clears them too.
     resident_email_index = Column(String(64), index=True)
     resident_name_index = Column(String(64), index=True)
-    # NULL until fingerprinted; rows predating the index are filled by
-    # resident_index.backfill() at startup.
+    # NULL until resident_index.maintain() has fingerprinted (or confirmed)
+    # the row under the current resident_index.VERSION.
     pii_index_version = Column(Integer)
 
+    # Both setters below run on the request path, so they never load the key
+    # or touch the database: they fingerprint only with a key already in
+    # memory while the module is on (resident_index.ready_key). Either way the
+    # row is marked unconfirmed (pii_index_version NULL), and
+    # resident_index.maintain() -- in a thread, every few minutes -- fills or
+    # confirms it. That also makes a half-finished pair (name set, email not)
+    # impossible to leave behind as "done".
     def _reindex_email(self, plaintext):
         from app.core import resident_index
-        try:
-            self.resident_email_index = resident_index.email_index(plaintext)
-            self.pii_index_version = resident_index.VERSION
-        except Exception:
-            # Key service unreachable: leave it for the backfill rather than
-            # fail the resident's submission over an optional staff feature.
-            self.resident_email_index = None
-            self.pii_index_version = None
+        key = resident_index.ready_key()
+        self.resident_email_index = resident_index.email_index(plaintext, key=key) if key else None
+        self.pii_index_version = None
 
     def _reindex_name(self, **changed):
         from app.core import resident_index
         pending = self.__dict__.setdefault("_pii_plain_names", {})
         pending.update(changed)
-        first = pending["first"] if "first" in pending else self.first_name
-        last = pending["last"] if "last" in pending else self.last_name
-        try:
-            self.resident_name_index = resident_index.name_index(first, last)
-            self.pii_index_version = resident_index.VERSION
-        except Exception:
+        key = resident_index.ready_key()
+        if key:
+            first = pending["first"] if "first" in pending else self.first_name
+            last = pending["last"] if "last" in pending else self.last_name
+            self.resident_name_index = resident_index.name_index(first, last, key=key)
+        else:
             self.resident_name_index = None
-            self.pii_index_version = None
-    
+        self.pii_index_version = None
+
     @hybrid_property
     def first_name(self):
         """Decrypt first name when accessing."""

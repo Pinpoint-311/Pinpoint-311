@@ -107,11 +107,11 @@ Lets staff see a resident's earlier requests on a request's detail view, and sea
 | Property | Value |
 |----------|-------|
 | Matching | HMAC-SHA256 of the normalised email and of the normalised full name, in their own indexed columns. One-way; the encrypted PII columns are unchanged |
-| Fingerprint key | 256 random bits per deployment, generated on first use, stored wrapped by the PII envelope (so by the configured cloud KMS). Not derived from `SECRET_KEY` |
+| Fingerprint key | 256 random bits per deployment, generated on first use, stored wrapped exactly as resident PII is (by the configured cloud KMS), with no fallback to a weaker scheme, and re-wrapped if the key service changes. Not derived from `SECRET_KEY` |
 | Access | Staff and admin roles only, within the caller's department scope; the module switch is checked server-side on every call |
 | Disclosure | Request number, category, status and date only |
 | Audit | Every lookup is an audit event (`resident_history_viewed`, `resident_search`) with actor and result count, never the searched value; results are withheld if the audit write fails |
-| Retention | Scrubbing a request's email or name clears its fingerprints |
+| Retention | Fingerprints exist only while the module is on and are erased when it is turned off. Scrubbing a request's email or name clears its fingerprints |
 | Egress | Fingerprints are excluded from exports, work orders and connector payloads |
 
 See `docs/PRIVACY_ASSESSMENT.md` §3.1 for the purpose statement and residual risk.
