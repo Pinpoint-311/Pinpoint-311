@@ -967,11 +967,12 @@ class TestAzureTokenParameter:
         pytest.importorskip("httpx")
         from app.services.ai import azure_openai as mod
         mod._TOKEN_PARAM.clear()
+        mod._NO_TEMPERATURE.clear()
         return mod, mod.AzureOpenAIProvider(
             endpoint="https://x.openai.azure.com", api_key="k",
             deployment=deployment, api_version="2024-06-01")
 
-    def _client(self, mod, calls, reject_max_tokens):
+    def _client(self, mod, calls, reject_max_tokens, reject_temperature=False):
         class Resp:
             def __init__(self, status, payload_text, data=None):
                 self.status_code = status
@@ -994,6 +995,10 @@ class TestAzureTokenParameter:
                     return Resp(400, '{"error": {"message": "Unsupported parameter: '
                                      "'max_tokens' is not supported with this model. "
                                      'Use \'max_completion_tokens\' instead."}}')
+                if reject_temperature and "temperature" in json:
+                    return Resp(400, '{"error": {"message": "Unsupported value: '
+                                     "'temperature' does not support 0.2 with this model. "
+                                     'Only the default (1) value is supported."}}')
                 return Resp(200, "", {"choices": [{"message": {"content": '{"ok": true}'}}]})
 
         mod.httpx.AsyncClient = lambda *a, **k: Client()
@@ -1036,6 +1041,36 @@ class TestAzureTokenParameter:
 
         assert len(calls) == 1
         assert "max_tokens" in calls[0]
+
+    def test_a_model_that_rejects_temperature_is_retried_without_it(self, monkeypatch):
+        """Reasoning models only accept the default temperature (live: gpt-5 on Azure)."""
+        mod, provider = self._provider(deployment="gpt-5-mini")
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, False, True)())
+
+        result = _run(provider.complete_json("hello"))
+
+        assert len(calls) == 2, "did not retry"
+        assert "temperature" in calls[0]
+        assert "temperature" not in calls[1]
+        assert result.get("ok") is True
+
+    def test_a_model_with_both_quirks_gets_both_fixed(self, monkeypatch):
+        mod, provider = self._provider(deployment="o4-mini")
+        calls = []
+        monkeypatch.setattr(mod.httpx, "AsyncClient",
+                            lambda *a, **k: self._client(mod, calls, True, True)())
+
+        result = _run(provider.complete_json("hello"))
+
+        assert len(calls) == 3
+        assert "max_completion_tokens" in calls[2] and "temperature" not in calls[2]
+        assert result.get("ok") is True
+
+        calls.clear()
+        _run(provider.complete_json("two"))
+        assert len(calls) == 1, "quirks were not remembered for the deployment"
 
 
 # ---------------------------------------------------------------------------

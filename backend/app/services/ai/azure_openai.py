@@ -10,7 +10,7 @@ Config/creds:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 import httpx
 
@@ -32,6 +32,12 @@ DEFAULT_DEPLOYMENT = None
 # deployment name -> the token-limit parameter it accepts. Learned at
 # runtime from Azure's own rejection; see complete_json.
 _TOKEN_PARAM: Dict[str, str] = {}
+
+# Deployments that refuse any temperature but the default. Reasoning models
+# (o-series, gpt-5) answer a 0.2 with HTTP 400 "Only the default (1) value is
+# supported", which failed the AI test outright. Learned the same way as
+# _TOKEN_PARAM, for the same reason: no model list to go stale.
+_NO_TEMPERATURE: Set[str] = set()
 
 
 def normalise_azure_endpoint(endpoint: Optional[str]) -> str:
@@ -117,33 +123,45 @@ class AzureOpenAIProvider(AIProvider):
             return analysis_fallback("Azure OpenAI not configured (endpoint/api_key missing)")
         url = f"{self.endpoint}/openai/deployments/{self.model}/chat/completions?api-version={self.api_version}"
 
-        def build(token_key: str) -> Dict[str, Any]:
-            return {
+        def build(token_key: str, temperature: bool) -> Dict[str, Any]:
+            body: Dict[str, Any] = {
                 "messages": self._build_messages(prompt, image_data),
-                "temperature": 0.2,
                 token_key: 4096,
                 "response_format": {"type": "json_object"},
             }
+            if temperature:
+                body["temperature"] = 0.2
+            return body
 
         token_key = _TOKEN_PARAM.get(self.model, "max_tokens")
+        temperature = self.model not in _NO_TEMPERATURE
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
                 resp = await client.post(url, headers={"api-key": self.api_key},
-                                         json=build(token_key))
+                                         json=build(token_key, temperature))
 
-                # Newer models reject `max_tokens` and want `max_completion_tokens`.
-                # Which ones is not knowable from here and moves: this codebase
-                # has already been bitten by a hardcoded model list going stale,
-                # so the switch is driven by Azure saying so rather than by a
-                # list we maintain. Remembered per deployment, so the wasted
-                # round trip happens once per process and not per report.
-                if (resp.status_code == 400
-                        and "max_completion_tokens" in resp.text
-                        and token_key == "max_tokens"):
-                    token_key = "max_completion_tokens"
-                    _TOKEN_PARAM[self.model] = token_key
+                # Newer models reject `max_tokens` and want `max_completion_tokens`,
+                # and reasoning models reject a non-default `temperature`. Which
+                # ones is not knowable from here and moves: this codebase has
+                # already been bitten by a hardcoded model list going stale, so
+                # each switch is driven by Azure saying so rather than by a list
+                # we maintain. Azure names one offending parameter per 400, so a
+                # model with both quirks takes two retries. Remembered per
+                # deployment, so the wasted round trips happen once per process
+                # and not per report.
+                for _ in range(2):
+                    if resp.status_code != 400:
+                        break
+                    if "max_completion_tokens" in resp.text and token_key == "max_tokens":
+                        token_key = "max_completion_tokens"
+                        _TOKEN_PARAM[self.model] = token_key
+                    elif "'temperature'" in resp.text and temperature:
+                        temperature = False
+                        _NO_TEMPERATURE.add(self.model)
+                    else:
+                        break
                     resp = await client.post(url, headers={"api-key": self.api_key},
-                                             json=build(token_key))
+                                             json=build(token_key, temperature))
 
                 if resp.status_code >= 400:
                     return analysis_fallback(self._explain(resp))
