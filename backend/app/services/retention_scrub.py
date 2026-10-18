@@ -153,8 +153,9 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "coordinates",
         "label": "Map location",
-        "detail": "Removes the pin entirely. The request disappears from maps "
-                  "and from anything counted by area.",
+        "detail": "Removes the pin entirely, and the parcel or zone it was "
+                  "recorded in. The request disappears from maps and from "
+                  "anything counted by area.",
     },
 ]
 
@@ -323,6 +324,9 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
         # PostGIS geometry, kept in step with the columns beside it.
         if hasattr(record, "location"):
             record.location = None
+        # The parcel a report fell in locates it as precisely as the pin did.
+        if hasattr(record, "gis_context"):
+            record.gis_context = None
         done.append("coordinates")
 
     # `comments` is deliberately absent: they live in another table and need a

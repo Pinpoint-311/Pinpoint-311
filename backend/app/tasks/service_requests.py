@@ -251,6 +251,11 @@ def analyze_request(self, request_id: int):
                     _geo = await geocode_dispatch.geocode(db, request.address)
                     if _geo:
                         request.lat, request.long = _geo.lat, _geo.lng
+                        # The pin arrived after intake, so the parcel/zone
+                        # context the intake path records is taken now.
+                        from app.services import gis_layers
+                        await gis_layers.refresh_request_context(
+                            db, request, actor_type="system", actor_name="Geocoder", reason="geocoded")
                 except Exception:
                     logger.debug("[Analysis] geocode fallback failed", exc_info=True)
             
@@ -418,6 +423,9 @@ def geocode_address(self, request_id: int):
             if geo_result:
                 request.lat = geo_result.lat
                 request.long = geo_result.lng
+                from app.services import gis_layers
+                await gis_layers.refresh_request_context(
+                    db, request, actor_type="system", actor_name="Geocoder", reason="geocoded")
                 await db.commit()
                 return {
                     "status": "success",
@@ -1143,7 +1151,10 @@ def purge_old_ip_addresses():
             r1 = await db.execute(
                 update(AuditLog)
                 .where(AuditLog.timestamp < cutoff, AuditLog.ip_address.isnot(None))
-                .values(ip_address=None, user_agent=None)
+                # The salt goes with them: it is what lets the chain's
+                # commitment be checked against the IP, and without it the
+                # remaining digest reveals nothing.
+                .values(ip_address=None, user_agent=None, context_salt=None)
             )
             r2 = await db.execute(
                 update(DisclaimerAcknowledgment)
@@ -1616,14 +1627,17 @@ def send_weekly_digest():
 
 @celery_app.task(bind=True)
 def anchor_audit_chain(self):
-    """Record the request-audit hash-chain head to the append-only AuditAnchor
-    table AND emit it to the application log. Runs daily via Celery Beat.
+    """Record the heads of both audit hash chains -- request_audit_logs and
+    audit_logs -- to the append-only AuditAnchor table AND emit them to the
+    application log. Runs daily via Celery Beat.
 
-    This puts the chain head outside the mutable audit table (and, in hosted
+    This puts the chain heads outside the mutable audit tables (and, in hosted
     mode, outside the instance entirely via log shipping), so a full-history
     rewrite can't pass silently — the anchors and external logs would disagree.
+    The audit_logs head is recorded with its id and the row count up to it, so
+    /api/audit/verify-integrity can tell when entries were cut off the tail.
     """
-    from app.models import RequestAuditLog, AuditAnchor
+    from app.models import RequestAuditLog, AuditAnchor, AuditLog
     from sqlalchemy import func as _func
 
     async def _anchor():
@@ -1633,22 +1647,46 @@ def anchor_audit_chain(self):
                 .where(RequestAuditLog.entry_hash.isnot(None))
                 .order_by(RequestAuditLog.id.desc()).limit(1)
             )).scalar()
-            if not head:
-                return {"status": "skipped", "reason": "no hashed audit entries yet"}
-            count = (await db.execute(
-                select(_func.count()).select_from(RequestAuditLog)
-                .where(RequestAuditLog.entry_hash.isnot(None))
-            )).scalar() or 0
+            count = 0
+            if head:
+                count = (await db.execute(
+                    select(_func.count()).select_from(RequestAuditLog)
+                    .where(RequestAuditLog.entry_hash.isnot(None))
+                )).scalar() or 0
+            auth = (await db.execute(
+                select(AuditLog.id, AuditLog.entry_hash)
+                .order_by(AuditLog.id.desc()).limit(1)
+            )).first()
+            auth_count = auth_legacy = None
+            if auth:
+                auth_count, auth_legacy = (await db.execute(
+                    select(_func.count(),
+                           _func.count().filter(AuditLog.chain_version == 1))
+                    .select_from(AuditLog).where(AuditLog.id <= auth.id)
+                )).one()
+            if not head and not auth:
+                return {"status": "skipped", "reason": "no audit entries yet"}
+            auth_head = auth.entry_hash if auth else None
             last = (await db.execute(
                 select(AuditAnchor).order_by(AuditAnchor.id.desc()).limit(1)
             )).scalar_one_or_none()
-            if last and last.head_hash == head:
+            if last and last.head_hash == head and last.auth_head_id == (auth.id if auth else None) \
+                    and last.auth_head_hash == auth_head:
                 return {"status": "unchanged", "head": head, "count": count}
-            db.add(AuditAnchor(head_hash=head, entry_count=count))
+            db.add(AuditAnchor(
+                head_hash=head, entry_count=count,
+                auth_head_id=auth.id if auth else None, auth_head_hash=auth_head,
+                auth_entry_count=auth_count, auth_legacy_count=auth_legacy,
+            ))
             await db.commit()
             # External-visible line (shipped to central log aggregation in hosted mode)
-            logger.info(f"[AUDIT ANCHOR] head={head} count={count}")
-            return {"status": "anchored", "head": head, "count": count}
+            logger.info(
+                f"[AUDIT ANCHOR] head={head} count={count} "
+                f"auth_head={auth_head} auth_head_id={auth.id if auth else None} auth_count={auth_count}"
+            )
+            return {"status": "anchored", "head": head, "count": count,
+                    "auth_head": auth_head, "auth_head_id": auth.id if auth else None,
+                    "auth_count": auth_count}
 
     try:
         return run_async(_anchor())
@@ -1844,3 +1882,4 @@ def proactive_health_scan():
     except Exception as e:
         logger.error(f"[proactive] scan failed: {e}")
         return {"status": "error", "error": str(e)}
+

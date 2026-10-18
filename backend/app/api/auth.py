@@ -9,16 +9,24 @@ import logging
 import os
 import urllib.parse
 
+from pydantic import BaseModel, Field
+
 from app.db.session import get_db
 from app.models import User
 import secrets as pysecrets
 
-from app.core.auth import create_access_token, decode_token, get_current_user
+from app.core.auth import (
+    create_session_token,
+    decode_token,
+    get_current_user,
+    revoke_user_sessions,
+)
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
 # Login state tokens live in Redis (app/services/login_state.py) so that a
 # backend restart mid-login does not invalidate the round-trip already in flight.
 from app.services import login_state
+from app.services import one_time
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -389,7 +397,7 @@ async def verify_bootstrap(
             404,
         )
 
-    access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
+    access_token = create_session_token(admin)
     logger.info(f"Bootstrap login successful for: {admin.username}")
 
     import json as _json
@@ -449,8 +457,8 @@ async def use_bootstrap_token(
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     
-    # Create JWT
-    access_token = create_access_token(data={"sub": user.username, "role": user.role})
+    # Create JWT. Handed over in the HTML body below, never in a URL.
+    access_token = create_session_token(user)
     
     logger.info(f"Bootstrap login successful for: {user.username}")
     
@@ -642,9 +650,6 @@ async def auth0_callback(
         # of a token that never carried one, so every login_success row logged
         # session_id="unknown".
         session_id = pysecrets.token_hex(16)
-        access_token = create_access_token(
-            data={"sub": user.username, "role": user.role, "jti": session_id}
-        )
         
         # Log successful login
         await AuditService.log_login_success(
@@ -660,9 +665,19 @@ async def auth0_callback(
         
         redirect_uri = _sanitize_redirect_uri(redirect_uri)
 
-        # Redirect back to frontend with token
+        # Redirect back with a single-use, 60-second code -- never the token.
+        # A token in the query string lands in browser history, the proxy's
+        # access log and the next page's Referer, and stays usable for its
+        # whole lifetime. The login page trades the code for the token over
+        # POST /api/auth/exchange and strips it from the address bar. The
+        # token is minted at the exchange, so it carries the account's session
+        # generation as of that moment.
+        login_code = await one_time.issue_login_code(
+            {"uid": user.id, "jti": session_id}
+        )
+        sep = "&" if "?" in redirect_uri else "?"
         return RedirectResponse(
-            url=f"{redirect_uri}?token={access_token}",
+            url=f"{redirect_uri}{sep}login_code={urllib.parse.quote(login_code)}",
             status_code=302
         )
     
@@ -680,6 +695,35 @@ async def auth0_callback(
             failure_reason=f"Authentication error: {str(e)}"
         )
         raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+class LoginCodeExchange(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/exchange")
+@limiter.limit("20/minute")
+async def exchange_login_code(
+    request: Request,
+    body: LoginCodeExchange,
+    db: AsyncSession = Depends(get_db),
+):
+    """Trade the single-use code the SSO callback redirected with for a session
+    token. Each code works once, within 60 seconds of the sign-in."""
+    claims = await one_time.redeem_login_code(body.code)
+    if not claims or not claims.get("uid"):
+        raise HTTPException(
+            status_code=401,
+            detail="This sign-in has expired or was already used. Sign in again.",
+        )
+    result = await db.execute(select(User).where(User.id == claims["uid"]))
+    user = result.scalar_one_or_none()
+    # Re-checked here: the account may have been disabled in the seconds
+    # between the callback and the exchange.
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Account is not available.")
+    access_token = create_session_token(user, jti=claims.get("jti"))
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.get("/logout")
@@ -709,6 +753,15 @@ async def logout(
         except Exception:
             pass  # Invalid/expired token, session_id stays "unknown"
     
+    # End the session for real. Bumping the account's session generation
+    # invalidates this token and every other one the account holds: a shared
+    # front-desk machine, a lost laptop and a forgotten tab are all signed out
+    # together, which is the safe default for a government system. (Before
+    # this, sign-out only forgot the token in the browser; a copy of it kept
+    # working for the rest of its eight hours.)
+    revoke_user_sessions(current_user)
+    await db.commit()
+
     # Log logout event
     await AuditService.log_logout(
         db=db,
@@ -727,7 +780,10 @@ async def logout(
     
     domain = config["domain"]
     client_id = config["client_id"]
-    logout_url = f"https://{domain}/v2/logout?client_id={client_id}&returnTo={return_to}"
+    logout_url = (
+        f"https://{domain}/v2/logout?"
+        + urllib.parse.urlencode({"client_id": client_id, "returnTo": return_to})
+    )
     
     return {"logout_url": logout_url}
 
@@ -771,7 +827,7 @@ async def redeem_onboarding_token(
                         description="Redeemed onboarding link"))
     await db.commit()
 
-    session_token = create_access_token(data={"sub": user.username})
+    session_token = create_session_token(user)
     await AuditService.log_event(
         db,
         event_type="onboarding_redeemed",

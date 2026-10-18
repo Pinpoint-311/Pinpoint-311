@@ -65,7 +65,7 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
-             "app.tasks.storage", "app.tasks.connector_checks"]
+             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades"]
 )
 
 celery_app.conf.update(
@@ -96,6 +96,12 @@ celery_app.conf.update(
     # The 15-minute pollers stay intervals: they fire within minutes of boot
     # regardless, and a fixed-minute stampede buys nothing.
     beat_schedule={
+        # Upgrade requests whose host updater stopped reporting become failed
+        # (app/tasks/upgrades.py). Interval, not crontab: it is a sweep.
+        "upgrade-request-lease": {
+            "task": "app.tasks.upgrades.expire_stale_upgrade_requests",
+            "schedule": 60 * 5,
+        },
         # Proactive health scan: warn admins by email before something fails
         # (disk/memory/connections/backup staleness), every 15 minutes.
         "proactive-health-scan": {

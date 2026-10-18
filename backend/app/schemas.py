@@ -539,6 +539,10 @@ class ServiceRequestDetailResponse(ServiceRequestResponse):
     # has no SLA. Computed per response; not stored.
     sla_due_datetime: Optional[datetime] = None
     sla_state: Optional[str] = None
+    # The context-layer features (tax parcel, zone...) the report fell inside,
+    # snapshotted at intake with the layer's staff allowlist only. Staff detail
+    # only -- never on a public or list schema. See app/services/gis_layers.py.
+    gis_context: Optional[List[Dict[str, Any]]] = None
 
 
 # ============ Manual Intake ============
@@ -884,6 +888,9 @@ class PlatformFeedbackStatisticsResponse(BaseModel):
 
 
 # ============ Map Layers ============
+MAP_LAYER_ROUTING_MODES = ("none", "log", "block", "context")
+
+
 class MapLayerBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
@@ -898,6 +905,12 @@ class MapLayerBase(BaseModel):
     service_codes: Optional[List[str]] = None  # Categories this layer applies to (empty = all)
     routing_config: Optional[Dict[str, Any]] = None  # { message, contacts }
 
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v is not None and v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
 
 
 class MapLayerCreate(MapLayerBase):
@@ -919,10 +932,49 @@ class MapLayerUpdate(BaseModel):
     geojson: Optional[Dict[str, Any]] = None
     service_codes: Optional[List[str]] = None
     routing_config: Optional[Dict[str, Any]] = None
+    # Context layers (see app/services/gis_layers.py). Each must name a field
+    # the uploaded file actually has; checked against available_properties.
+    feature_id_property: Optional[str] = Field(None, max_length=100)
+    label_property: Optional[str] = Field(None, max_length=100)
+    staff_properties: Optional[List[str]] = Field(None, max_length=100)
 
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v is not None and v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
+
+
+class MapLayerPolygonCreate(BaseModel):
+    """A table-backed polygon layer, built from a chunked upload."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    upload_id: str = Field(..., min_length=32, max_length=32)
+    fill_color: str = "#f59e0b"
+    stroke_color: str = "#b45309"
+    fill_opacity: float = 0.1
+    stroke_width: int = 1
+    visible_on_map: bool = True
+    routing_mode: str = "context"
+    service_codes: Optional[List[str]] = None
+    feature_id_property: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
+
+
+class MapLayerFeatureReupload(BaseModel):
+    upload_id: str = Field(..., min_length=32, max_length=32)
 
 
 class MapLayerResponse(MapLayerBase):
+    """A layer as the PUBLIC sees it. No context-layer settings, no field
+    names; a table-backed layer's geojson is an empty FeatureCollection."""
     id: int
     geojson: Dict[str, Any]
     is_active: bool
@@ -930,11 +982,26 @@ class MapLayerResponse(MapLayerBase):
     routing_mode: Optional[str] = "log"
     service_codes: Optional[List[str]] = None
     routing_config: Optional[Dict[str, Any]] = None
+    feature_storage: Optional[str] = "inline"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class MapLayerAdminResponse(MapLayerResponse):
+    """A layer as an admin sees it: the context-layer settings too."""
+    feature_id_property: Optional[str] = None
+    label_property: Optional[str] = None
+    staff_properties: Optional[List[str]] = None
+    available_properties: Optional[List[str]] = None
+    feature_count: Optional[int] = None
+    features_imported_at: Optional[datetime] = None
+    # {field: "owner" | "maybe"} for fields that look personal.
+    field_flags: Dict[str, str] = {}
+    warnings: List[str] = []
+    import_summary: Optional[Dict[str, Any]] = None
 
 
 # ============ Request Comments ============

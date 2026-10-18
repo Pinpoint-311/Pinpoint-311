@@ -57,3 +57,10 @@ backend/celerybeat-schedule
 backups/
 *.sql.gz
 db_backup_*.sql
+
+# Per-instance image pins (docs/RELEASES.md). Written by the operator or the
+# host updater, never committed.
+release.lock
+
+# Redactor model weights (downloaded per instance, never committed)
+/models/

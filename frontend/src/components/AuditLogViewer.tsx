@@ -1,5 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useId } from 'react';
-import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
+import { Shield, ShieldCheck, ShieldAlert, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
 import { AccordionSection, Chip } from './ui';
 import { humanize, humanizeTitle } from '../utils/humanize';
 import { useOptionalAnnounce } from './liveAnnounce';
@@ -23,6 +23,22 @@ interface AuditStats {
     total_logouts: number;
     unique_users: number;
     recent_failures: number;
+}
+
+/** GET /api/audit/verify-integrity: the hash chain recomputed from stored rows. */
+interface IntegrityReport {
+    integrity_valid: boolean;
+    total_entries: number;
+    legacy_entries: number;
+    verified_entries: number;
+    anchors_checked: number;
+    first_break: {
+        id: number;
+        timestamp: string | null;
+        reason: string;
+        expected_hash_prefix: string | null;
+        stored_hash_prefix: string | null;
+    } | null;
 }
 
 type Details = Record<string, any>;
@@ -90,6 +106,7 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
         ? `Deleted account ${d.target_username}${d.role ? ` (${humanize(d.role)})` : ''}`
         : null,
     user_password_reset: d => d.target_username ? `Reset the password for ${d.target_username}` : null,
+    user_sessions_revoked: d => d.target_username ? `Signed ${d.target_username} out on every device` : null,
     department_created: d => d.name ? `Created department "${d.name}"` : null,
     department_deleted: d => d.name ? `Deleted department "${d.name}"` : null,
     department_updated: d => d.name
@@ -124,7 +141,30 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
     version_deployed: d => d.to_sha ? `Deployed version ${d.to_sha}` : null,
     version_deployment_failed: d => d.target_ref ? `Deployment of ${d.target_ref} failed and was rolled back` : null,
     onboarding_redeemed: () => 'Signed in with a one-time onboarding link',
+    // Secure upgrades (docs/design/secure-upgrades.md, Phase 3)
+    upgrade_request_created: d => `Requested ${upgradeWhat(d)} (#${d.request_id ?? '?'})`
+        + (d.status === 'pending_approval' ? ', waiting for a second admin' : '')
+        + (d.allow_destructive ? ', destructive migration allowed' : '')
+        + (d.scheduled_for ? `, scheduled for ${new Date(d.scheduled_for).toLocaleString()}` : ''),
+    upgrade_request_refused: d => `Refused a request for ${upgradeWhat(d)}`,
+    upgrade_request_approved: d => `Approved ${upgradeWhat(d)} (#${d.request_id ?? '?'})${d.requested_by ? `, requested by ${d.requested_by}` : ''}`,
+    upgrade_request_approval_refused: d => `Was refused approving ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_cancelled: d => `Cancelled ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_claimed: d => `The host updater started ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_finished: d => `The host updater finished ${upgradeWhat(d)} (#${d.request_id ?? '?'}): ${humanize(d.status || d.outcome || 'unknown')}`,
+    upgrade_request_marked_failed: d => `Marked ${upgradeWhat(d)} (#${d.request_id ?? '?'}) failed${d.note ? `: ${d.note}` : ''}`,
+    upgrade_request_late_report: d => `Refused a late report from the host updater for #${d.request_id ?? '?'} (${humanize(d.outcome || 'finished')})`,
+    upgrade_settings_changed: d => `Turned two-person approval for upgrades ${d.require_two_person_approval ? 'on' : 'off'}`,
+    updater_token_created: d => `Created updater token ${d.prefix ?? ''}${d.label ? ` (${d.label})` : ''}`.trim(),
+    updater_token_revoked: d => `Revoked updater token ${d.prefix ?? ''}${d.label ? ` (${d.label})` : ''}`.trim(),
 };
+
+function upgradeWhat(d: Details): string {
+    if (d.action === 'upgrade') return `an upgrade to ${d.target_tag ?? 'a release'}`;
+    if (d.action === 'rollback') return 'a rollback';
+    if (d.action === 'restart') return 'a restart';
+    return 'an upgrade';
+}
 
 /** The fallback, and the expanded view: every detail as a readable
  * "key: value" pair instead of raw JSON. Values are shallow — an array joins,
@@ -167,6 +207,9 @@ export default function AuditLogViewer() {
     const [endDate, setEndDate] = useState('');
     const [quickRange, setQuickRange] = useState<string>('7');
     const [exportError, setExportError] = useState<string | null>(null);
+    const [integrity, setIntegrity] = useState<IntegrityReport | null>(null);
+    const [integrityError, setIntegrityError] = useState<string | null>(null);
+    const [verifying, setVerifying] = useState(false);
 
     const announce = useOptionalAnnounce();
 
@@ -301,6 +344,32 @@ export default function AuditLogViewer() {
         }
     };
 
+    const handleVerify = async () => {
+        setVerifying(true);
+        setIntegrityError(null);
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch('/api/audit/verify-integrity', {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!response.ok) throw new Error(`Integrity check failed (${response.status}).`);
+            const report: IntegrityReport = await response.json();
+            setIntegrity(report);
+            if (report.integrity_valid) {
+                announce(`Audit log verified: ${report.verified_entries.toLocaleString()} entries intact.`);
+            } else if (report.first_break) {
+                announce(`Audit log chain broken at entry ${report.first_break.id}: ${report.first_break.reason}`, 'assertive');
+            }
+        } catch (err: any) {
+            const message = err?.message || 'Integrity check failed.';
+            setIntegrity(null);
+            setIntegrityError(message);
+            announce(message, 'assertive');
+        } finally {
+            setVerifying(false);
+        }
+    };
+
     const handleSearch = () => {
         setCurrentPage(1);
         fetchLogs();
@@ -419,6 +488,15 @@ export default function AuditLogViewer() {
                                 <option value="resident_history_viewed" className="bg-slate-800">Resident History Viewed</option>
                                 <option value="resident_search" className="bg-slate-800">Resident Search</option>
                             </optgroup>
+                            <optgroup label="Upgrades">
+                                <option value="upgrade_request_created" className="bg-slate-800">Upgrade Requested</option>
+                                <option value="upgrade_request_approved" className="bg-slate-800">Upgrade Approved</option>
+                                <option value="upgrade_request_cancelled" className="bg-slate-800">Upgrade Cancelled</option>
+                                <option value="upgrade_request_finished" className="bg-slate-800">Upgrade Finished</option>
+                                <option value="upgrade_settings_changed" className="bg-slate-800">Approval Setting Changed</option>
+                                <option value="updater_token_created" className="bg-slate-800">Updater Token Created</option>
+                                <option value="updater_token_revoked" className="bg-slate-800">Updater Token Revoked</option>
+                            </optgroup>
                         </select>
                     </div>
 
@@ -493,7 +571,71 @@ export default function AuditLogViewer() {
                         <Download className="w-4 h-4" aria-hidden="true" />
                         Export CSV
                     </button>
+                    <button
+                        type="button"
+                        onClick={handleVerify}
+                        disabled={verifying}
+                        className="btn-outline btn-outline-md"
+                    >
+                        <ShieldCheck className={`w-4 h-4 ${verifying ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                        {verifying ? 'Verifying…' : 'Verify integrity'}
+                    </button>
                 </div>
+
+                {/* Integrity result. Visual only; the outcome is announced
+                    through announce() (one live region, see the error strip). */}
+                {(integrity || integrityError) && (
+                    <div
+                        data-testid="integrity-result"
+                        className={`rounded-xl border p-4 text-sm space-y-2 ${integrity?.integrity_valid
+                            ? 'bg-emerald-500/10 border-emerald-500/30'
+                            : 'bg-red-500/10 border-red-500/30'}`}
+                    >
+                        {integrityError ? (
+                            <div className="flex items-center gap-2 text-red-300">
+                                <AlertCircle className="w-4 h-4" aria-hidden="true" />
+                                {integrityError}
+                            </div>
+                        ) : integrity && integrity.integrity_valid ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Chip size="sm" tone="success" icon={ShieldCheck}>Chain intact</Chip>
+                                <span className="text-white/90">
+                                    ✓ {integrity.verified_entries.toLocaleString()} {integrity.verified_entries === 1 ? 'entry' : 'entries'} verified
+                                </span>
+                                {integrity.legacy_entries > 0 && (
+                                    <Chip size="sm" tone="neutral">
+                                        {integrity.legacy_entries.toLocaleString()} legacy {integrity.legacy_entries === 1 ? 'entry' : 'entries'} (before verification; not checked)
+                                    </Chip>
+                                )}
+                                {integrity.anchors_checked > 0 && (
+                                    <Chip size="sm" tone="info">
+                                        {integrity.anchors_checked} nightly {integrity.anchors_checked === 1 ? 'anchor' : 'anchors'} matched
+                                    </Chip>
+                                )}
+                            </div>
+                        ) : integrity?.first_break ? (
+                            <>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Chip size="sm" tone="danger" icon={ShieldAlert}>Chain broken</Chip>
+                                    <span className="text-white/90">
+                                        Entry #{integrity.first_break.id}
+                                        {integrity.first_break.timestamp ? ` (${formatTimestamp(integrity.first_break.timestamp)})` : ''}
+                                        : {integrity.first_break.reason}
+                                    </span>
+                                </div>
+                                {(integrity.first_break.expected_hash_prefix || integrity.first_break.stored_hash_prefix) && (
+                                    <div className="font-mono text-xs text-white/70">
+                                        expected {integrity.first_break.expected_hash_prefix ?? '—'}… · stored {integrity.first_break.stored_hash_prefix ?? '—'}…
+                                    </div>
+                                )}
+                                <div className="text-white/60 text-xs">
+                                    {integrity.verified_entries.toLocaleString()} entries verified before the break
+                                    {integrity.legacy_entries > 0 ? `; ${integrity.legacy_entries.toLocaleString()} legacy entries not checked` : ''}.
+                                </div>
+                            </>
+                        ) : null}
+                    </div>
+                )}
 
                 {/* Table */}
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden" aria-busy={isLoading}>

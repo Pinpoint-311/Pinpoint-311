@@ -17,7 +17,16 @@
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
 #
-# Head is d2e4f6a8b0c1 (contact_opt_out) -- one boolean column with a server
+# Head is e3a5c7d9f1b2 (open311_keys_audit_chain_v2_token_version) -- eight new
+# tables (open311_api_keys, open311_settings, map_layer_features with its GIST
+# index, and the secure-upgrades tables upgrade_requests, upgrade_request_steps,
+# updater_tokens, updater_releases, updater_settings), nullable columns on
+# audit_logs, audit_anchors and map_layers, the nullable service_requests.gis_context JSONB with a GIN index, and NOT NULL
+# columns with server defaults (audit_logs.chain_version, users.token_version,
+# map_layers.feature_storage). No data written, nothing dropped or narrowed:
+# expand, so the floor is its parent, d2e4f6a8b0c1.
+#
+# Before that, head was d2e4f6a8b0c1 (contact_opt_out) -- one boolean column with a server
 # default. Expand: older code ignores it, so the floor is its parent,
 # c7d9e1f3a5b6.
 #
@@ -61,4 +70,4 @@
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-c7d9e1f3a5b6
+d2e4f6a8b0c1

@@ -46,6 +46,9 @@ def _routes():
                     ("staff", "get_current_staff"),
                     ("researcher", "get_current_researcher"),
                     ("user", "get_current_user"),
+                    # The host updater's internal channel: a bearer updater
+                    # token, never a person (app/api/updater_internal.py).
+                    ("updater", "require_updater_token"),
                 ) if marker in defaults), None)
                 yield path.name, dec.func.attr, route, node.name, role
 
@@ -58,7 +61,12 @@ def _routes():
 # deliberate public action.
 PUBLIC_WRITES = {
     # Resident-facing, by design.
-    ("open311.py", "post", "/requests.json"),                        # file a report
+    ("open311.py", "post", "/portal/requests"),                      # file a report (town's own portal)
+    # GeoReport v2 intake for third-party clients. The api_key is verified in
+    # the handler (hash lookup, constant-time compare, revocation), not in a
+    # Depends, because the spec puts it in the form/JSON body.
+    ("open311.py", "post", "/requests.json"),
+    ("open311.py", "post", "/requests.xml"),
     ("open311.py", "post", "/public/requests/{request_id}/comments"),  # comment on your own report
     # Screens a photo when the resident picks it, so the Vision round trip is
     # not sitting on the Submit button. Unauthenticated for the same reason
@@ -80,6 +88,7 @@ PUBLIC_WRITES = {
     ("auth.py", "post", "/bootstrap"),                               # bootstrap password
     ("auth.py", "post", "/bootstrap/verify"),                        # bootstrap token
     ("auth.py", "post", "/onboarding/redeem"),                       # single-use signed link
+    ("auth.py", "post", "/exchange"),                                # single-use sign-in code
     ("integrations.py", "post", "/webhook/{platform}/{token}"),      # per-integration secret
     ("provisioning.py", "post", "/bootstrap"),                       # provisioning token
     ("provisioning.py", "post", "/lifecycle"),                       # provisioning token
@@ -156,3 +165,14 @@ def test_the_destructive_request_endpoints_stay_behind_a_role(path, fn):
     assert roles, f"{path}:{fn} is not a route any more"
     for role in roles:
         assert role in ("staff", "admin"), f"{fn} is reachable as role={role}"
+
+
+def test_the_updater_channel_takes_only_the_updater_token():
+    """/api/internal/updater/* is the host updater's channel. Every route on it
+    names require_updater_token, and nothing else in the API does."""
+    routes = list(_routes())
+    internal = [(m, r, role) for f, m, r, _fn, role in routes if f == "updater_internal.py"]
+    assert internal, "the updater's internal routes are missing"
+    assert all(role == "updater" for _m, _r, role in internal), internal
+    elsewhere = [(f, r) for f, _m, r, _fn, role in routes if role == "updater" and f != "updater_internal.py"]
+    assert not elsewhere, elsewhere

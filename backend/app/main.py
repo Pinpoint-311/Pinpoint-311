@@ -557,6 +557,12 @@ app.include_router(setup.router, prefix="/api/setup", tags=["Setup"])
 app.include_router(provisioning.router, prefix="/api/provisioning", tags=["Provisioning (orchestrator)"])
 app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry (orchestrator)"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
+# Secure upgrades, Phase 3 (docs/design/secure-upgrades.md): admins request and
+# approve in the console; the host updater claims and reports over
+# /api/internal/updater/* with its own token. Caddy refuses /api/internal/*.
+from app.api import upgrades as _upgrades, updater_internal as _updater_internal  # noqa: E402
+app.include_router(_upgrades.router, prefix="/api/system", tags=["Upgrades"])
+app.include_router(_updater_internal.router, prefix="/api/internal/updater", tags=["Updater (host, internal)"])
 
 # Mounted at /api because the router declares its own /export prefix --
 # FastAPI concatenates the two, so the served paths are /api/export/requests

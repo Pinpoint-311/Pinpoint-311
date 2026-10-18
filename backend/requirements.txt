@@ -43,6 +43,10 @@ vaderSentiment==3.3.2
 # image_redaction degrades to storing the photo as submitted.
 Pillow==11.1.0
 opencv-python-headless==4.11.0.86
+# onnxruntime (the on-server plate/face detectors, app/services/onnx_detectors.py)
+# is installed by the Dockerfile with --no-deps: the runtime imports only numpy,
+# and its declared dependencies (sympy, mpmath, coloredlogs, ...) add ~86 MB the
+# detector never uses. See requirements-onnx.txt.
 
 # The free plate detector. Tesseract is Apache 2.0, which is what makes it
 # usable here -- OpenALPR and every off-the-shelf Ultralytics YOLO plate model

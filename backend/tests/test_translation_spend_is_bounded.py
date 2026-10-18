@@ -28,7 +28,10 @@ async def test_the_batch_path_records_what_it_spends():
     function, and a spend nobody can see is a spend nobody can cap.
     """
     translation = pytest.importorskip("app.services.translation")
-    source = inspect.getsource(translation.translate_batch)
+    # translate_batch delegates to translate_batch_detailed (which also reports
+    # whether the spend budget refused the call); the provider call lives there.
+    source = inspect.getsource(translation.translate_batch_detailed)
+    assert "translate_batch_detailed" in inspect.getsource(translation.translate_batch)
     assert "track_api_usage" in source, (
         "translate_batch calls the provider without recording usage, so "
         "resident-facing translation is missing from every cost figure"

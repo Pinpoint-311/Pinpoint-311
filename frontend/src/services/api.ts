@@ -21,6 +21,9 @@ import {
     ResidentHistory,
     ResidentSearchResult,
 } from '../types';
+import type {
+    CurrentVersion, NewUpgradeRequest, UpdaterRelease, UpdaterState, UpdaterTokenRecord, UpgradeRequestRecord,
+} from './upgradeTypes';
 
 const API_BASE = '/api';
 
@@ -465,6 +468,28 @@ class ApiClient {
         return this.request<User>('/auth/me');
     }
 
+    /** Trade the single-use code the SSO callback redirected with for a
+     *  session token. The token itself never travels in a URL. */
+    async exchangeLoginCode(code: string): Promise<{ access_token: string; token_type: string }> {
+        return this.request('/auth/exchange', {
+            method: 'POST',
+            body: JSON.stringify({ code }),
+        });
+    }
+
+    /** End the session server-side (this revokes every session the account
+     *  holds) and get the identity provider's sign-out URL. Takes the token
+     *  explicitly so the caller can forget it locally first: the endpoint has
+     *  to be told WHO is signing out. */
+    async logout(token: string, returnTo: string): Promise<{ logout_url?: string }> {
+        const response = await fetch(
+            `${API_BASE}/auth/logout?return_to=${encodeURIComponent(returnTo)}`,
+            { headers: { Authorization: `Bearer ${token}` } },
+        );
+        if (!response.ok) throw new Error(`Sign-out failed (${response.status})`);
+        return response.json();
+    }
+
     // Services (Public)
     async getServices(): Promise<ServiceDefinition[]> {
         return this.request<ServiceDefinition[]>('/services/');
@@ -595,7 +620,9 @@ class ApiClient {
         inlineFallback?: Record<string, string>,
     ): Promise<ServiceRequest> {
         try {
-            return await this.request<ServiceRequest>('/open311/v2/requests.json', {
+            // The town's own portal route; POST requests.json is the keyed
+            // GeoReport v2 interface for third-party clients.
+            return await this.request<ServiceRequest>('/open311/v2/portal/requests', {
                 method: 'POST',
                 body: JSON.stringify(data),
             });
@@ -608,7 +635,7 @@ class ApiClient {
                 (m) => (stale.includes(m) && inlineFallback[m]) || m,
             ).filter((m) => !stale.includes(m));
 
-            return this.request<ServiceRequest>('/open311/v2/requests.json', {
+            return this.request<ServiceRequest>('/open311/v2/portal/requests', {
                 method: 'POST',
                 body: JSON.stringify({ ...data, media_urls: retried }),
             });
@@ -670,11 +697,11 @@ class ApiClient {
         if (status) params.append('status', status);
         if (includeDeleted) params.append('include_deleted', 'true');
         const queryString = params.toString() ? `?${params.toString()}` : '';
-        return this.request<ServiceRequest[]>(`/open311/v2/requests.json${queryString}`);
+        return this.request<ServiceRequest[]>(`/open311/v2/staff/requests${queryString}`);
     }
 
     async getRequestDetail(requestId: string): Promise<ServiceRequestDetail> {
-        return this.request<ServiceRequestDetail>(`/open311/v2/requests/${requestId}.json`);
+        return this.request<ServiceRequestDetail>(`/open311/v2/staff/requests/${encodeURIComponent(requestId)}`);
     }
 
     async updateRequest(
@@ -1131,13 +1158,6 @@ class ApiClient {
         });
     }
 
-    // System Update (Admin)
-    async updateSystem(): Promise<{ status: string; message: string }> {
-        return this.request<{ status: string; message: string }>('/system/update', {
-            method: 'POST',
-        });
-    }
-
     // Domain Configuration (Admin)
     async configureDomain(domain: string): Promise<{
         status: string;
@@ -1427,6 +1447,10 @@ class ApiClient {
         routing_mode?: string;
         routing_config?: object | null;
         visible_on_map?: boolean;
+        show_on_resident_portal?: boolean;
+        feature_id_property?: string;
+        label_property?: string;
+        staff_properties?: string[];
     }): Promise<MapLayer> {
         return this.request(`/map-layers/${layerId}`, {
             method: 'PUT',
@@ -1438,6 +1462,90 @@ class ApiClient {
         return this.request(`/map-layers/${layerId}`, {
             method: 'DELETE',
         });
+    }
+
+    // Polygon (context) layers: chunked upload, staff map outlines, history.
+    async startLayerUpload(sizeBytes: number): Promise<{ upload_id: string; chunk_bytes: number; max_bytes: number }> {
+        return this.request('/map-layers/uploads', {
+            method: 'POST',
+            body: JSON.stringify({ size_bytes: sizeBytes }),
+        });
+    }
+
+    async uploadLayerChunk(uploadId: string, index: number, chunk: Blob): Promise<{ received_bytes: number; size_bytes: number }> {
+        return this.request(`/map-layers/uploads/${encodeURIComponent(uploadId)}/chunks/${index}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: chunk,
+        });
+    }
+
+    async discardLayerUpload(uploadId: string): Promise<void> {
+        return this.request(`/map-layers/uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE' });
+    }
+
+    async createPolygonLayer(data: {
+        name: string;
+        description?: string;
+        upload_id: string;
+        fill_color?: string;
+        stroke_color?: string;
+        fill_opacity?: number;
+        stroke_width?: number;
+        routing_mode?: 'context' | 'none';
+        service_codes?: string[];
+        visible_on_map?: boolean;
+    }): Promise<MapLayer> {
+        return this.request('/map-layers/polygon', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    async reuploadLayerFeatures(layerId: number, uploadId: string): Promise<MapLayer> {
+        return this.request(`/map-layers/${layerId}/features`, {
+            method: 'POST',
+            body: JSON.stringify({ upload_id: uploadId }),
+        });
+    }
+
+    async backfillLayerContext(layerId: number): Promise<{ scanned: number; updated: number }> {
+        return this.request(`/map-layers/${layerId}/backfill`, { method: 'POST' });
+    }
+
+    async getContextLayers(): Promise<ContextLayer[]> {
+        return this.request('/map-layers/context');
+    }
+
+    async getContextLayerFeatures(
+        layerId: number,
+        bbox: { west: number; south: number; east: number; north: number },
+        zoom: number,
+        signal?: AbortSignal,
+    ): Promise<ContextFeatureCollection> {
+        const box = [bbox.west, bbox.south, bbox.east, bbox.north].map(v => v.toFixed(6)).join(',');
+        return this.request(`/map-layers/${layerId}/features?bbox=${box}&zoom=${zoom}`, { signal });
+    }
+
+    /** Resident-visible polygon layer shapes in a viewport: geometry only (public). */
+    async getPublicLayerOutlines(
+        layerId: number,
+        bbox: { west: number; south: number; east: number; north: number },
+        zoom: number,
+        signal?: AbortSignal,
+    ): Promise<{ type: 'FeatureCollection'; features: { type: 'Feature'; geometry: object; properties: Record<string, never> }[]; zoom_in: boolean; limit: number }> {
+        const box = [bbox.west, bbox.south, bbox.east, bbox.north].map(v => v.toFixed(6)).join(',');
+        return this.request(`/map-layers/${layerId}/public-outlines?bbox=${box}&zoom=${zoom}`, { signal });
+    }
+
+    async getFeatureReports(layerId: number, featureKey: string, excludeRequestId?: string): Promise<{
+        service_request_id: string;
+        service_name: string;
+        status: string;
+        requested_datetime: string | null;
+        address: string | null;
+        description: string | null;
+    }[]> {
+        const params = new URLSearchParams({ feature_key: featureKey });
+        if (excludeRequestId) params.append('exclude_request_id', excludeRequestId);
+        return this.request(`/map-layers/${layerId}/features/requests?${params.toString()}`);
     }
 
     // Image Upload
@@ -1613,6 +1721,33 @@ class ApiClient {
         });
     }
 
+    // Open311 API keys and switches (admin)
+    async getOpen311Keys(): Promise<Open311ApiKey[]> {
+        return this.request<Open311ApiKey[]>('/open311/v2/admin/keys');
+    }
+
+    async createOpen311Key(data: { name: string; contact_email: string; rate_limit_per_minute?: number | null }): Promise<Open311ApiKeyCreated> {
+        return this.request<Open311ApiKeyCreated>('/open311/v2/admin/keys', {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    }
+
+    async revokeOpen311Key(keyId: number): Promise<Open311ApiKey> {
+        return this.request<Open311ApiKey>(`/open311/v2/admin/keys/${keyId}/revoke`, { method: 'POST' });
+    }
+
+    async getOpen311Settings(): Promise<Open311Settings> {
+        return this.request<Open311Settings>('/open311/v2/admin/settings');
+    }
+
+    async updateOpen311Settings(data: { allow_anonymous_submissions?: boolean; jurisdiction_id?: string }): Promise<Open311Settings> {
+        return this.request<Open311Settings>('/open311/v2/admin/settings', {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    }
+
     async getLegalHoldRequests(): Promise<{
         count: number;
         requests: Array<{
@@ -1777,6 +1912,58 @@ class ApiClient {
         return this.request<ProactiveHealth>('/health/proactive');
     }
 
+    // ========== Upgrades (host updater, docs/design/secure-upgrades.md) ==========
+
+    async getCurrentVersion(): Promise<CurrentVersion> {
+        return this.request<CurrentVersion>('/system/current-version');
+    }
+
+    async getUpdaterReleases(): Promise<{ releases: UpdaterRelease[]; updater: UpdaterState; db_revision: string | null }> {
+        return this.request('/system/releases');
+    }
+
+    async getUpgradeRequests(): Promise<{ requests: UpgradeRequestRecord[]; updater: UpdaterState; require_two_person_approval: boolean }> {
+        return this.request('/system/upgrade-requests');
+    }
+
+    async getUpgradeRequest(id: number): Promise<UpgradeRequestRecord> {
+        return this.request<UpgradeRequestRecord>(`/system/upgrade-requests/${id}`);
+    }
+
+    async createUpgradeRequest(body: NewUpgradeRequest): Promise<UpgradeRequestRecord> {
+        return this.request<UpgradeRequestRecord>('/system/upgrade-requests', { method: 'POST', body: JSON.stringify(body) });
+    }
+
+    async approveUpgradeRequest(id: number): Promise<UpgradeRequestRecord> {
+        return this.request<UpgradeRequestRecord>(`/system/upgrade-requests/${id}/approve`, { method: 'POST' });
+    }
+
+    async markUpgradeRequestFailed(id: number, reason?: string): Promise<UpgradeRequestRecord> {
+        return this.request<UpgradeRequestRecord>(`/system/upgrade-requests/${id}/fail`, { method: 'POST', body: JSON.stringify({ reason: reason || null }) });
+    }
+
+    async cancelUpgradeRequest(id: number): Promise<UpgradeRequestRecord> {
+        return this.request<UpgradeRequestRecord>(`/system/upgrade-requests/${id}/cancel`, { method: 'POST' });
+    }
+
+    async setUpgradeSettings(requireTwoPersonApproval: boolean): Promise<UpdaterState> {
+        return this.request<UpdaterState>('/system/upgrade-settings', {
+            method: 'PUT', body: JSON.stringify({ require_two_person_approval: requireTwoPersonApproval }),
+        });
+    }
+
+    async getUpdaterTokens(): Promise<{ tokens: UpdaterTokenRecord[]; updater: UpdaterState }> {
+        return this.request('/system/updater-tokens');
+    }
+
+    async createUpdaterToken(label?: string): Promise<UpdaterTokenRecord> {
+        return this.request<UpdaterTokenRecord>('/system/updater-tokens', { method: 'POST', body: JSON.stringify({ label: label || null }) });
+    }
+
+    async revokeUpdaterToken(id: number): Promise<UpdaterTokenRecord> {
+        return this.request<UpdaterTokenRecord>(`/system/updater-tokens/${id}/revoke`, { method: 'POST' });
+    }
+
     async executeRunbook(action: string, backupName?: string): Promise<RunbookResult> {
         const params = backupName ? `?backup_name=${encodeURIComponent(backupName)}` : '';
         return this.request<RunbookResult>(`/system/runbook/${action}${params}`, { method: 'POST' });
@@ -1842,6 +2029,30 @@ class ApiClient {
 
     async getApiPricing(): Promise<Record<string, any>> {
         return this.request<Record<string, any>>('/system/api-usage/pricing');
+    }
+
+    /** Translation spend against the daily/monthly character budget (admin). */
+    async getTranslationBudget(): Promise<TranslationBudgetUsage> {
+        return this.request<TranslationBudgetUsage>('/system/translate/budget');
+    }
+
+    async updateTranslationBudget(daily_chars: number, monthly_chars: number): Promise<TranslationBudgetUsage> {
+        return this.request<TranslationBudgetUsage>('/system/translate/budget', {
+            method: 'PUT',
+            body: JSON.stringify({ daily_chars, monthly_chars }),
+        });
+    }
+
+    // On-server photo-redaction detectors (plate model, face fallback).
+    async getRedactionDetectors(): Promise<RedactionDetectors> {
+        return this.request<RedactionDetectors>('/system/redaction/detectors');
+    }
+
+    async updateRedactionDetectors(body: Partial<Pick<RedactionDetectors, 'plate_detector' | 'face_fallback' | 'plate_ocr_union'>>): Promise<RedactionDetectors> {
+        return this.request<RedactionDetectors>('/system/redaction/detectors', {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
     }
 
 
@@ -2002,6 +2213,34 @@ export interface ResearchPackSwitch {
     why_default_off?: string;
 }
 
+/** An Open311 API key as the admin list shows it: never the key itself. */
+export interface Open311ApiKey {
+    id: number;
+    name: string;
+    contact_email: string;
+    key_prefix: string;
+    rate_limit_per_minute: number | null;
+    effective_rate_limit_per_minute: number;
+    created_by: string | null;
+    created_at: string | null;
+    last_used_at: string | null;
+    revoked_at: string | null;
+    revoked_by: string | null;
+    status: 'active' | 'revoked';
+}
+
+/** The create answer: the only time the plaintext key is ever sent. */
+export interface Open311ApiKeyCreated extends Open311ApiKey {
+    api_key: string;
+}
+
+export interface Open311Settings {
+    allow_anonymous_submissions: boolean;
+    jurisdiction_id: string | null;
+    anonymous_rate_limit: string;
+    default_key_rate_limit_per_minute: number;
+}
+
 export const api = new ApiClient();
 export default api;
 
@@ -2019,14 +2258,59 @@ export interface MapLayer {
     is_active: boolean;
     show_on_resident_portal: boolean;
     service_codes?: string[];  // Categories this layer applies to (empty = all)
-    routing_mode?: 'none' | 'log' | 'block';  // Polygon behavior
+    routing_mode?: 'none' | 'log' | 'block' | 'context';  // Polygon behavior; context = record which feature a report falls in
     visible_on_map?: boolean;  // Whether to render the layer visually
     routing_config?: {
         message?: string;
         contacts?: { name: string; phone: string; url: string }[];
     };
+    /** "table": features live server-side (polygon/context layers); geojson is empty. */
+    feature_storage?: 'inline' | 'table';
+    // Admin-only (GET /map-layers/all): context-layer settings.
+    feature_id_property?: string | null;
+    label_property?: string | null;
+    staff_properties?: string[] | null;
+    available_properties?: string[] | null;
+    feature_count?: number | null;
+    features_imported_at?: string | null;
+    /** Fields that look personal: "owner" (confident) or "maybe". */
+    field_flags?: Record<string, 'owner' | 'maybe'>;
+    warnings?: string[];
+    import_summary?: { feature_count: number; skipped: number; properties: string[]; feature_id_property: string | null } | null;
     created_at?: string;
     updated_at?: string;
+}
+
+/** One context-layer feature a report fell inside, snapshotted at intake. */
+export interface GisContextEntry {
+    layer_id: number;
+    layer_name: string;
+    feature_id: number;
+    feature_key: string;
+    label: string;
+    /** The layer's staff allowlist only, as it read when the report came in. */
+    properties: Record<string, unknown>;
+}
+
+export interface ContextLayer {
+    id: number;
+    name: string;
+    description?: string | null;
+    purpose?: 'context' | 'display';
+    fill_color: string;
+    stroke_color: string;
+    fill_opacity: number;
+    stroke_width: number;
+    visible_on_map: boolean;
+    feature_count: number | null;
+    min_zoom: number;
+}
+
+export interface ContextFeatureCollection {
+    type: 'FeatureCollection';
+    features: { type: 'Feature'; id: number; geometry: object; properties: { feature_id: number; feature_key: string; label: string } }[];
+    zoom_in: boolean;
+    limit: number;
 }
 
 // Document Retention types
@@ -2370,4 +2654,41 @@ export interface DailyUsageResponse {
         characters: number;
         api_calls: number;
     }>;
+}
+
+export interface TranslationBudgetPeriod {
+    period: string;
+    used: number;
+    limit: number;
+    remaining: number;
+    percent: number;
+    exhausted: boolean;
+    resets_at: string;
+}
+
+export interface RedactionModelStatus {
+    file: string;
+    present: boolean;
+    loaded: boolean;
+    error: string;
+    sha256: string;
+    size_bytes: number;
+}
+
+export interface RedactionDetectors {
+    plate_detector: 'yolo' | 'ocr' | 'off' | 'redactor';
+    plate_detector_stored: string;
+    face_fallback: 'yunet' | 'opencv' | 'off';
+    face_fallback_stored: string;
+    plate_ocr_union: boolean;
+    models: { plate: RedactionModelStatus; face: RedactionModelStatus; models_dir: string };
+}
+
+export interface TranslationBudgetUsage {
+    day: TranslationBudgetPeriod;
+    month: TranslationBudgetPeriod;
+    status: 'ok' | 'warning' | 'critical';
+    counter_store: 'redis' | 'memory' | 'unavailable';
+    defaults: { daily: number; monthly: number };
+    max_budget: number;
 }

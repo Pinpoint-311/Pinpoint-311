@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_
 from typing import Any, List, Optional, Dict
 from pydantic import BaseModel
-import subprocess
 import os
 import re
 import uuid
@@ -4776,808 +4775,52 @@ async def get_heatmap_data(
     return result
 
 
-# ============ System Update ============
-
-
-def _reject_if_managed():
-    """In state-hosted (managed) mode, in-app self-update is disabled — upgrades
-    come only from the orchestrator (publish image → panel rolls out). This also
-    removes the biggest infra risk (git pull + docker compose via a mounted
-    Docker socket) from the hosted fleet."""
-    from app.core.config import get_settings
-    if get_settings().managed_mode:
-        raise HTTPException(
-            status_code=403,
-            detail="Updates are managed by your state's hosting platform and can't be triggered from here.",
-        )
-
-
-@router.post("/update")
-async def update_system(_: User = Depends(get_current_admin)):
-    """Pull updates from GitHub (admin only). Code changes reload automatically."""
-    from app.core.managed import ensure_not_managed
-    ensure_not_managed("Upgrading")  # hosted upgrades come only from the orchestrator (A2)
-    try:
-        # Get the project root
-        project_root = os.environ.get("PROJECT_ROOT", "/project")
-        
-        # Add safe directory to fix ownership issues in Docker
-        subprocess.run(
-            ["git", "config", "--global", "--add", "safe.directory", project_root],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        # Pull latest code
-        pull_result = subprocess.run(
-            ["git", "pull", "origin", "main"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        if pull_result.returncode != 0:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Git pull failed: {pull_result.stderr}"
-            )
-        
-        # Check what was updated
-        git_output = pull_result.stdout.strip()
-        
-        # Determine if restart is needed
-        needs_restart = any(x in git_output.lower() for x in [
-            'requirements.txt', 'dockerfile', 'docker-compose', 'package.json'
-        ])
-        
-        return {
-            "status": "success",
-            "message": "Updates pulled successfully. " + (
-                "Restart the container to apply dependency changes." 
-                if needs_restart 
-                else "Code changes will reload automatically."
-            ),
-            "git_output": git_output,
-            "needs_restart": needs_restart
-        }
-    
-    except subprocess.TimeoutExpired:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Update operation timed out"
-        )
-    except Exception as e:
-        logger.error(f"Update operation failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Update operation failed"
-        )
-
-
-# ============ Version Switcher ============
-
-GITHUB_REPO = "Pinpoint-311/Pinpoint-311"
-GITHUB_API_BASE = "https://api.github.com"
+# ============ Version ============
+#
+# Upgrades, rollbacks and restarts are requests the host updater executes
+# (docs/design/secure-upgrades.md, Phase 3; app/api/upgrades.py and
+# app/api/updater_internal.py). The git-pull update, the git/docker version
+# switcher and the GitHub release and CI lookups that used to live here are
+# gone: the backend has no Docker socket, no source checkout and no code-host
+# credentials, and needs none.
 
 
 @router.get("/current-version")
-async def get_current_version(_: User = Depends(get_current_admin)):
-    """Get current git version information (admin only)."""
-    try:
-        project_root = os.environ.get("PROJECT_ROOT", "/project")
-        
-        # Add safe directory to fix ownership issues in Docker
-        subprocess.run(
-            ["git", "config", "--global", "--add", "safe.directory", project_root],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        # Get current commit SHA
-        sha_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if sha_result.returncode != 0:
-            logger.warning(f"Git rev-parse failed: {sha_result.stderr}")
-        current_sha = sha_result.stdout.strip()[:7] if sha_result.returncode == 0 else "unknown"
-        
-        # Get current tag (if on a tag)
-        tag_result = subprocess.run(
-            ["git", "describe", "--tags", "--exact-match", "HEAD"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        current_tag = tag_result.stdout.strip() if tag_result.returncode == 0 else None
-        
-        # Get commit date
-        date_result = subprocess.run(
-            ["git", "log", "-1", "--format=%ci"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        commit_date = date_result.stdout.strip() if date_result.returncode == 0 else None
-        
-        # Get commit message (first line)
-        msg_result = subprocess.run(
-            ["git", "log", "-1", "--format=%s"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        commit_message = msg_result.stdout.strip() if msg_result.returncode == 0 else None
-        if commit_message:
-            commit_message = re.sub(r'claude\/', '', commit_message, flags=re.IGNORECASE)
-            commit_message = re.sub(r'\bclaude\b', '', commit_message, flags=re.IGNORECASE)
-            commit_message = re.sub(r'\s{2,}', ' ', commit_message).strip()[:60]
-        
-        return {
-            "sha": current_sha,
-            "tag": current_tag,
-            "commit_date": commit_date,
-            "commit_message": commit_message,
-            "display": current_tag or f"@{current_sha}"
-        }
-    except Exception as e:
-        logger.error(f"Failed to get current version: {e}")
-        return {"sha": "unknown", "tag": None, "commit_date": None, "display": "@unknown"}
+async def get_current_version(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
+    """The release this image was built as (admin only).
 
-
-@router.get("/releases")
-async def get_releases(_: User = Depends(get_current_admin)):
-    """Fetch available releases from GitHub (admin only)."""
-    import httpx
-    
-    logger.info(f"[Releases] Starting fetch from GitHub API")
-    logger.info(f"[Releases] GITHUB_API_BASE={GITHUB_API_BASE}, GITHUB_REPO={GITHUB_REPO}")
-    
-    try:
-        releases = []
-        recent_commits = []
-        
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # Fetch releases
-            releases_url = f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/releases"
-            logger.info(f"[Releases] Fetching releases from: {releases_url}")
-            response = await client.get(
-                releases_url,
-                headers={"Accept": "application/vnd.github.v3+json"}
-            )
-            logger.info(f"[Releases] Releases response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                data = response.json()
-                if isinstance(data, list):
-                    for r in data:
-                        releases.append({
-                            "tag": r.get("tag_name", "unknown"),
-                            "name": r.get("name") or r.get("tag_name", "unknown"),
-                            "body": r.get("body") or "No release notes.",
-                            "published_at": r.get("published_at"),
-                            "author": r.get("author", {}).get("login") if r.get("author") else None,
-                            "html_url": r.get("html_url", ""),
-                            "prerelease": r.get("prerelease", False),
-                            "target_commitish": r.get("target_commitish")
-                        })
-            else:
-                logger.warning(f"GitHub releases API returned {response.status_code}")
-            
-            # Also get recent commits from main for unreleased versions
-            commits_response = await client.get(
-                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/commits",
-                params={"per_page": 15, "sha": "main"},
-                headers={"Accept": "application/vnd.github.v3+json"}
-            )
-            
-            if commits_response.status_code == 200:
-                data = commits_response.json()
-                if isinstance(data, list):
-                    for commit in data:
-                        c = commit.get("commit", {})
-                        raw_msg = c.get("message", "").split("\n")[0]
-                        clean_msg = re.sub(r'claude\/', '', raw_msg, flags=re.IGNORECASE)
-                        clean_msg = re.sub(r'\bclaude\b', '', clean_msg, flags=re.IGNORECASE)
-                        clean_msg = re.sub(r'\s{2,}', ' ', clean_msg).strip()
-                        recent_commits.append({
-                            "sha": commit.get("sha", "")[:7],
-                            "full_sha": commit.get("sha", ""),
-                            "message": clean_msg[:80],
-                            "date": c.get("committer", {}).get("date", ""),
-                            "author": c.get("author", {}).get("name", "Unknown")
-                        })
-            else:
-                logger.warning(f"GitHub commits API returned {commits_response.status_code}")
-            
-            return {
-                "releases": releases,
-                "recent_commits": recent_commits
-            }
-    except httpx.TimeoutException:
-        logger.warning("GitHub API request timed out")
-        return {"releases": [], "recent_commits": []}
-    except Exception as e:
-        logger.error(f"Failed to fetch releases: {e}")
-        return {"releases": [], "recent_commits": []}
-
-
-@router.get("/releases/{ref}/security")
-async def get_release_security(ref: str, _: User = Depends(get_current_admin)):
+    Read from the stamp the image carries (PINPOINT_VERSION / GIT_SHA, set at
+    build time) and, for the image digests, from what the host updater last
+    reported out of release.lock. Nothing is read from git or Docker.
     """
-    Fetch security verification status for a specific release/commit (admin only).
-    Returns workflow run status for security scans, CodeQL, accessibility, etc.
-    """
-    import httpx
-    
-    # Workflow names to check - must match exactly the 'name:' field in each workflow file
-    # Note: Accessibility only runs on PRs and schedule, not direct pushes
-    SECURITY_WORKFLOWS = {
-        "Security Scan (OWASP ZAP)": {"icon": "Shield", "key": "owasp_zap"},
-        "CodeQL Security Analysis": {"icon": "Lock", "key": "codeql"},
-        "Build and Publish Docker Images": {"icon": "Package", "key": "docker_build"},
-        "Accessibility Audit (axe-core)": {"icon": "Accessibility", "key": "accessibility"}
+    from app.core.config import get_settings
+    from app.services import upgrades as U
+
+    stamp = get_settings()
+    version = stamp.app_version or None
+    sha = (stamp.git_sha or "")[:7] or None
+    tag = f"v{version}" if version and re.fullmatch(r"\d+\.\d+\.\d+.*", version) else None
+    updater = await U.updater_state(db)
+    current = updater.get("current") or {}
+
+    def _digest(ref):
+        return ref.split("@", 1)[1] if isinstance(ref, str) and "@" in ref else None
+
+    return {
+        "version": version,
+        "git_sha": stamp.git_sha or None,
+        "sha": sha or "unknown",
+        "tag": tag,
+        "display": tag or version or (f"@{sha}" if sha else "unknown"),
+        "backend_image": current.get("backend"),
+        "frontend_image": current.get("frontend"),
+        "backend_digest": _digest(current.get("backend")),
+        "frontend_digest": _digest(current.get("frontend")),
+        "db_revision": await U.live_db_revision(db),
+        "min_db_revision": stamp.min_db_revision,
+        "commit_date": None,
+        "commit_message": None,
     }
-    
-    try:
-        import re
-        # Validate ref to prevent SSRF via URL manipulation
-        if not re.match(r'^[a-zA-Z0-9._\-/]+$', ref):
-            raise HTTPException(status_code=400, detail="Invalid ref format")
-        
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            # First, resolve the ref to a commit SHA if it's a tag
-            commit_sha = ref
-            if ref.startswith("v") or not ref.isalnum():
-                # It's likely a tag, resolve to SHA
-                tag_response = await client.get(
-                    f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/git/refs/tags/{ref}",
-                    headers={"Accept": "application/vnd.github.v3+json"}
-                )
-                if tag_response.status_code == 200:
-                    tag_data = tag_response.json()
-                    # Handle both lightweight and annotated tags
-                    if tag_data["object"]["type"] == "commit":
-                        commit_sha = tag_data["object"]["sha"]
-                    else:
-                        # Annotated tag - need to dereference
-                        annotated_response = await client.get(
-                            tag_data["object"]["url"],
-                            headers={"Accept": "application/vnd.github.v3+json"}
-                        )
-                        if annotated_response.status_code == 200:
-                            commit_sha = annotated_response.json().get("object", {}).get("sha", ref)
-            
-            # Get workflow runs for this commit
-            runs_response = await client.get(
-                f"{GITHUB_API_BASE}/repos/{GITHUB_REPO}/actions/runs",
-                params={"head_sha": commit_sha, "per_page": 50},
-                headers={"Accept": "application/vnd.github.v3+json"}
-            )
-            
-            verification = {}
-            
-            if runs_response.status_code == 200:
-                runs = runs_response.json().get("workflow_runs", [])
-                
-                for workflow_name, info in SECURITY_WORKFLOWS.items():
-                    matching_runs = [r for r in runs if r["name"] == workflow_name]
-                    
-                    if matching_runs:
-                        # Get the most recent run for this workflow
-                        latest_run = matching_runs[0]
-                        verification[info["key"]] = {
-                            "name": workflow_name,
-                            "icon": info["icon"],
-                            "status": latest_run["status"],  # queued, in_progress, completed
-                            "conclusion": latest_run.get("conclusion"),  # success, failure, neutral, cancelled, skipped, timed_out
-                            "run_url": latest_run["html_url"],
-                            "run_id": latest_run["id"],
-                            "created_at": latest_run["created_at"],
-                            "passed": latest_run.get("conclusion") == "success"
-                        }
-                    else:
-                        verification[info["key"]] = {
-                            "name": workflow_name,
-                            "icon": info["icon"],
-                            "status": "not_found",
-                            "conclusion": None,
-                            "run_url": None,
-                            "passed": None
-                        }
-            
-            # Calculate overall security score
-            checks = [v for v in verification.values() if v.get("conclusion") is not None]
-            passed_checks = len([v for v in checks if v.get("passed")])
-            total_checks = len(checks)
-            
-            return {
-                "ref": ref,
-                "commit_sha": commit_sha[:7] if len(commit_sha) > 7 else commit_sha,
-                "verification": verification,
-                "summary": {
-                    "passed": passed_checks,
-                    "total": total_checks,
-                    "all_passed": passed_checks == total_checks and total_checks > 0,
-                    "score": f"{passed_checks}/{total_checks}" if total_checks > 0 else "N/A"
-                }
-            }
-    except httpx.TimeoutException:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="GitHub API request timed out"
-        )
-    except Exception as e:
-        logger.error(f"Failed to fetch security status: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Couldn't fetch the security status. Try again."
-        )
-
-
-@router.post("/switch-version")
-async def switch_version(
-    ref: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin)
-):
-    """
-    Production-grade version deployment with automatic rollback.
-    Disabled in managed mode — rollouts come only from the orchestrator (A2).
-
-    This endpoint performs a full deployment cycle:
-    1. Save rollback point (current git HEAD)
-    2. Create database backup (pg_dump)
-    3. Git checkout target version
-    4. Run database migrations (alembic upgrade)
-    5. Rebuild and restart all containers
-    6. Health check the new deployment
-    7. Automatic rollback on any failure
-    """
-    from app.core.managed import ensure_not_managed
-    ensure_not_managed("Upgrading")
-    import httpx
-    from datetime import datetime, timezone
-
-    project_root = os.environ.get("PROJECT_ROOT", "/project")
-    deployment_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    backup_dir = "/project/backups"
-    
-    # Auto-detect the Docker Compose project name from running containers
-    # IMPORTANT: Multiple compose projects may be running (production + demo instances).
-    # We must identify the production project by matching its ConfigFiles to our project_root.
-    try:
-        project_name_result = subprocess.run(
-            ["docker", "compose", "ls", "--format", "json"],
-            capture_output=True, text=True, timeout=10
-        )
-        import json as _json
-        if project_name_result.returncode == 0:
-            projects = _json.loads(project_name_result.stdout)
-            compose_project = "wwf-open-source-311-template"  # sensible default
-            
-            # Find the project whose config files match our project root
-            for proj in projects:
-                config_files = proj.get("ConfigFiles", "")
-                # The production project's docker-compose.yml lives in project_root's parent
-                # e.g. /home/ubuntu/WWF-Open-Source-311-Template/docker-compose.yml
-                if project_root in config_files or "WWF-Open-Source-311-Template/docker-compose.yml" in config_files:
-                    # Skip demo projects (their names contain "demo" or "p311demo")
-                    if "demo" not in proj["Name"].lower():
-                        compose_project = proj["Name"]
-                        break
-        else:
-            compose_project = "wwf-open-source-311-template"
-    except Exception:
-        compose_project = "wwf-open-source-311-template"
-    
-    logger.info(f"[Deploy] Using compose project: {compose_project}")
-    
-    # Deployment state tracking
-    state = {
-        "original_sha": None,
-        "backup_file": None,
-        "migrations_run": False,
-        "containers_rebuilt": False,
-        "steps_completed": [],
-        "errors": []
-    }
-    
-    def log_step(step: str, success: bool = True, detail: str = ""):
-        state["steps_completed"].append({
-            "step": step,
-            "success": success,
-            "detail": detail,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        })
-        if not success:
-            state["errors"].append(f"{step}: {detail}")
-    
-    async def rollback():
-        """Rollback to original state on failure."""
-        rollback_errors = []
-        
-        # 1. Restore git to original SHA
-        if state["original_sha"]:
-            try:
-                subprocess.run(
-                    ["git", "checkout", state["original_sha"]],
-                    cwd=project_root,
-                    capture_output=True,
-                    timeout=60
-                )
-                log_step("rollback_git", True, f"Restored to {state['original_sha'][:7]}")
-            except Exception as e:
-                rollback_errors.append(f"Git rollback failed: {e}")
-        
-        # 2. Note: We don't auto-restore database because migrations are forward-only
-        # and designed to be non-destructive. Admin should review if needed.
-        if state["migrations_run"]:
-            log_step("rollback_db", True, "Migrations were forward-only (additive). Manual review recommended if issues persist.")
-        
-        # 3. Restart original containers
-        try:
-            rollback_cmd = ["docker", "compose", "-p", compose_project]
-            prod_compose = os.path.join(project_root, "docker-compose.prod.yml")
-            if os.path.exists(prod_compose):
-                rollback_cmd.extend(["-f", "docker-compose.yml", "-f", "docker-compose.prod.yml"])
-            rollback_cmd.extend(["up", "-d", "--force-recreate", "backend", "frontend"])
-            subprocess.run(
-                rollback_cmd,
-                cwd=project_root,
-                capture_output=True,
-                timeout=120
-            )
-            log_step("rollback_containers", True, "Restarted containers with original code")
-        except Exception as e:
-            rollback_errors.append(f"Container restart failed: {e}")
-        
-        return rollback_errors
-    
-    try:
-        # ===== STEP 0: Setup =====
-        subprocess.run(
-            ["git", "config", "--global", "--add", "safe.directory", project_root],
-            cwd=project_root,
-            capture_output=True,
-            timeout=10
-        )
-        
-        # Create backup directory if it doesn't exist
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        # ===== STEP 1: Save Rollback Point =====
-        sha_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        if sha_result.returncode != 0:
-            raise Exception("Failed to get current git HEAD")
-        
-        state["original_sha"] = sha_result.stdout.strip()
-        log_step("save_rollback_point", True, f"Saved: {state['original_sha'][:7]}")
-        
-        # ===== STEP 2: Create Database Backup =====
-        backup_file = f"{backup_dir}/db_backup_{deployment_id}.sql"
-        state["backup_file"] = backup_file
-        
-        # Get database URL from environment
-        db_url = os.environ.get("DATABASE_URL", "")
-        # Parse connection info (format: postgresql+asyncpg://user:pass@host/db)
-        try:
-            # Extract host, user, password, dbname from DATABASE_URL
-            import re
-            match = re.match(r"postgresql\+asyncpg://([^:]+):([^@]+)@([^/]+)/(.+)", db_url)
-            if match:
-                db_user, db_pass, db_host, db_name = match.groups()
-                
-                # Run pg_dump
-                env = os.environ.copy()
-                env["PGPASSWORD"] = db_pass
-                
-                backup_result = subprocess.run(
-                    ["pg_dump", "-h", db_host.split(":")[0], "-U", db_user, "-d", db_name, "-f", backup_file],
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=300  # 5 min timeout for large DBs
-                )
-                
-                if backup_result.returncode == 0:
-                    # Get backup size
-                    backup_size = os.path.getsize(backup_file) if os.path.exists(backup_file) else 0
-                    log_step("database_backup", True, f"Created {backup_size // 1024}KB backup")
-                else:
-                    log_step("database_backup", False, backup_result.stderr[:200])
-                    # Continue anyway - backup failure shouldn't block deployment
-            else:
-                log_step("database_backup", False, "Could not parse DATABASE_URL")
-        except Exception as e:
-            log_step("database_backup", False, str(e)[:200])
-        
-        # ===== STEP 3: Git Fetch and Checkout =====
-        # Stash any local changes
-        subprocess.run(
-            ["git", "stash"],
-            cwd=project_root,
-            capture_output=True,
-            timeout=30
-        )
-        
-        # Fetch all
-        fetch_result = subprocess.run(
-            ["git", "fetch", "--all", "--tags"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        if fetch_result.returncode != 0:
-            log_step("git_fetch", False, fetch_result.stderr[:200])
-            raise Exception(f"Git fetch failed: {fetch_result.stderr}")
-        
-        log_step("git_fetch", True, "Fetched latest from remote")
-        
-        # Checkout target ref
-        checkout_result = subprocess.run(
-            ["git", "checkout", ref],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=60
-        )
-        
-        if checkout_result.returncode != 0:
-            log_step("git_checkout", False, checkout_result.stderr[:200])
-            raise Exception(f"Git checkout failed: {checkout_result.stderr}")
-        
-        # Get new SHA
-        new_sha_result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=project_root,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        new_sha = new_sha_result.stdout.strip()[:7] if new_sha_result.returncode == 0 else "unknown"
-        log_step("git_checkout", True, f"Checked out {new_sha}")
-        
-        # ===== STEP 4: Run Database Migrations =====
-        # Check if alembic.ini exists and run migrations
-        alembic_cfg = os.path.join(project_root, "backend", "alembic.ini")
-        if os.path.exists(alembic_cfg):
-            try:
-                migration_result = subprocess.run(
-                    ["alembic", "upgrade", "head"],
-                    cwd=os.path.join(project_root, "backend"),
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
-                
-                if migration_result.returncode == 0:
-                    state["migrations_run"] = True
-                    log_step("database_migrations", True, "Applied pending migrations")
-                else:
-                    # Check if it's just "no migrations to run"
-                    if "already at head" in migration_result.stdout.lower() or "no upgrade" in migration_result.stdout.lower():
-                        log_step("database_migrations", True, "No new migrations")
-                    else:
-                        log_step("database_migrations", False, migration_result.stderr[:200])
-                        raise Exception(f"Migration failed: {migration_result.stderr}")
-            except subprocess.TimeoutExpired:
-                log_step("database_migrations", False, "Migration timed out")
-                raise Exception("Database migration timed out")
-        else:
-            log_step("database_migrations", True, "No alembic config found, skipping")
-        
-        # ===== STEP 5: Rebuild Containers =====
-        try:
-            # Detect which compose files are in use
-            compose_files = []
-            for f in ["docker-compose.yml", "docker-compose.prod.yml"]:
-                fpath = os.path.join(project_root, f)
-                if os.path.exists(fpath):
-                    compose_files.append(f)
-            log_step("compose_files_detected", True, ", ".join(compose_files))
-
-            # Check if production compose is in use (uses prebuilt images, no local build)
-            prod_compose = os.path.join(project_root, "docker-compose.prod.yml")
-            uses_prebuilt = os.path.exists(prod_compose)
-
-            if uses_prebuilt:
-                # Production mode: pull latest images from GHCR instead of building locally
-                log_step("deploy_mode", True, "Production (prebuilt GHCR images)")
-
-                pull_result = subprocess.run(
-                    ["docker", "compose", "-p", compose_project,
-                     "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml",
-                     "pull", "frontend", "backend"],
-                    cwd=project_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=300
-                )
-
-                if pull_result.returncode != 0:
-                    combined = (pull_result.stderr + pull_result.stdout)[-800:]
-                    log_step("image_pull", False, combined)
-                    raise Exception(f"Image pull failed: {combined}")
-
-                log_step("image_pull", True, "Pulled latest images from GHCR")
-
-                # Recreate containers with new images
-                up_result = subprocess.run(
-                    ["docker", "compose", "-p", compose_project,
-                     "-f", "docker-compose.yml", "-f", "docker-compose.prod.yml",
-                     "up", "-d", "--force-recreate", "frontend", "backend"],
-                    cwd=project_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
-
-                if up_result.returncode != 0:
-                    combined = (up_result.stderr + up_result.stdout)[-800:]
-                    log_step("container_recreate", False, combined)
-                    raise Exception(f"Container recreate failed: {combined}")
-
-                state["containers_rebuilt"] = True
-                log_step("container_recreate", True, "Recreated containers with new images")
-            else:
-                # Dev mode: build locally
-                log_step("deploy_mode", True, "Development (local Docker build)")
-
-                build_result = subprocess.run(
-                    ["docker", "compose", "-p", compose_project, "build", "--no-cache", "frontend"],
-                    cwd=project_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=600
-                )
-
-                if build_result.returncode != 0:
-                    combined = (build_result.stderr + build_result.stdout)[-800:]
-                    log_step("container_build", False, combined)
-                    raise Exception(f"Container build failed: {combined}")
-
-                log_step("container_build", True, "Built frontend image")
-
-                restart_result = subprocess.run(
-                    ["docker", "compose", "-p", compose_project, "up", "-d", "--force-recreate", "frontend"],
-                    cwd=project_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=120
-                )
-
-                if restart_result.returncode != 0:
-                    combined = (restart_result.stderr + restart_result.stdout)[-800:]
-                    log_step("container_restart", False, combined)
-                    raise Exception(f"Container restart failed: {combined}")
-
-                state["containers_rebuilt"] = True
-                log_step("container_restart", True, "Restarted frontend container with new code")
-
-        except subprocess.TimeoutExpired:
-            log_step("container_rebuild", False, "Container rebuild timed out (10 min limit)")
-            raise Exception("Container rebuild timed out")
-        
-        # ===== STEP 6: Health Check =====
-        # Wait for containers to be healthy
-        import asyncio
-        await asyncio.sleep(10)  # Give containers time to start
-        
-        health_ok = False
-        for attempt in range(6):  # 6 attempts over 30 seconds
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    # Check backend health
-                    health_resp = await client.get("http://localhost:8000/api/health")
-                    if health_resp.status_code == 200:
-                        health_ok = True
-                        break
-            except Exception:
-                pass  # Health check attempt failed, will retry
-            await asyncio.sleep(5)
-        
-        if not health_ok:
-            log_step("health_check", False, "Backend health check failed after 30s")
-            raise Exception("Health check failed - backend not responding")
-        
-        log_step("health_check", True, "Backend healthy and responding")
-        
-        # ===== STEP 7: Log to Audit =====
-        try:
-            audit_entry = AuditLog(
-                user_id=current_user.id,
-                username=current_user.username if hasattr(current_user, 'username') else str(current_user.id),
-                event_type="version_deployed",
-                success=True,
-                details={
-                    "deployment_id": deployment_id,
-                    "from_sha": state["original_sha"][:7],
-                    "to_sha": new_sha,
-                    "to_ref": ref,
-                    "backup_file": state["backup_file"],
-                    "migrations_run": state["migrations_run"],
-                    "steps": state["steps_completed"]
-                }
-            )
-            db.add(audit_entry)
-            await db.commit()
-        except Exception as e:
-            logger.warning(f"Failed to log deployment to audit: {e}")
-        
-        # ===== SUCCESS =====
-        return {
-            "status": "success",
-            "message": f"Successfully deployed @{new_sha}",
-            "deployment_id": deployment_id,
-            "from_sha": state["original_sha"][:7],
-            "to_sha": new_sha,
-            "ref": ref,
-            "backup_file": state["backup_file"],
-            "migrations_run": state["migrations_run"],
-            "steps": state["steps_completed"]
-        }
-        
-    except Exception as e:
-        # ===== ROLLBACK ON FAILURE =====
-        log_step("deployment_failed", False, str(e)[:800])
-        logger.error(f"Deployment failed, initiating rollback: {e}")
-        
-        rollback_errors = await rollback()
-        
-        # Log failed deployment to audit
-        try:
-            audit_entry = AuditLog(
-                user_id=current_user.id,
-                username=current_user.username if hasattr(current_user, 'username') else str(current_user.id),
-                event_type="version_deployment_failed",
-                success=False,
-                failure_reason=str(e)[:255],
-                details={
-                    "deployment_id": deployment_id,
-                    "target_ref": ref,
-                    "error": str(e)[:1000],
-                    "rollback_errors": rollback_errors,
-                    "steps": state["steps_completed"]
-                }
-            )
-            db.add(audit_entry)
-            await db.commit()
-        except Exception as audit_error:
-            logger.warning(f"Failed to log deployment failure: {audit_error}")
-        
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "message": "Deployment failed and rollback initiated",
-                "error": str(e)[:1500],
-                "rollback_performed": True,
-                "rollback_errors": rollback_errors,
-                "backup_available": state["backup_file"],
-                "steps": state["steps_completed"],
-                "deployment_id": deployment_id,
-                "compose_project": compose_project,
-            }
-        )
 
 
 # ============ Custom Domain ============
@@ -5770,15 +5013,36 @@ class MultiTranslationRequest(BaseModel):
 
 @router.get("/translate/languages")
 async def get_supported_languages():
-    """Get list of supported languages (public)"""
-    from app.services.translation import get_supported_languages
-    languages = get_supported_languages()
+    """Target languages the selected translation provider supports (public).
+
+    The resident portal's language picker offers exactly these, so a resident
+    can never pick a language the town's provider would refuse. Codes only:
+    display names live with the picker (frontend/src/utils/languages.ts).
+    """
+    from app.services.translation_providers import selected_provider_name, supported_languages
+    provider = await selected_provider_name()
+    codes = sorted(supported_languages(provider))
     return {
-        "languages": [
-            {"code": code, "name": name} 
-            for code, name in languages.items()
-        ]
+        "provider": provider,
+        "codes": codes,
+        "languages": [{"code": code} for code in codes],
     }
+
+
+async def _require_supported_language(code, field: str = "target_lang") -> str:
+    """The canonical code, or a 400 naming the problem."""
+    from app.services.translation_providers import selected_provider_name, validate_target_language
+    canonical = await validate_target_language(code)
+    if canonical is None:
+        provider = await selected_provider_name()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported {field} {sanitize_for_log(str(code))[:16]!r} for the {provider} "
+                f"translation provider. See GET /api/system/translate/languages."
+            ),
+        )
+    return canonical
 
 
 @router.post("/translate/health")
@@ -5804,14 +5068,24 @@ async def suggest_translation(
     Auto-translate text using LibreTranslate (admin only).
     Used by Admin Console to suggest translations for service categories, departments, etc.
     """
-    from app.services.translation import translate_text
-    
-    translated = await translate_text(
+    from app.services.translation import translate_text_detailed
+
+    target_lang = await _require_supported_language(request.target_lang)
+    translated, budget_exhausted = await translate_text_detailed(
         request.text,
         request.source_lang,
-        request.target_lang
+        target_lang
     )
-    
+
+    if budget_exhausted:
+        # Not the source text with a flag, as the public endpoint does: this
+        # result is saved as the translation, and English saved as Spanish is
+        # a worse outcome than a clear refusal.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The translation budget for this period is used up. Raise it on the "
+                   "Translation Provider card, or wait for it to reset.",
+        )
     if translated is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -5853,21 +5127,40 @@ ación de Baches", "description": "Reportar daños en carreteras"},
         }
     }
     """
-    from app.services.translation import auto_translate_object as translate_obj
-    
-    translations = await translate_obj(
-        request.data,
-        request.source_lang,
-        request.target_languages
-    )
-    
+    # It imported `auto_translate_object` from app.services.translation, which
+    # has never existed, so this route always answered 500. Built on the same
+    # cached, budgeted batch translation the rest of the app uses. An explicit
+    # language list is required: "every language" is over a hundred provider
+    # calls' worth of spend from one click.
+    from app.services.translation import translate_batch
+
+    langs = [l for l in (request.target_languages or []) if l and l != request.source_lang]
+    if not langs:
+        raise HTTPException(status_code=400, detail="List the target languages to translate into.")
+    if len(langs) > 20:
+        raise HTTPException(status_code=400, detail="Translate into at most 20 languages at a time.")
+    strings = [v for v in request.data.values() if isinstance(v, str) and v.strip()]
+    translations = {request.source_lang: dict(request.data)}
+    for lang in langs:
+        done = await translate_batch(strings, request.source_lang, lang) if strings else {}
+        translations[lang] = {
+            k: (done.get(v) or v) if isinstance(v, str) else v
+            for k, v in request.data.items()
+        }
     return {"translations": translations}
 
 
-# What one unauthenticated translate request may ask for. See batch_translate.
+# What one translate request may ask for. See batch_translate.
 MAX_TRANSLATE_TEXTS = 200
 MAX_TRANSLATE_TEXT_CHARS = 2_000
+# Signed-in staff (and anything else presenting a staff session).
 MAX_TRANSLATE_TOTAL_CHARS = 20_000
+# Everyone else. AutoTranslate sends a page of labels in chunks under this
+# (100 labels of ~40 characters is ~4,000), useContentTranslation one report,
+# the staff map two strings. At 60/minute per address this is 480k characters
+# a minute -- still too much on its own, which is what the daily and monthly
+# budget in services/translation_budget.py is for.
+MAX_TRANSLATE_TOTAL_CHARS_ANON = 8_000
 
 
 @router.post("/translate/batch")
@@ -5880,14 +5173,19 @@ async def batch_translate(
     Used by frontend to translate static UI text.
     Uses database caching - first call hits Google API, subsequent calls use DB.
     """
-    from app.services.translation import translate_batch
+    from app.services.translation import translate_batch_detailed
 
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be JSON")
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
     texts = data.get("texts", [])
     target_lang = data.get("target_lang", "es")
 
     if not texts:
-        return {"translations": []}
+        return {"translations": [], "budget_exhausted": False}
 
     # Bounded, because this endpoint is unauthenticated and spends money.
     #
@@ -5915,11 +5213,21 @@ async def batch_translate(
             status_code=413,
             detail=f"Too many texts in one request (limit {MAX_TRANSLATE_TEXTS}).",
         )
+    # Staff get the larger allowance. Asked, not demanded: the resident portal
+    # sends no token, and an unreadable, expired or revoked one is treated as
+    # no token -- never as more privileged than none. Resolved in the body
+    # rather than as a Depends so the route stays declared public.
+    from app.api.map_layers import get_current_user_optional
+    from app.db.session import SessionLocal
+    async with SessionLocal() as _db:
+        caller = await get_current_user_optional(request, _db)
+    is_staff = getattr(caller, "role", None) in ("staff", "admin")
+    char_limit = MAX_TRANSLATE_TOTAL_CHARS if is_staff else MAX_TRANSLATE_TOTAL_CHARS_ANON
     total = sum(len(t) for t in texts)
-    if total > MAX_TRANSLATE_TOTAL_CHARS:
+    if total > char_limit:
         raise HTTPException(
             status_code=413,
-            detail=f"Too much text in one request (limit {MAX_TRANSLATE_TOTAL_CHARS} characters).",
+            detail=f"Too much text in one request (limit {char_limit} characters).",
         )
     if any(len(t) > MAX_TRANSLATE_TEXT_CHARS for t in texts):
         raise HTTPException(
@@ -5927,14 +5235,157 @@ async def batch_translate(
             detail=f"A single text exceeds {MAX_TRANSLATE_TEXT_CHARS} characters.",
         )
     
-    # Use batch translation with database caching
-    results = await translate_batch(texts, "en", target_lang)
-    
+    # Validated against the selected provider's languages before anything is
+    # looked up or sent: a code it cannot translate into is a 400, not a bill.
+    target_lang = await _require_supported_language(target_lang)
+
+    # Use batch translation with database caching; spend-capped. Past the
+    # budget the originals come back with budget_exhausted set, so the page
+    # renders in English rather than failing.
+    results, budget_exhausted = await translate_batch_detailed(texts, "en", target_lang)
+
     # Return translations in order
     translations = [results.get(text, text) for text in texts]
-    
-    return {"translations": translations}
 
+    return {"translations": translations, "budget_exhausted": budget_exhausted}
+
+
+class TranslationBudgetUpdate(BaseModel):
+    daily_chars: int
+    monthly_chars: int
+
+
+@router.get("/translate/budget")
+async def get_translation_budget(_: User = Depends(get_current_admin)):
+    """Today's and this month's translation spend against the budget (admin)."""
+    from app.services import translation_budget
+    return await translation_budget.usage()
+
+
+@router.put("/translate/budget")
+async def update_translation_budget(
+    body: TranslationBudgetUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Set the daily and monthly character budgets (admin only, audited).
+
+    Zero is allowed and means "serve only what is already cached".
+    """
+    from app.services import translation_budget as tb
+
+    for name, value in (("daily_chars", body.daily_chars), ("monthly_chars", body.monthly_chars)):
+        if value < 0 or value > tb.MAX_BUDGET_CHARS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{name} must be between 0 and {tb.MAX_BUDGET_CHARS:,}.",
+            )
+    if body.daily_chars > body.monthly_chars:
+        raise HTTPException(
+            status_code=400,
+            detail="The daily budget cannot be larger than the monthly budget.",
+        )
+    old_daily, old_monthly = await tb.get_limits()
+    await _persist_secret(db, tb.DAILY_KEY, str(body.daily_chars))
+    await _persist_secret(db, tb.MONTHLY_KEY, str(body.monthly_chars))
+    tb.forget_cached_limits()
+    from app.services.admin_audit import record_admin_action
+    await record_admin_action(
+        db, event_type="translation_budget_updated", actor=admin,
+        details={
+            "daily_chars": {"from": old_daily, "to": body.daily_chars},
+            "monthly_chars": {"from": old_monthly, "to": body.monthly_chars},
+        },
+    )
+    return await tb.usage()
+
+
+# ============ On-server redaction detectors ============
+#
+# The license plate model and the face fallback, both run in this process with
+# onnxruntime / OpenCV from model files the town downloads into /models. Read
+# and set on the Photo Redaction card. See app.services.onnx_detectors.
+
+class RedactionDetectorsUpdate(BaseModel):
+    plate_detector: Optional[str] = None   # yolo | ocr | off  (redactor: experimental)
+    face_fallback: Optional[str] = None    # yunet | opencv | off
+    plate_ocr_union: Optional[bool] = None
+
+
+async def _redaction_detectors_state() -> Dict[str, Any]:
+    from app.services import image_redaction as ir
+    from app.services import onnx_detectors
+    from app.services.secret_manager import get_secret
+
+    async def stored(key):
+        raw = ((await get_secret(key)) or "").strip().lower()
+        return ir._CHOICE_ALIASES.get(raw, raw)
+
+    return {
+        "plate_detector": await ir.plate_detector(),
+        "plate_detector_stored": await stored(ir.PLATE_DETECTOR_KEY) or "auto",
+        "face_fallback": await ir.face_fallback(),
+        "face_fallback_stored": await stored(ir.FACE_FALLBACK_KEY) or "auto",
+        "plate_ocr_union": await ir._flag(ir.PLATE_OCR_UNION_KEY, False),
+        "models": onnx_detectors.status(),
+    }
+
+
+@router.get("/redaction/detectors")
+async def get_redaction_detectors(_: User = Depends(get_current_admin)):
+    """The plate detector and face fallback in force, and whether their model
+    files are installed (admin)."""
+    return await _redaction_detectors_state()
+
+
+@router.put("/redaction/detectors")
+async def update_redaction_detectors(
+    body: RedactionDetectorsUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Choose the plate detector and the face fallback (admin only, audited).
+
+    Choosing a model whose file is not installed is refused: the photos would
+    all be withheld (the detector fails closed) waiting for a file that is not
+    there.
+    """
+    from app.services import image_redaction as ir
+    from app.services import onnx_detectors
+
+    def normalise(value: str, allowed, name: str) -> str:
+        choice = value.strip().lower()
+        choice = ir._CHOICE_ALIASES.get(choice, choice)
+        if choice not in allowed:
+            raise HTTPException(status_code=400, detail=f"{name} must be one of {', '.join(allowed)}.")
+        return choice
+
+    before = await _redaction_detectors_state()
+    changes: Dict[str, Any] = {}
+    if body.plate_detector is not None:
+        choice = normalise(body.plate_detector, ir.PLATE_DETECTORS, "plate_detector")
+        if choice == "yolo" and not onnx_detectors.plate_holder.present():
+            raise HTTPException(status_code=409, detail=(
+                f"The plate model file ({onnx_detectors.plate_holder.status()['file']}) is not "
+                f"installed in {onnx_detectors.models_dir()}. See docs/PHOTO_REDACTION_MODELS.md."))
+        await _persist_secret(db, ir.PLATE_DETECTOR_KEY, choice)
+        changes["plate_detector"] = {"from": before["plate_detector"], "to": choice}
+    if body.face_fallback is not None:
+        choice = normalise(body.face_fallback, ir.FACE_FALLBACKS, "face_fallback")
+        if choice == "yunet" and not onnx_detectors.face_holder.present():
+            raise HTTPException(status_code=409, detail=(
+                f"The face model file ({onnx_detectors.face_holder.status()['file']}) is not "
+                f"installed in {onnx_detectors.models_dir()}. See docs/PHOTO_REDACTION_MODELS.md."))
+        await _persist_secret(db, ir.FACE_FALLBACK_KEY, choice)
+        changes["face_fallback"] = {"from": before["face_fallback"], "to": choice}
+    if body.plate_ocr_union is not None:
+        await _persist_secret(db, ir.PLATE_OCR_UNION_KEY, "true" if body.plate_ocr_union else "false")
+        changes["plate_ocr_union"] = {"from": before["plate_ocr_union"], "to": body.plate_ocr_union}
+    if changes:
+        from app.services.admin_audit import record_admin_action
+        await record_admin_action(db, event_type="redaction_detectors_updated", actor=admin,
+                                  details=changes)
+    return await _redaction_detectors_state()
 
 
 # ============ Database Backups ============
@@ -6229,18 +5680,22 @@ async def get_health_dashboard(
 async def execute_runbook(
     action: str,
     backup_name: str = None,
+    confirm: bool = Query(False, description="Required for restore, which overwrites the database."),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin)
 ):
     """
     Execute emergency runbook actions (admin only).
-    
+
     Available actions:
-    - restart-all: Restart all containers
-    - restart-{service}: Restart specific service (backend, frontend, redis, caddy)
     - clear-cache: Clear Redis cache
     - vacuum: Run PostgreSQL vacuum analyze
-    - restore: Restore from backup (requires backup_name parameter)
+    - restore: Restore from backup (requires backup_name parameter and confirm=true)
+
+    Container restarts are no longer done here: the backend has no Docker
+    access. `restart-*` answers 410 and points at the replacement, a
+    `restart` request (POST /api/system/upgrade-requests) that the host
+    updater runs against this instance's own compose project only.
 
     Disabled in managed mode — infrastructure operations come only from the
     orchestrator (A2).
@@ -6248,7 +5703,7 @@ async def execute_runbook(
     from app.core.managed import ensure_not_managed
     ensure_not_managed("Infrastructure runbook execution")
     from datetime import datetime, timezone
-    
+
     result = {
         "action": action,
         "executed_by": current_user.email,
@@ -6256,65 +5711,15 @@ async def execute_runbook(
         "status": "success",
         "details": {}
     }
-    
-    import shutil
 
-    def _compose_cmd():
-        """Resolve a usable Docker Compose command, or None if unavailable.
-
-        Prefers Compose v2 (`docker compose`) and falls back to v1
-        (`docker-compose`). Also requires the project directory to exist — the
-        app can only drive Compose if it has the Docker socket + the repo on disk
-        (e.g. a self-hosted host mount), which isn't the case in many
-        environments. Returns (cmd_list, project_root) or (None, project_root)."""
-        project_root = os.environ.get("PROJECT_ROOT", "/project")
-        if not os.path.isdir(project_root):
-            return None, project_root
-        if shutil.which("docker"):
-            return ["docker", "compose"], project_root
-        if shutil.which("docker-compose"):
-            return ["docker-compose"], project_root
-        return None, project_root
+    if action == "restart-all" or action.startswith("restart-"):
+        raise HTTPException(status_code=410, detail=(
+            "Restarts are now requests the host updater runs for this instance only. "
+            "Use Restart in System Health (POST /api/system/upgrade-requests with action=restart)."
+        ))
 
     try:
-        if action == "restart-all" or action.startswith("restart-"):
-            services = (
-                ["backend", "frontend", "redis", "caddy"]
-                if action == "restart-all"
-                else [action.replace("restart-", "")]
-            )
-            for service in services:
-                if service not in ["backend", "frontend", "redis", "caddy"]:
-                    raise HTTPException(status_code=400, detail=f"Cannot restart service: {service}")
-
-            compose, project_root = _compose_cmd()
-            if not compose:
-                # Report honestly rather than pretending it worked.
-                result["status"] = "unavailable"
-                result["details"]["error"] = (
-                    "Container restarts aren't available to the app in this environment "
-                    "(Docker Compose or the project directory isn't reachable). "
-                    "Run `docker compose restart <service>` on the host instead."
-                )
-            else:
-                restarted, failed = [], {}
-                for service in services:
-                    proc = subprocess.run(
-                        compose + ["restart", service],
-                        cwd=project_root, capture_output=True, timeout=60, text=True,
-                    )
-                    if proc.returncode == 0:
-                        restarted.append(service)
-                    else:
-                        failed[service] = (proc.stderr or proc.stdout or "restart failed").strip()[:300]
-                result["details"]["restarted"] = restarted
-                if failed:
-                    result["details"]["failed"] = failed
-                    result["status"] = "partial" if restarted else "error"
-                if action == "restart-all":
-                    result["details"]["note"] = "Database not restarted for safety"
-
-        elif action == "clear-cache":
+        if action == "clear-cache":
             if redis_client:
                 await redis_client.flushdb()
                 result["details"]["cleared"] = True
@@ -6334,6 +5739,10 @@ async def execute_runbook(
         elif action == "restore":
             if not backup_name:
                 raise HTTPException(status_code=400, detail="backup_name required for restore action")
+            if not confirm:
+                # Same rule as POST /backups/{name}/restore: overwriting the
+                # database needs an explicit confirm, not just a button press.
+                raise HTTPException(status_code=400, detail="Pass confirm=true to restore. Restoring overwrites the current database.")
             from app.services.backup_service import restore_backup
             restore_result = await restore_backup(backup_name)
             result["details"] = restore_result
@@ -6357,10 +5766,6 @@ async def execute_runbook(
         
         return result
         
-    except subprocess.TimeoutExpired:
-        result["status"] = "timeout"
-        result["details"]["error"] = "Operation timed out after 60 seconds"
-        raise HTTPException(status_code=504, detail="Operation timed out")
     except HTTPException:
         raise
     except Exception as e:

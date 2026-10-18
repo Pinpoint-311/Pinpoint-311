@@ -1,0 +1,21 @@
+# /etc/systemd/system/pinpoint-updater.timer
+#
+# Runs one `pinpoint-updater poll` pass every minute, so an approved console
+# request starts within about a minute. It never upgrades anything on its own:
+# it only runs requests an admin filed (and, where required, a second admin
+# approved) in the console. An idle pass is cheap: two loopback calls to each
+# connected instance and one health read. The release list (release API,
+# registry, cosign) is rebuilt at most hourly (release_refresh_seconds) or
+# right after a run.
+
+[Unit]
+Description=Pinpoint 311 host updater poll
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+RandomizedDelaySec=10s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

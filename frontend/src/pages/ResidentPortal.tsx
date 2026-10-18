@@ -22,8 +22,9 @@ import {
     Search,
     MapPinOff,
     EyeOff,
+    Map as MapIcon,
 } from 'lucide-react';
-import { Button, Input, Textarea, Card } from '../components/ui';
+import { Button, Input, Textarea, Card, Chip } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
 import PhotoUpload from '../components/PhotoUpload';
 import { usePhotoAttachments } from '../hooks/usePhotoAttachments';
@@ -350,6 +351,12 @@ export default function ResidentPortal() {
 
     // Requests for staff map
     const [allRequests, setAllRequests] = useState<ServiceRequest[]>([]);
+    // Counts for the map header's chips, from the same list the map draws.
+    const mapCounts = useMemo(() => ({
+        open: allRequests.filter(r => r.status === 'open').length,
+        inProgress: allRequests.filter(r => r.status === 'in_progress').length,
+        closed: allRequests.filter(r => r.status === 'closed').length,
+    }), [allRequests]);
 
     // Form state
     const [formData, setFormData] = useState<ServiceRequestCreate>({
@@ -1183,15 +1190,33 @@ export default function ResidentPortal() {
                                     initial={{ opacity: 0, y: 20 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.6 }}
-                                    className="space-y-4"
+                                    className="glass-card rounded-3xl border border-white/10 overflow-hidden"
                                 >
-                                    <h2 className="text-2xl font-bold text-white text-center">
-                                        {"Community Requests Map"}
-                                    </h2>
-                                    <p className="text-white/60 text-center mb-6">
-                                        {"View all reported issues and service requests in our community"}
-                                    </p>
-                                    <div className="h-[500px] rounded-2xl overflow-hidden">
+                                    {/* One card: a header that says what the map is and
+                                        what is on it right now, then the map itself. */}
+                                    <div className="flex flex-col gap-4 p-5 sm:p-6 sm:flex-row sm:items-center sm:justify-between border-b border-white/10">
+                                        <div className="flex items-start gap-3 min-w-0">
+                                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary-400/30 bg-primary-500/15 text-primary-200" aria-hidden="true">
+                                                <MapIcon className="h-5 w-5" />
+                                            </span>
+                                            <div className="min-w-0">
+                                                <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
+                                                    {"Community Requests Map"}
+                                                </h2>
+                                                <p className="text-sm text-white/60 mt-0.5">
+                                                    {"See what neighbors have reported and where the town is working. Select a pin for details."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        {allRequests.length > 0 && (
+                                            <ul className="flex flex-wrap gap-2 sm:justify-end" aria-label="Requests on the map">
+                                                <li><Chip tone="danger" size="sm">{mapCounts.open} open</Chip></li>
+                                                <li><Chip tone="warning" size="sm">{mapCounts.inProgress} in progress</Chip></li>
+                                                <li><Chip tone="success" size="sm">{mapCounts.closed} resolved</Chip></li>
+                                            </ul>
+                                        )}
+                                    </div>
+                                    <div className="h-[500px]">
                                         <StaffDashboardMap
                                             config={mapConfig}
                                             requests={allRequests}
@@ -1205,8 +1230,14 @@ export default function ResidentPortal() {
                                                "Community Requests" should see
                                                requests. Staff still get them on
                                                the dashboard, where the layer
-                                               list explains what they are. */
+                                               list explains what they are.
+                                               Polygon layers an admin put on
+                                               the portal (parcels, zones) are
+                                               the exception: drawn as faint,
+                                               shape-only outlines at parcel
+                                               zoom, never as pins. */
                                             mapLayers={[]}
+                                            residentOutlines
                                             services={services}
                                             departments={[]}
                                             users={[]}

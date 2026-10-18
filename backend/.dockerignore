@@ -1,0 +1,6 @@
+# Keep host debris out of the release image.
+__pycache__
+*.pyc
+.pytest_cache
+.env
+.env.*

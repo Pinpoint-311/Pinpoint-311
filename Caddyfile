@@ -74,6 +74,16 @@ Disallow: /
 		max_size 13MB
 	}
 
+	# The host updater's channel (docs/design/secure-upgrades.md, Phase 3).
+	# The updater calls the backend's loopback port directly and never comes
+	# through here, so from the internet this prefix does not exist. The
+	# backend also refuses any /api/internal request that carries proxy
+	# headers, so a regenerated site block cannot reopen it. `handle` blocks
+	# are tried most-specific path first, so this wins over /api/* below.
+	handle /api/internal/* {
+		respond 404
+	}
+
 	handle /api/* {
 		# The backend sets a per-response CSP (locked-down for JSON, inline-safe
 		# for its few HTML pages like demo/bootstrap login), so don't override it

@@ -22,6 +22,7 @@ a disk, a database or a clock.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
@@ -199,7 +200,9 @@ def describe_disk(reading: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 # logs and temporary files even when every volume has room.
 DISK_PATHS = (
     ("/", "The server disk"),
-    ("/project/uploads", "Photo storage"),
+    # Same resolution as app.main's UPLOAD_DIR: compose sets it to wherever the
+    # uploads volume is mounted (/data/uploads in image-based deployments).
+    (os.environ.get("UPLOAD_DIR", "/project/uploads"), "Photo storage"),
     ("/backups", "Backup storage"),
 )
 

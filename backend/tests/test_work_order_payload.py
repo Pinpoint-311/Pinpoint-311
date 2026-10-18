@@ -248,6 +248,11 @@ NEVER = {
     "contact_opt_out",
     # Written by staff, for staff.
     "staff_notes",
+    # The parcel / zone the report fell in, from the town's own context layers
+    # (app/services/gis_layers.py). Fields an admin allowed STAFF to see; the
+    # connected system has the town's GIS already, and the pin it is sent
+    # locates the parcel. Printed on Pinpoint's own work order instead.
+    "gis_context",
     # The legal hold and the content-moderation flag, plus the moderation text
     # explaining the latter. None is the vendor's business, and flag_reason can
     # quote what a resident wrote. (These were one column until the hold was

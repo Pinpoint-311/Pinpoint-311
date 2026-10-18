@@ -1,0 +1,7 @@
+# Common to every detector backend. Exact pins: this image runs a model on
+# resident photos, and a silently upgraded decoder or numpy is not a change
+# that should arrive without a rebuild someone chose.
+fastapi==0.115.6
+uvicorn==0.34.0
+Pillow==11.1.0
+numpy==2.2.6

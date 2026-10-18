@@ -1,0 +1,46 @@
+# Development override: build from source, mount it, reload on save.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# docker-compose.yml is what production runs: stamped images, no source, no
+# Docker socket (docs/RELEASES.md). Contributors lose none of the old loop --
+# this file puts back the build contexts, the ./backend mount and --reload.
+#
+# Never use this file on a server that residents reach. --reload restarts the
+# API on every file write, and the code that runs is whatever is on disk, not a
+# signed release.
+#
+# The built images are tagged :dev, not :latest, so a contributor's build on a
+# shared host can never replace the image a production stack starts from.
+services:
+  backend:
+    image: pinpoint-311-backend:dev
+    build:
+      context: ./backend
+      additional_contexts:
+        deploy-templates: ./deploy/templates
+      args:
+        PINPOINT_VERSION: ${PINPOINT_VERSION:-dev}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+      # The ./backend mount hides the copy baked into the image.
+      - ./deploy/templates:/app/deploy/templates:ro
+
+  worker:
+    image: pinpoint-311-backend:dev
+    build:
+      context: ./backend
+      additional_contexts:
+        deploy-templates: ./deploy/templates
+      args:
+        PINPOINT_VERSION: ${PINPOINT_VERSION:-dev}
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    image: pinpoint-311-frontend:dev
+    build:
+      context: ./frontend
+      args:
+        PINPOINT_VERSION: ${PINPOINT_VERSION:-dev}

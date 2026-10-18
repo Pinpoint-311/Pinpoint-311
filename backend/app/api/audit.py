@@ -349,19 +349,28 @@ async def verify_audit_log_integrity(
     _: User = Depends(get_current_admin)
 ):
     """
-    Verify the integrity of the audit log chain.
-    
-    Checks if any logs have been tampered with by validating hash chain.
-    Admin only endpoint.
+    Verify the audit log hash chain from stored data and the nightly anchors.
+
+    Reports how many entries there are, how many are in the legacy segment
+    that predates a verifiable chain (counted, not checked), how many were
+    verified, and the first broken entry if there is one. Admin only.
     """
     from app.services.audit_service import AuditService
-    
-    is_valid = await AuditService.verify_integrity(db)
-    
+
+    report = await AuditService.verify_integrity(db)
+    valid = report["integrity_valid"]
+    if valid:
+        message = f"Audit log chain is intact ({report['verified_entries']} entries verified"
+        if report["legacy_entries"]:
+            message += f"; {report['legacy_entries']} earlier entries predate verification"
+        message += ")"
+    else:
+        message = f"WARNING: audit log chain is broken at entry {report['first_break']['id']}: " \
+                  f"{report['first_break']['reason']}"
     return {
-        "integrity_valid": is_valid,
-        "message": "Audit log chain is intact" if is_valid else "WARNING: Tampering detected in audit logs",
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        **report,
+        "message": message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -399,7 +408,9 @@ async def list_audit_anchors(
         "head_matches_latest_anchor": matches,
         "anchors": [
             {"id": a.id, "created_at": a.created_at.isoformat() if a.created_at else None,
-             "head_hash": a.head_hash, "entry_count": a.entry_count}
+             "head_hash": a.head_hash, "entry_count": a.entry_count,
+             "auth_head_id": a.auth_head_id, "auth_head_hash": a.auth_head_hash,
+             "auth_entry_count": a.auth_entry_count, "auth_legacy_count": a.auth_legacy_count}
             for a in anchors
         ],
     }

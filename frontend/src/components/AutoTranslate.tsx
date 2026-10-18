@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
 import { Languages, RefreshCw } from 'lucide-react';
 import { useTranslation } from '../context/TranslationContext';
+import { chunkForTranslation } from '../utils/languages';
 
 interface AutoTranslateProps {
     children: React.ReactNode;
@@ -374,7 +375,7 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             attributeTextMap.get(value)!.push({ element, attribute });
         });
 
-        // Translate in batches of 100
+        // Translate in batches the endpoint accepts
         if (textsToTranslate.length > 0) {
             setIsTranslating(true);
             isTranslatingRef.current = true;
@@ -382,8 +383,10 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
             const totalTexts = textsToTranslate.length;
             let translatedCount = 0;
 
-            for (let i = 0; i < textsToTranslate.length; i += 100) {
-                const batch = textsToTranslate.slice(i, i + 100);
+            // By count AND by characters: the public endpoint caps an
+            // anonymous request's total size, and a page of long paragraphs
+            // (a privacy policy) blows through it in well under 100 strings.
+            for (const batch of chunkForTranslation(textsToTranslate)) {
                 const translations = await translateTexts(batch, language);
 
                 // Apply translations to text nodes

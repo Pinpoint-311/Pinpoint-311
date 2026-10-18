@@ -89,6 +89,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const logout = async () => {
+        /* The token is captured before it is forgotten and sent with the
+         * sign-out call. This used to clear it and THEN call /api/auth/logout
+         * with no Authorization header, so the call was always a 401: the
+         * server never heard about the sign-out, nothing was revoked or
+         * audited, and a copy of the token kept working until it expired. The
+         * server now revokes every session this account holds. Local state is
+         * still cleared synchronously, so callers can navigate straight away. */
+        const token = localStorage.getItem('token') || state.token;
         localStorage.removeItem('token');
         api.setToken(null);
         setState({
@@ -98,15 +106,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isLoading: false,
         });
 
-        // Get SSO logout URL and redirect
+        if (!token) return;
         try {
-            const response = await fetch(`/api/auth/logout?return_to=${encodeURIComponent(window.location.origin)}`);
-            const data = await response.json();
-            if (data.logout_url) {
+            const data = await api.logout(token, window.location.origin);
+            // No identity provider: the server echoes return_to back, and the
+            // caller has already navigated to the sign-in page -- stay there.
+            if (data?.logout_url && data.logout_url !== window.location.origin) {
                 window.location.href = data.logout_url;
             }
         } catch (err) {
-            console.error('Failed to get logout URL:', err);
+            // Already revoked or offline: the local sign-out above stands.
+            console.error('Failed to sign out on the server:', err);
         }
     };
 

@@ -11,6 +11,7 @@ export function sourceLabel(source?: string | null): string {
         case 'email': return 'Email';
         case 'walk_in': return 'In person';
         case 'other': return 'Other';
+        case 'open311': return 'Open311 app';
         default:
             if (source.startsWith('integration_')) {
                 const name = source.slice('integration_'.length).replace(/_/g, ' ');

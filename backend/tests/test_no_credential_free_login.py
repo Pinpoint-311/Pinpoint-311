@@ -43,7 +43,8 @@ HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 TOKEN_MINTERS = {
     "verify_bootstrap": "the deploy-time INITIAL_ADMIN_PASSWORD, and only while no IdP is configured",
     "use_bootstrap_token": "a one-time bootstrap token, and only while no IdP is configured",
-    "auth0_callback": "an authorization code the IdP issued for this state",
+    "auth0_callback": "an authorization code the IdP issued for this state (issues a single-use sign-in code, not the token)",
+    "exchange_login_code": "the single-use, 60-second code auth0_callback issued",
     "redeem_onboarding_token": "a signed onboarding token",
     "bootstrap_township": "the orchestrator's provisioning token",
     "exchange_break_glass": "a panel-signed break-glass token, in managed mode only",
@@ -91,12 +92,23 @@ def test_no_demo_flag_is_read_anywhere():
     )
 
 
+# A session token, or a code redeemable for one.
+MINTING_CALLS = {"create_access_token", "create_session_token", "issue_login_code"}
+
+
+def _called_name(func):
+    if isinstance(func, ast.Name):
+        return func.id
+    if isinstance(func, ast.Attribute):
+        return func.attr
+    return None
+
+
 def test_every_token_minting_handler_requires_a_secret():
     found = {}
     for filename, route, fn in _handlers():
         mints = any(
-            isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-            and n.func.id == "create_access_token"
+            isinstance(n, ast.Call) and _called_name(n.func) in MINTING_CALLS
             for n in ast.walk(fn)
         )
         if mints:

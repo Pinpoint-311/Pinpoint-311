@@ -3,40 +3,37 @@ Audit logging service for government-compliant authentication event tracking.
 Implements NIST 800-53 AU-2, AU-3, AU-6, AU-9, AU-12 controls.
 """
 
-import hashlib
-import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc
-from app.models import AuditLog, User
+from sqlalchemy import select, func
+from app.models import AuditLog, AuditAnchor, User
+from app.core import audit_chain
+
+# Rows read per query while verifying, so a seven-year table is never loaded
+# into memory at once.
+VERIFY_BATCH_SIZE = 1000
+
+# purge_old_ip_addresses deletes ip_address/user_agent (and the salt that
+# commits to them) after 90 days. A row whose context was removed while it was
+# still well inside that window was not redacted by retention. One day of
+# slack keeps a nightly purge racing the clock from looking like tampering.
+CONTEXT_RETENTION_DAYS = 90
+_EARLY_REDACTION = timedelta(days=CONTEXT_RETENTION_DAYS - 1)
+
+
+def _prefix(value: Optional[str]) -> Optional[str]:
+    return value[:12] if value else None
 
 
 class AuditService:
     """
     Service for logging authentication events with tamper detection.
-    
-    Each log entry includes a hash of the previous entry to detect tampering.
+
+    Each entry is chained to the one before it when it is flushed (the
+    before_flush listener in app.models, scheme in app.core.audit_chain).
     """
-    
-    @staticmethod
-    def _compute_hash(entry_data: Dict[str, Any]) -> str:
-        """Compute SHA-256 hash of audit log entry for tamper detection"""
-        # Sort keys for consistent hashing
-        canonical = json.dumps(entry_data, sort_keys=True)
-        return hashlib.sha256(canonical.encode()).hexdigest()
-    
-    @staticmethod
-    async def _get_last_entry_hash(db) -> Optional[str]:
-        """Get hash of the most recent audit log entry"""
-        result = await db.execute(
-            select(AuditLog.entry_hash)
-            .order_by(desc(AuditLog.id))
-            .limit(1)
-        )
-        last_entry = result.scalar_one_or_none()
-        return last_entry
-    
+
     @staticmethod
     async def log_event(
         db: Session,
@@ -67,25 +64,9 @@ class AuditService:
         Returns:
             Created AuditLog entry
         """
-        # Get previous hash for integrity chain
-        previous_hash = await AuditService._get_last_entry_hash(db)
-        
-        # Prepare entry data for hashing
-        entry_data = {
-            "event_type": event_type,
-            "success": success,
-            "username": username,
-            "user_id": user_id,
-            "ip_address": ip_address,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
-            "details": details or {}
-        }
-        
-        # Compute this entry's hash
-        entry_hash = AuditService._compute_hash(entry_data)
-        
-        # Create audit log entry
+        # previous_hash/entry_hash/chain_version are filled in at flush time,
+        # under the chain lock; the timestamp is set here so the stored value
+        # is the hashed value.
         audit_log = AuditLog(
             user_id=user_id,
             username=username,
@@ -96,8 +77,7 @@ class AuditService:
             user_agent=user_agent,
             session_id=session_id,
             details=details,
-            previous_hash=previous_hash,
-            entry_hash=entry_hash
+            timestamp=datetime.now(timezone.utc),
         )
         
         db.add(audit_log)
@@ -194,45 +174,154 @@ class AuditService:
         )
     
     @staticmethod
-    async def verify_integrity(db: Session, start_id: Optional[int] = None) -> bool:
+    async def verify_integrity(db, batch_size: int = VERIFY_BATCH_SIZE) -> Dict[str, Any]:
+        """Recompute the audit_logs chain from stored data and check anchors.
+
+        Reads the table in id order, ``batch_size`` rows at a time. Rows of
+        chain version 1 at the start of the table are counted as a legacy
+        segment that cannot be recomputed (their hash covered a timestamp that
+        was never stored); verification starts at the first version 2 row,
+        which must link to the last legacy row's stored hash. A version 1 row
+        after that point is a break -- it is how an edit would be hidden.
+
+        Every anchor that recorded this chain must still be found at its head
+        id, with the same hash and the same number of rows up to it, so
+        deleting entries from the tail is detected.
+
+        Stops at the first problem and reports it. Rows inserted while this
+        runs are outside the snapshot (``id <= max(id)`` taken at the start).
         """
-        Verify the integrity of the audit log chain.
-        
-        Args:
-            start_id: Optional starting ID to verify from (verifies all if None)
-        
-        Returns:
-            True if chain is intact, False if tampering detected
-        """
-        query = select(AuditLog).order_by(AuditLog.id)
-        if start_id:
-            query = query.where(AuditLog.id >= start_id)
-        
-        result = db.execute(query)
-        logs = result.scalars().all()
-        
-        previous_hash = None
-        for log in logs:
-            # Verify this entry's hash matches stored hash
-            entry_data = {
-                "event_type": log.event_type,
-                "success": log.success,
-                "username": log.username,
-                "user_id": log.user_id,
-                "ip_address": log.ip_address,
-                "timestamp": log.timestamp.isoformat(),
-                "session_id": log.session_id,
-                "details": log.details or {}
+        # Anchors before max(id): any anchored head was committed before its
+        # anchor, so it is <= the max read afterwards.
+        anchors = list((await db.execute(
+            select(AuditAnchor.id, AuditAnchor.created_at, AuditAnchor.auth_head_id,
+                   AuditAnchor.auth_head_hash, AuditAnchor.auth_entry_count,
+                   AuditAnchor.auth_legacy_count)
+            .where(AuditAnchor.auth_head_id.isnot(None))
+            .order_by(AuditAnchor.auth_head_id, AuditAnchor.id)
+        )).all())
+        max_id = (await db.execute(select(func.max(AuditLog.id)))).scalar()
+        total = 0
+        if max_id is not None:
+            total = (await db.execute(
+                select(func.count()).select_from(AuditLog).where(AuditLog.id <= max_id)
+            )).scalar() or 0
+
+        result: Dict[str, Any] = {
+            "integrity_valid": True,
+            "total_entries": total,
+            "legacy_entries": 0,
+            "verified_entries": 0,
+            "redacted_context_entries": 0,
+            "first_verified_id": None,
+            "anchors_total": len(anchors),
+            "anchors_checked": 0,
+            "first_break": None,
+        }
+
+        def _break(row_id, ts, reason, expected=None, stored=None):
+            result["integrity_valid"] = False
+            result["first_break"] = {
+                "id": row_id,
+                "timestamp": audit_chain.timestamp_text(ts),
+                "reason": reason,
+                "expected_hash_prefix": _prefix(expected),
+                "stored_hash_prefix": _prefix(stored),
             }
-            computed_hash = AuditService._compute_hash(entry_data)
-            
-            if computed_hash != log.entry_hash:
-                return False  # Entry has been tampered with
-            
-            # Verify chain linkage
-            if previous_hash != log.previous_hash:
-                return False  # Chain has been broken
-            
-            previous_hash = log.entry_hash
-        
-        return True
+            return result
+
+        now = datetime.now(timezone.utc)
+        cols = AuditLog.__table__.c
+        position = 0              # rows seen so far (legacy included)
+        last_stored: Optional[str] = None
+        seen_v2 = False
+        a = 0                     # next anchor to check
+        last_id = 0
+
+        while max_id is not None and last_id < max_id:
+            rows = (await db.execute(
+                select(cols.id, cols.timestamp, cols.event_type, cols.success,
+                       cols.failure_reason, cols.username, cols.user_id,
+                       cols.session_id, cols.details, cols.ip_address,
+                       cols.user_agent, cols.context_salt, cols.context_digest,
+                       cols.previous_hash, cols.entry_hash, cols.chain_version)
+                .where(cols.id > last_id, cols.id <= max_id)
+                .order_by(cols.id)
+                .limit(batch_size)
+            )).all()
+            if not rows:
+                break
+            for row in rows:
+                # An anchored head that the scan stepped over has been deleted.
+                if a < len(anchors) and anchors[a].auth_head_id < row.id:
+                    an = anchors[a]
+                    return _break(an.auth_head_id, an.created_at,
+                                  f"anchored entry {an.auth_head_id} (anchor {an.id}) is missing from the chain",
+                                  an.auth_head_hash, None)
+                position += 1
+                version = row.chain_version or audit_chain.LEGACY_CHAIN_VERSION
+
+                if version == audit_chain.LEGACY_CHAIN_VERSION:
+                    if seen_v2:
+                        return _break(row.id, row.timestamp,
+                                      "legacy-format entry after the chain upgrade (cannot be verified)",
+                                      None, row.entry_hash)
+                    result["legacy_entries"] += 1
+                elif version == audit_chain.CHAIN_VERSION:
+                    if not seen_v2:
+                        seen_v2 = True
+                        result["first_verified_id"] = row.id
+                    expected = audit_chain.compute_hash(row, row.previous_hash)
+                    if expected != row.entry_hash:
+                        return _break(row.id, row.timestamp, "entry contents do not match its hash",
+                                      expected, row.entry_hash)
+                    if row.previous_hash != last_stored:
+                        return _break(row.id, row.timestamp,
+                                      "link to the previous entry is broken (an entry was removed, inserted or reordered)",
+                                      last_stored, row.previous_hash)
+                    if row.context_salt is not None:
+                        if audit_chain.context_digest(row.context_salt, row.ip_address,
+                                                      row.user_agent) != row.context_digest:
+                            return _break(row.id, row.timestamp,
+                                          "IP address or user agent does not match its recorded commitment",
+                                          row.context_digest, None)
+                    elif row.ip_address is not None or row.user_agent is not None:
+                        return _break(row.id, row.timestamp,
+                                      "IP address or user agent present without a commitment")
+                    elif row.context_digest is not None:
+                        if row.timestamp is not None and \
+                                audit_chain.normalize_timestamp(row.timestamp) > now - _EARLY_REDACTION:
+                            return _break(row.id, row.timestamp,
+                                          f"IP address removed inside the {CONTEXT_RETENTION_DAYS}-day retention window")
+                        result["redacted_context_entries"] += 1
+                    result["verified_entries"] += 1
+                else:
+                    return _break(row.id, row.timestamp, f"unknown chain version {version}")
+
+                while a < len(anchors) and anchors[a].auth_head_id == row.id:
+                    an = anchors[a]
+                    if an.auth_head_hash != row.entry_hash:
+                        return _break(row.id, row.timestamp,
+                                      f"entry no longer has the hash recorded by anchor {an.id}",
+                                      an.auth_head_hash, row.entry_hash)
+                    if an.auth_entry_count is not None and an.auth_entry_count != position:
+                        return _break(row.id, row.timestamp,
+                                      f"anchor {an.id} recorded {an.auth_entry_count} entries up to here; "
+                                      f"{position} remain")
+                    if an.auth_legacy_count is not None and an.auth_legacy_count != result["legacy_entries"]:
+                        return _break(row.id, row.timestamp,
+                                      f"anchor {an.id} recorded {an.auth_legacy_count} legacy entries up to here; "
+                                      f"{result['legacy_entries']} are now marked legacy")
+                    result["anchors_checked"] += 1
+                    a += 1
+
+                last_stored = row.entry_hash
+                last_id = row.id
+
+        if a < len(anchors):
+            an = anchors[a]
+            return _break(an.auth_head_id, an.created_at,
+                          f"chain truncated: anchored entry {an.auth_head_id} (anchor {an.id}) "
+                          f"is beyond the last remaining entry",
+                          an.auth_head_hash, last_stored)
+        return result

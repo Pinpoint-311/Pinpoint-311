@@ -244,6 +244,16 @@ export interface ServiceRequestDetail extends ServiceRequest {
     /** Due time under the category's SLA, and where it stands. Absent with no SLA. */
     sla_due_datetime?: string | null;
     sla_state?: 'on_track' | 'at_risk' | 'overdue' | 'met' | 'breached' | null;
+    /** Context-layer features (parcel, zone) the report fell inside, snapshotted
+     *  at intake with each layer's staff allowlist. Staff detail only. */
+    gis_context?: {
+        layer_id: number;
+        layer_name: string;
+        feature_id: number;
+        feature_key: string;
+        label: string;
+        properties: Record<string, unknown>;
+    }[] | null;
     first_name: string | null;
     last_name: string | null;
     email: string;

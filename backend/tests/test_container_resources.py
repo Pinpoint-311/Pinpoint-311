@@ -19,6 +19,8 @@ Everything here runs against files in a temporary directory, so the cgroup
 layouts of both versions are exercised in CI on a machine that has neither.
 """
 
+import os
+
 from app.services import system_probes as probes
 
 GB = 1024 ** 3
@@ -166,7 +168,7 @@ def test_the_real_paths_are_probed():
     compose file, this probe quietly goes back to watching only `/`."""
     paths = dict(probes.DISK_PATHS)
     assert "/" in paths
-    assert "/project/uploads" in paths
+    assert os.environ.get("UPLOAD_DIR", "/project/uploads") in paths
     assert "/backups" in paths
 
 

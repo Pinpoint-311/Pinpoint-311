@@ -4,6 +4,8 @@ import { stepsFor } from './setupSteps';
 import './setupStepsContent';
 import type { StepContext } from './setupSteps';
 import ProviderCredentialSteps from './ProviderCredentialSteps';
+import TranslationBudgetPanel from './TranslationBudgetPanel';
+import RedactionDetectorsPanel from './RedactionDetectorsPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -989,6 +991,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         )}
                     </div>
                 )}
+
+                {cap === 'translation' && <TranslationBudgetPanel />}
+                {cap === 'redaction' && <RedactionDetectorsPanel />}
 
                 {/* AI model dropdown — with live discovery */}
                 {cap === 'ai' && active && (() => {

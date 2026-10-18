@@ -1,0 +1,21 @@
+# Throwaway stack for the updater's end-to-end test. Mirrors the shape of the
+# production compose after Phase 1: images come from ${BACKEND_IMAGE} /
+# ${FRONTEND_IMAGE} (release.lock), no build:, no source mounts, no socket.
+services:
+  backend:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE comes from release.lock}
+    command: ["backend"]
+    volumes:
+      - state:/state
+  worker:
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE comes from release.lock}
+    command: ["worker"]
+    volumes:
+      - state:/state
+  frontend:
+    image: ${FRONTEND_IMAGE:?FRONTEND_IMAGE comes from release.lock}
+    command: ["frontend"]
+    ports:
+      - "127.0.0.1:${E2E_PORT}:8080"
+volumes:
+  state:

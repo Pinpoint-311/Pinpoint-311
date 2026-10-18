@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.auth import get_current_admin, get_current_staff
 from app.db.session import get_db
 from app.services.enqueue import QUEUE_UNAVAILABLE, enqueue
+from app.services import gis_layers
 from app.integrations import (
     PLATFORM_CATALOG, build_connector_for, store_credentials,
 )
@@ -869,6 +870,10 @@ async def accela_oauth_callback(
         return _oauth_result_page(False, "Accela's response was missing the sign-in code.")
 
     payload = accela_oauth.verify_state(state)
+    # Single use: a replayed state (same nonce) is refused like a forged one.
+    if payload and not await accela_oauth.consume_state(db, payload):
+        logger.warning("[Integrations] Rejected Accela OAuth callback reusing a state")
+        payload = None
     if not payload:
         logger.warning("[Integrations] Rejected Accela OAuth callback with an invalid or expired state")
         return _oauth_result_page(
@@ -1592,6 +1597,7 @@ async def integration_webhook(
         source=f"integration_{integration.platform}",
         status=payload.status or "open",
         assigned_department_id=service.assigned_department_id,
+        gis_context=await gis_layers.context_for_point(db, lat, lng, service.service_code),
     )
     db.add(sr)
     await db.commit()

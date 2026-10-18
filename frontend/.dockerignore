@@ -1,0 +1,8 @@
+# The image runs `npm ci` itself. A host node_modules copied over it (built for
+# a different platform, or a symlink into another checkout) would make the
+# bundle depend on whoever ran the build, which defeats a reproducible release.
+node_modules
+dist
+dist-probe
+.env
+.env.*

@@ -153,6 +153,15 @@ _UNGATED_BY_DESIGN = {
     # is_configured=False. It never sets `key_value`, so there is no credential
     # here to put in the wrong place.
     "sync_secrets",
+    # Two character counts (the translation spend budget), stored beside
+    # TRANSLATION_PROVIDER for the same reason that is: a setting, not a
+    # credential. Gating it would leave a town that has not picked a store
+    # unable to lower its own spend cap.
+    "update_translation_budget",
+    # Which on-server photo detector runs (yolo/ocr/off, yunet/opencv/off) and
+    # one boolean. Settings, not credentials -- same reasoning as the budget:
+    # a town without a chosen store must still be able to change them.
+    "update_redaction_detectors",
 }
 
 

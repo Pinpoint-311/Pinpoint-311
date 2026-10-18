@@ -55,7 +55,10 @@ def test_the_create_paths_apply_the_policy():
     import inspect
     from app.api import open311
 
-    assert "location_policy.apply(" in inspect.getsource(open311.create_request)
+    # The portal route and the GeoReport v2 route share one intake helper.
+    assert "location_policy.apply(" in inspect.getsource(open311._intake_resident_report)
+    assert "_intake_resident_report(" in inspect.getsource(open311.create_request)
+    assert "_intake_resident_report(" in inspect.getsource(open311.create_request_open311)
     staff = inspect.getsource(open311.create_manual_intake)
     assert "location_policy.apply(" in staff and "enforce_required=False" in staff
 

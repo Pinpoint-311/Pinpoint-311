@@ -28,6 +28,20 @@ COPY --from=builder /app/dist /usr/share/nginx/html
 # Copy nginx config for SPA routing
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
+# Release stamp: the same OCI label keys as the backend image, so the
+# orchestrator and the host updater can check both halves of a release agree
+# (see backend/Dockerfile). Last, so a new version reuses the cached layers.
+ARG PINPOINT_VERSION=""
+ARG GIT_SHA=""
+ARG DB_REVISION=""
+ARG MIN_DB_REVISION=""
+LABEL org.opencontainers.image.version="${PINPOINT_VERSION}" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.pinpoint311.app.version="${PINPOINT_VERSION}" \
+      org.pinpoint311.app.git_sha="${GIT_SHA}" \
+      org.pinpoint311.app.db_revision="${DB_REVISION}" \
+      org.pinpoint311.app.min_db_revision="${MIN_DB_REVISION}"
+
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]

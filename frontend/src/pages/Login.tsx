@@ -1,10 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, Shield, LogIn, Sparkles } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { api } from '../services/api';
+
+/** Remove sign-in credentials from the address bar without a navigation, so
+ *  neither the back button nor a copied link carries them. */
+function stripLoginParamsFromUrl() {
+    const url = new URL(window.location.href);
+    let changed = false;
+    for (const key of ['login_code', 'token']) {
+        if (url.searchParams.has(key)) {
+            url.searchParams.delete(key);
+            changed = true;
+        }
+    }
+    if (changed) {
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+}
 
 export default function Login() {
     const navigate = useNavigate();
@@ -48,21 +65,38 @@ export default function Login() {
         checkAuth();
     }, []);
 
-    // Handle callback with token or error from the identity provider
+    /* The SSO callback lands here with ?login_code=<single-use code>, never a
+     * token. Strip it from the URL at once (it must not survive in history
+     * even if the exchange fails), then trade it for the session token over
+     * POST. The ref keeps a re-run of this effect -- StrictMode, or the stale
+     * router location after replaceState -- from spending the code twice;
+     * the second attempt would be refused anyway. A `?token=` from an old
+     * link is stripped and ignored: a session is never taken from a URL. */
+    const exchangeStarted = useRef(false);
     useEffect(() => {
-        const token = searchParams.get('token');
+        const loginCode = searchParams.get('login_code');
         const urlError = searchParams.get('error');
-        
-        if (token) {
-            setToken(token);
-            // Remove token from URL
-            navigate('/login', { replace: true });
+
+        if (loginCode || searchParams.has('token')) {
+            stripLoginParamsFromUrl();
+        }
+
+        if (loginCode) {
+            if (exchangeStarted.current) return;
+            exchangeStarted.current = true;
+            setIsLoading(true);
+            api.exchangeLoginCode(loginCode)
+                .then(({ access_token }) => setToken(access_token))
+                .catch((err: Error) => {
+                    setError(err?.message || 'Sign-in did not finish. Sign in again.');
+                })
+                .finally(() => setIsLoading(false));
         } else if (urlError) {
             // Keep the error in the URL so it's resilient to refreshes, 
             // and simply display it in the UI.
             setError(decodeURIComponent(urlError.replace(/\+/g, ' ')));
         }
-    }, [searchParams, setToken, navigate]);
+    }, [searchParams, setToken]);
 
     // Redirect if already logged in
     useEffect(() => {

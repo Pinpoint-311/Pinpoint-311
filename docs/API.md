@@ -48,17 +48,20 @@ Tokens are HS256 JWTs signed with the deployment's `SECRET_KEY` and valid for
 single-purpose tokens, such as onboarding links. A deactivated account gets
 `403` even while its token is still valid.
 
-Logging out (`GET /api/auth/logout`) does **not** revoke the JWT. It stays valid
-until it expires. Clients should discard it.
+Logging out (`GET /api/auth/logout`) revokes the JWT **and every other session
+the account holds** (it bumps the account's session generation, which every
+token carries as `tv`). Deactivating an account, changing its role, removing it
+from a department, resetting its password, or `POST /api/users/{id}/revoke-sessions`
+(admin) does the same. A revoked token gets 401.
 
 ### Getting a token
 
 | Flow | How |
 |---|---|
-| **SSO (normal)** | 1. `GET /api/auth/login?redirect_uri=<frontend callback>` returns `{"auth_url", "state"}`.<br>2. Send the browser to `auth_url`. The identity provider (Auth0, Entra ID, Google, Okta or generic OIDC) redirects back to `/api/auth/callback`.<br>3. The callback redirects to `redirect_uri?token=<jwt>`.<br>4. Accounts are matched by email. The account must already exist (an admin creates it), and the provider must not report the email as unverified. |
+| **SSO (normal)** | 1. `GET /api/auth/login?redirect_uri=<frontend callback>` returns `{"auth_url", "state"}`.<br>2. Send the browser to `auth_url`. The identity provider (Auth0, Entra ID, Google, Okta or generic OIDC) redirects back to `/api/auth/callback`.<br>3. The callback redirects to `redirect_uri?login_code=<code>`. The code is single-use and expires after 60 seconds; `POST /api/auth/exchange` with `{"code": "<code>"}` returns `{"access_token", "token_type"}`. The token itself never appears in a URL.<br>4. Accounts are matched by email. The account must already exist (an admin creates it), and the provider must not report the email as unverified. |
 | **First-run bootstrap** | Works only until an identity provider is configured. `POST /api/auth/bootstrap` (form field `password` = `INITIAL_ADMIN_PASSWORD`, 5/minute) issues a one-time link. `GET /api/auth/bootstrap/{token}` exchanges it for an admin session. |
 | **Onboarding link** (managed hosting) | `POST /api/auth/onboarding/redeem` with a single-use signed token minted by the provisioning API. |
-| **Break-glass** (managed hosting) | `POST /api/provisioning/break-glass` with a panel-signed token. Returns a time-boxed admin JWT for a visible `state-ops:` account. Every use is audited. |
+| **Break-glass** (managed hosting) | `POST /api/provisioning/break-glass` with a panel-signed token. Returns a time-boxed admin JWT for a visible `state-ops:` account. Each token works once; every use is audited. |
 
 There is no username/password login and no credential-free demo login.
 
@@ -74,6 +77,7 @@ There is no username/password login and no credential-free demo login.
 | `researcher` | `researcher` or `admin` | The Research Suite module must be enabled. Exports are de-identified, and locations are fuzzed unless an **admin** asks for `privacy_mode=exact`. |
 | `admin` | `admin` | Users, services, departments, providers and secrets, audit, backups, retention, integrations, setup. The last active admin cannot be demoted or deactivated. |
 | `orchestrator-token` | Managed-hosting panel | `X-Provisioning-Token` / `X-Panel-Token` header compared in constant time to `PROVISIONING_TOKEN`. These routes return `404` when no token is set. |
+| `updater-token` | The host updater (`updater/`) | `Authorization: Bearer <updater token>`. Tokens are created in Admin Console → Version Control → Updater connection, stored as a SHA-256 hash, compared in constant time and revocable. Internal: Caddy answers `404` for `/api/internal/*`, the backend answers `404` to any request carrying proxy headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Via`) and in managed mode. The updater calls the backend's loopback port. See [docs/RELEASES.md](RELEASES.md#connecting-the-host-updater). |
 
 Every successful authenticated write is recorded in the admin audit log by
 middleware (`AdminActionAuditMiddleware`).
@@ -84,52 +88,96 @@ middleware (`AdminActionAuditMiddleware`).
 
 **Base URL:** `https://<your-domain>/api/open311/v2`
 **Spec:** <http://wiki.open311.org/GeoReport_v2>
-**Format:** JSON only (no `.xml` routes). `jurisdiction_id` is not used: each
-deployment is a single jurisdiction.
+**Formats:** `.json` and `.xml` on every GeoReport v2 route (discovery,
+services, service definition, requests GET/POST, request by id, tokens).
+XML uses the spec's element names (`<services><service>`,
+`<service_definition>`, `<service_requests><request>`, `<errors><error>`).
+
+**`jurisdiction_id`** is accepted on every GeoReport v2 route. If an admin has
+configured one (Admin Console > Integrations > Open311 API keys, or
+`PUT /admin/settings`), a different value is a `400`. Absent is always fine.
 
 ### API keys
 
-**No API key is required, and none is checked.** Anyone can call
-`POST requests.json`, as the town's resident portal does. Abuse is controlled
-by:
+`POST requests.json` requires a valid, unrevoked `api_key`. Reads need no key.
 
-- a per-client limit of 10/minute (keyed on the real client address resolved
-  from the trusted proxy chain; `X-Forwarded-For` cannot be spoofed)
-- content moderation
-- photo redaction
-- request body size limits
+- **Getting a key.** A town administrator creates it in Admin Console >
+  Integrations > **Open311 API keys** (name and contact email). The key is
+  shown **once**; only its SHA-256 hash and its first eight characters are
+  stored. A lost key is revoked and replaced.
+- **Sending it.** As the `api_key` field of the POST body (form field or JSON
+  property), as the spec says. It is not read from the query string or headers,
+  so it does not end up in proxy access logs.
+- **Limits.** 60 requests/minute per key by default (an admin can set a
+  per-key limit up to 600). Over the limit: `429` with `Retry-After: 60`.
+- **Revocation** takes effect on the next request.
+- **Anonymous submissions** are off by default. An admin can turn on "Allow
+  anonymous Open311 submissions"; keyless POSTs are then accepted at
+  10/minute per client address (resolved from the trusted proxy chain). The
+  change is audited.
+- Every key creation, revocation and settings change is written to the audit
+  log (`open311_api_key_created`, `open311_api_key_revoked`,
+  `open311_anonymous_submissions_changed`, `open311_jurisdiction_changed`).
+  Each report filed with a key records the key's id and name on the report's
+  staff audit trail.
 
-`discovery.json`'s `key_service` field says this. If you are building an
-integration that needs a higher volume, contact the town.
+Admin endpoints (admin JWT):
+
+```
+GET  /api/open311/v2/admin/keys                 list (prefix and metadata only)
+POST /api/open311/v2/admin/keys                 {"name", "contact_email", "rate_limit_per_minute"?} -> includes "api_key" once
+POST /api/open311/v2/admin/keys/{id}/revoke
+GET  /api/open311/v2/admin/settings
+PUT  /api/open311/v2/admin/settings             {"allow_anonymous_submissions"?, "jurisdiction_id"?}
+```
+
+**The town's own report form does not use a key.** Anything in a browser is
+public, so the portal posts to its own first-party route,
+`POST /api/open311/v2/portal/requests` (the JSON body and single-object
+response it always had, 10/minute per client). That route only accepts
+same-origin browser submissions (`Sec-Fetch-Site: same-origin`, or an `Origin`
+equal to the site or a configured CORS origin); anything else gets `403`.
+It is not an integration endpoint.
+
+### Errors
+
+Every GeoReport v2 route answers errors in the spec's shape:
+
+```json
+[{"code": 403, "description": "api_key is required. Contact the town to request one."}]
+```
+
+```xml
+<?xml version='1.0' encoding='utf-8'?>
+<errors><error><code>403</code><description>Invalid or revoked api_key</description></error></errors>
+```
+
+| Code | When |
+|---|---|
+| 400 | Missing or invalid parameter, unknown service code or attribute, bad date window, `jurisdiction_id` mismatch |
+| 403 | Missing, invalid or revoked `api_key` |
+| 404 | Unknown service, or a request that is not publicly listed |
+| 429 | Rate limited |
+
+Error descriptions name the field, never the submitted value. Routes outside
+GeoReport v2 (`/public/...`, `/staff/...`, `/admin/...`, `/portal/requests`)
+keep the `{"detail": ...}` shape described in [Errors](#errors).
 
 ### Discovery
 
 ```
 GET /api/open311/v2/discovery.json
+GET /api/open311/v2/discovery.xml
 ```
 
-```json
-{
-  "changeset": "2026-03-31T00:00:00Z",
-  "contact": "You may email support@pinpoint311.org for any questions or issues.",
-  "key_service": "No API key is required. POST requests.json is open to anonymous callers and rate limited per client address (10/minute).",
-  "type": "production",
-  "endpoints": [{
-    "specification": "http://wiki.open311.org/GeoReport_v2",
-    "url": "https://<your-domain>/api/open311/v2",
-    "changeset": "2026-03-31T00:00:00Z",
-    "type": "production",
-    "formats": ["application/json"]
-  }],
-  "extensions": { "public_portal": { "...": "..." } }
-}
-```
+`key_service` says how to get a key; `endpoints[].formats` lists
+`application/json` and `text/xml`.
 
 ### Service list and definition
 
 ```
-GET /api/open311/v2/services.json
-GET /api/open311/v2/services/{service_code}.json
+GET /api/open311/v2/services.json      (.xml)
+GET /api/open311/v2/services/{service_code}.json      (.xml)
 ```
 
 ```json
@@ -144,149 +192,169 @@ GET /api/open311/v2/services/{service_code}.json
 }]
 ```
 
-The definition adds `attributes`, which lists the request fields (`description`,
-`address`, `lat`, `long`, `email`, `first_name`, and so on) with `datatype`,
-`required` and `order`.
+The definition's `attributes` are the category's **custom questions**.
+`metadata` is `true` exactly when there are any.
+
+```json
+{
+  "service_code": "POTHOLE",
+  "attributes": [{
+    "variable": true,
+    "code": "4f1c...",
+    "datatype": "singlevaluelist",
+    "required": true,
+    "datatype_description": "",
+    "order": 1,
+    "description": "How deep is it?",
+    "values": [{"key": "Shallow", "name": "Shallow"}, {"key": "Deep", "name": "Deep"}]
+  }],
+  "location_mode": "optional"
+}
+```
+
+Question types map to `string` (text), `text` (textarea), `number`, `datetime`
+(date), `singlevaluelist` (select, radio, yes/no) and `multivaluelist`
+(checkbox). Extensions on the definition: `service_name`, `description`,
+`location_mode` (`required`, `optional`, or `hidden`, where a location sent
+anyway is dropped), `routing_mode`, `translations_available`, `departments`.
 
 - Every active category is listed, including categories whose reports are
   kept off the public map. Residents can still file those.
-- An unknown code returns `404 {"detail": "Service not found: <code>"}`.
-- A category's location rule (`required` / `optional` / `none`) is reflected in
-  whether `address`, `lat` and `long` are listed and required.
+- An unknown code returns `404`.
 
 ### Submit a request
 
 ```
-POST /api/open311/v2/requests.json
-Content-Type: application/json
-```
-
-```json
-{
-  "service_code": "POTHOLE",
-  "description": "Large pothole in the eastbound lane near Oak Ave.",
-  "address": "123 Main St",
-  "lat": 40.2171,
-  "long": -74.7429,
-  "email": "resident@example.com",
-  "first_name": "Jane",
-  "last_name": "Doe",
-  "phone": "555-0100",
-  "media_urls": ["data:image/jpeg;base64,..."],
-  "preferred_language": "en"
-}
+POST /api/open311/v2/requests.json      (.xml)
+Content-Type: application/x-www-form-urlencoded   (or application/json)
 ```
 
 | Field | Required | Notes |
 |---|---|---|
-| `service_code` | yes | An active service code. Unknown code returns `400`. |
-| `description` | yes | At least 10 characters. Moderated. |
-| `email` | yes | A valid address, used for status notifications. |
-| `address` | depends on category | Up to 500 characters. |
-| `lat`, `long` | depends on category | −90..90 and −180..180. |
-| `first_name`, `last_name`, `phone` | no | Encrypted at rest. Never returned by public endpoints. |
-| `media_urls` | no | Up to 3 photos. Faces and plates are redacted, and a photo that cannot be cleared is held for staff review. |
-| `custom_fields` | no | Answers to the category's custom questions. |
-| `is_public` | no | `false` asks for the report to be unlisted. Honored only when the town enables unlisted reports. |
-
-The response is `201 Created` and contains only the acknowledgement fields.
-No staff fields, assignee or priority are included.
-
-```json
-{
-  "service_request_id": "REQ-20261018-66EA36DA",
-  "service_code": "POTHOLE",
-  "service_name": "Pothole",
-  "description": "Large pothole in the eastbound lane near Oak Ave.",
-  "status": "open",
-  "address": "123 Main St",
-  "lat": 40.2171,
-  "long": -74.7429,
-  "requested_datetime": "2026-10-18T05:01:52.340482Z",
-  "photos_pending_review": 0
-}
-```
-
-`service_request_id` is also the tracking token.
-
-Example with curl:
+| `api_key` | yes (unless anonymous submissions are on) | See [API keys](#api-keys). |
+| `service_code` | yes | An active service code. |
+| `description` | yes | 10 to 4,000 characters. Moderated. |
+| `lat` + `long` | depends on category | Sent together. |
+| `address_string` | depends on category | Stored as the address. A category with `location_mode: required` needs this or `lat`/`long`. |
+| `zipcode` | no | Appended to `address_string`, or kept as a "ZIP code" answer when there is no address. |
+| `email` | no | Gets status notifications when given. |
+| `first_name`, `last_name`, `phone` | no | Encrypted at rest. Never returned by any public endpoint. |
+| `media_url` | no | Up to 3 (repeat the field). `https://` URLs or `data:image/...` URIs. Inline images are face/plate redacted; a photo that cannot be cleared is held for staff review. Hosted URLs are not fetched. |
+| `attribute[CODE]` | per definition | Answers to custom questions. `attribute[CODE][]` (repeated) for a `multivaluelist`. In JSON, `"attribute": {"CODE": "value"}` also works. Unknown codes, values outside a list, and missing required answers are `400`. |
+| `account_id` | no | Echoed in the response and noted on the report's staff audit trail. |
+| `device_id` | no | Accepted, not stored. |
+| `jurisdiction_id` | no | See above. |
 
 ```bash
 curl -sS -X POST https://<your-domain>/api/open311/v2/requests.json \
-  -H 'Content-Type: application/json' \
-  -d '{"service_code":"POTHOLE","description":"Pothole by the school crossing","lat":40.2171,"long":-74.7429,"email":"resident@example.com"}'
+  --data-urlencode 'api_key=<your key>' \
+  --data-urlencode 'service_code=POTHOLE' \
+  --data-urlencode 'description=Pothole by the school crossing' \
+  --data-urlencode 'lat=40.2171' --data-urlencode 'long=-74.7429' \
+  --data-urlencode 'attribute[4f1c...]=Deep' \
+  --data-urlencode 'email=resident@example.com'
 ```
+
+`201 Created`:
+
+```json
+[{"service_request_id": "REQ-20261018-66EA36DA", "service_notice": null, "account_id": null}]
+```
+
+```xml
+<?xml version='1.0' encoding='utf-8'?>
+<service_requests><request><service_request_id>REQ-20261018-66EA36DA</service_request_id><service_notice /><account_id /></request></service_requests>
+```
+
+Reports are created synchronously, so the `service_request_id` comes back
+straight away; it is also the token. `service_notice` says when a photo is
+waiting for a staff check.
 
 ### Read requests (public)
 
-The spec's `GET requests.json` and `GET requests/{id}.json` **require a staff
-JWT** in this implementation, because they return reporter contact details and
-staff fields. They are department-scoped. Third-party clients should use the
-public equivalents, which never return PII:
-
 ```
-GET /api/open311/v2/public/requests?status=open,closed&service_code=POTHOLE&limit=100&offset=0
-GET /api/open311/v2/public/requests/{service_request_id}
-GET /api/open311/v2/tokens/{service_request_id}.json
-GET /api/open311/v2/public/requests/{service_request_id}/comments
-GET /api/open311/v2/public/requests/{service_request_id}/audit-log
+GET /api/open311/v2/requests.json?status=open&service_code=POTHOLE&start_date=2026-09-01T00:00:00Z
+GET /api/open311/v2/requests.json?service_request_id=REQ-1,REQ-2
+GET /api/open311/v2/requests/{service_request_id}.json      (.xml)
+GET /api/open311/v2/tokens/{token}.json      (.xml)  -> [{"service_request_id", "token"}]
 ```
 
 ```json
 [{
   "service_request_id": "REQ-20261018-06013F4D",
-  "service_code": "POTHOLE",
-  "service_name": "Pothole",
-  "description": "Big pothole on Main St",
   "status": "open",
-  "address": "1 Main St",
-  "lat": 40.0,
-  "long": -74.0,
+  "status_notes": null,
+  "service_name": "Pothole",
+  "service_code": "POTHOLE",
+  "description": "Big pothole on Main St",
+  "agency_responsible": "Public Works",
+  "service_notice": null,
   "requested_datetime": "2026-10-18T05:01:49.169182+00:00",
   "updated_datetime": "2026-10-18T05:09:25.235620+00:00",
-  "closed_substatus": null,
-  "media_urls": [],
-  "photo_count": 1,
-  "completion_message": null,
-  "completion_photo_url": null,
-  "has_completion_photo": false
+  "expected_datetime": "2026-10-20T05:01:49.169182+00:00",
+  "address": "1 Main St",
+  "address_id": null,
+  "zipcode": null,
+  "lat": 40.0,
+  "long": -74.0,
+  "media_url": "https://<your-domain>/api/open311/v2/public/requests/REQ-20261018-06013F4D/media/0"
 }]
 ```
 
-- `status` takes `open`, `in_progress` and `closed`, comma-separated. An
-  unknown value returns `400`. (`in_progress` is an extension; spec clients
-  should treat it as open.)
-- The list leaves out unlisted reports, archived reports, reports in hidden
-  categories, and deleted reports. It has no default limit.
-- By id (detail, token, comments, audit log), unlisted and hidden-category
-  reports are still served. The id is the resident's tracking link. Deleted
-  reports return `404`.
-- Public responses never include:
-  - reporter name, email or phone
-  - staff notes or internal comments
-  - AI analysis, priority or moderation flags
-  - assignee
-  - photos still held for review (only a count is shown)
-- In the public audit log, staff actors appear as `"Staff"`, and `extra_data`
-  holds only a closed report's `substatus` and `completion_message`.
-- `POST /public/requests/{id}/comments` (`{"content": "..."}`, 1 to 1000
-  characters, 5/minute) adds a moderated comment as "Resident".
+- `status` takes `open` and `closed`, comma-separated. Our `in_progress` is
+  reported as `open`.
+- `start_date` / `end_date` are W3C datetimes. With neither, the last 90 days;
+  with one, 90 days from it; the window may not exceed 90 days. At most 1,000
+  requests, newest first. `service_request_id` (up to 100, comma-separated)
+  ignores the other filters.
+- `status_notes` is the public completion message of a closed report.
+  `agency_responsible` is the assigned department. `expected_datetime` is the
+  submission time plus the category's SLA, when it has one.
+- `media_url` is the first published photo (`GET /public/requests/{id}/media/{index}`
+  serves it as an image). Photos held for review are never exposed.
+- These routes, including by id, follow the **public listing** rule: unlisted,
+  archived, hidden-category and deleted reports are absent (`404` by id). The
+  token lookup and the public tracker still resolve an unlisted report for the
+  person holding its id.
+- Never included: reporter name, email or phone, staff notes, internal
+  comments, AI analysis, priority, moderation flags, assignee.
 
-### Differences from GeoReport v2
+The resident tracker's own endpoints are unchanged:
+
+```
+GET /api/open311/v2/public/requests?status=open,closed&service_code=POTHOLE&limit=100&offset=0
+GET /api/open311/v2/public/requests/{service_request_id}
+GET /api/open311/v2/public/requests/{service_request_id}/comments
+GET /api/open311/v2/public/requests/{service_request_id}/audit-log
+POST /api/open311/v2/public/requests/{service_request_id}/comments   {"content": "..."} (1-1000 chars, 5/minute, moderated)
+```
+
+### Staff reads
+
+The staff app's full records (reporter contact details, triage fields) moved
+off the spec paths, which are now public:
+
+```
+GET /api/open311/v2/staff/requests?status=...&service_code=...&include_deleted=...   (was GET requests.json)
+GET /api/open311/v2/staff/requests/{service_request_id}                              (was GET requests/{id}.json)
+```
+
+Both require a staff JWT and are department-scoped.
+
+### Remaining differences from GeoReport v2
 
 | Area | Spec | Pinpoint 311 |
 |---|---|---|
-| API key | `api_key` required on POST | Not required and not checked. Rate limited per client instead. |
-| POST body | `application/x-www-form-urlencoded`, `attribute[code]=` | JSON body. Fields are top-level (`address`, `media_urls[]`, `custom_fields`). `address_string`, `address_id`, `media_url`, `zipcode`, `device_id` and `account_id` are ignored. |
-| POST `email` | optional | required |
-| POST response | array `[{service_request_id, token, service_notice, account_id}]` | single object (see above) |
-| `GET requests.json` | public, with `start_date`, `end_date`, `status`, `service_request_id` | Staff-only. The public list is `/public/requests`, which has no date filter. |
-| `requests/{id}.json`, `tokens/{id}.json` | arrays | Single objects. The token is the `service_request_id`. |
-| status values | `open`, `closed` | adds `in_progress` |
-| Fields not returned | `status_notes`, `agency_responsible`, `service_notice`, `expected_datetime`, `address_id`, `zipcode`, `media_url` | Only `tokens/{id}.json` returns `status_notes`. The public detail returns `assigned_department_name`. |
-| Formats | `.json` and `.xml` | `.json` only |
-| `jurisdiction_id` | accepted | not used |
-| Errors | `[{"code": 404, "description": "..."}]` | `{"detail": "..."}` (see [Errors](#errors)) |
+| `address_id` | accepted, returned | Ignored on POST, always `null` on GET (no address registry). |
+| `zipcode` | stored, returned | Folded into the address on POST; `null` on GET. |
+| `device_id` | stored | Accepted, not stored (data minimisation). |
+| `description` | optional | Required (10+ characters), as on the portal. |
+| `media_url` | one URL | Up to 3 on POST; GET returns the first. |
+| `status` | `open`, `closed` | Same on GeoReport v2 routes; the portal and staff routes still use `in_progress`. |
+| Tokens | async token flow | Creation is synchronous; the token is the `service_request_id`. |
+| `jurisdiction_id` | required for multi-jurisdiction endpoints | One jurisdiction per deployment; validated only when configured. |
+| Extensions | none | Service definitions carry `location_mode` and friends; discovery lists the public-tracker extensions. |
+
 
 ---
 
@@ -300,11 +368,13 @@ returns `429`.
 | Route | Limit |
 |---|---|
 | Every route without an explicit limit | `RATE_LIMIT_DEFAULT`, default **500/minute** |
-| `POST /open311/v2/requests.json` | 10/minute |
+| `POST /open311/v2/requests.json` | 60/minute per API key (configurable per key); anonymous (when allowed) 10/minute per client |
+| `POST /open311/v2/portal/requests` | 10/minute |
 | `POST /open311/v2/public/requests/{id}/comments` | 5/minute |
 | `POST /open311/v2/photos/screen` | 12/minute per client, plus 240/minute across the whole deployment |
 | `GET /gis/geocode`, `GET /gis/reverse-geocode` | 30/minute per client, plus 600/minute across the whole deployment |
-| `POST /system/translate/batch` | 60/minute, max 200 strings / 20,000 characters per call |
+| `GET /map-layers/{id}/public-outlines` | 120/minute per client, plus 1200/minute across the whole deployment |
+| `POST /system/translate/batch` | 60/minute per client; max 200 strings, 8,000 characters per call anonymous / 20,000 for staff; plus a daily and monthly character budget across the deployment (default 500,000 / 5,000,000), past which originals are returned with `budget_exhausted: true` |
 | `POST /auth/bootstrap`, `POST /auth/bootstrap/verify` | 5/minute, with lockout |
 | `POST /feedback/platform` | 30/minute, plus a daily cap |
 | `POST /integrations/webhook/{platform}/{token}` | 60/minute |
@@ -342,17 +412,18 @@ not echo the submitted value back.
 
 ## Route groups and required role
 
-Counts are per method and path, generated from `app.main:app` (221 routes in
+Counts are per method and path, generated from `app.main:app` (250 routes in
 the schema). The columns are the access classes described above.
 
-| Group | Routes | public | orchestrator-token | signed-in | staff | researcher | admin |
-|---|---:|---:|---:|---:|---:|---:|---:|
+| Group | Routes | public | orchestrator-token | signed-in | staff | researcher | admin | updater-token |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
 | Authentication | 10 | 8 |  | 2 |  |  |  |
 | Users | 9 |  |  |  | 3 |  | 6 |
 | Departments | 5 |  |  |  | 2 |  | 3 |
 | Services | 9 | 2 |  |  | 1 |  | 6 |
-| System | 66 | 7 |  |  | 6 |  | 53 |
-| Open311 | 23 | 11 |  |  | 12 |  |  |
+| System | 61 | 7 |  |  | 6 |  | 48 |
+| Upgrades | 12 |  |  |  |  |  | 12 |
+| Open311 | 39 | 22 |  |  | 12 |  | 5 |
 | GIS | 13 | 7 |  |  |  |  | 6 |
 | Roads | 8 | 1 |  |  | 4 |  | 3 |
 | Map Layers | 6 | 2 |  |  |  |  | 4 |
@@ -369,6 +440,7 @@ the schema). The columns are the access classes described above.
 | Platform Feedback | 2 | 1 |  |  | 1 |  |  |
 | Resident History | 2 |  |  |  | 2 |  |  |
 | Deployment Templates | 1 | 1 |  |  |  |  |  |
+| Updater (host, internal) | 6 |  |  |  |  |  |  | 6 |
 
 ---
 
@@ -384,6 +456,12 @@ The first line of each handler's docstring. The access column uses the classes a
 
 | Method | Path | Access | What it does |
 |---|---|---|---|
+| PUT | `/api/internal/updater/releases` | updater-token | Replace the stored release list with what the updater verified now. |
+| GET | `/api/internal/updater/requests` | updater-token | Approved requests whose time has come, oldest first. |
+| POST | `/api/internal/updater/requests/{request_id}/claim` | updater-token | Take an approved request; exactly one claim wins, the rest get `409`. |
+| POST | `/api/internal/updater/requests/{request_id}/heartbeat` | updater-token | The updater is still working on a long step: renew the lease. No step row, no audit entry; `409` if the request already finished or expired. |
+| POST | `/api/internal/updater/requests/{request_id}/outcome` | updater-token | Record how the run ended; sets the final status, audits it and emails admins. |
+| POST | `/api/internal/updater/requests/{request_id}/steps` | updater-token | Record one step the updater finished. |
 | GET | `/api/system/api-usage/cost-estimate` | staff | Get estimated costs based on API usage. |
 | GET | `/api/system/api-usage/daily` | staff | Get daily usage breakdown for charting. |
 | GET | `/api/system/api-usage/pricing` | staff | Get current pricing information for all tracked services. |
@@ -397,7 +475,7 @@ The first line of each handler's docstring. The access column uses the classes a
 | GET | `/api/audit/export` | admin | Export audit logs to CSV. |
 | GET | `/api/audit/logs` | admin | Query audit logs with filtering and pagination. |
 | GET | `/api/audit/stats` | admin | Get audit log statistics. |
-| GET | `/api/audit/verify-integrity` | admin | Verify the integrity of the audit log chain. |
+| GET | `/api/audit/verify-integrity` | admin | Verify the audit log hash chain from stored data and the nightly anchors. |
 
 #### Authentication
 
@@ -408,6 +486,7 @@ The first line of each handler's docstring. The access column uses the classes a
 | POST | `/api/auth/bootstrap/verify` | public | Validate the setup password and mint the initial admin session. |
 | GET | `/api/auth/bootstrap/{token}` | public | Use a bootstrap token to get a JWT for admin access. |
 | GET | `/api/auth/callback` | public | Auth0 callback endpoint. |
+| POST | `/api/auth/exchange` | public | Trade the single-use code the SSO callback redirected with for a session |
 | GET | `/api/auth/login` | public | Initiate Auth0 login flow. |
 | GET | `/api/auth/logout` | signed-in | Logout endpoint - logs the logout event and returns Auth0 logout URL. |
 | GET | `/api/auth/me` | signed-in | Get current authenticated user with departments |
@@ -510,27 +589,48 @@ The first line of each handler's docstring. The access column uses the classes a
 | GET | `/api/map-layers/` | public | List all active layers visible on resident portal (public) |
 | POST | `/api/map-layers/` | admin | Create a new map layer (admin only) |
 | GET | `/api/map-layers/all` | admin | List all layers including inactive (admin only) |
+| GET | `/api/map-layers/context` | staff | Active context layers for the staff map (staff). No features, no field values. |
+| POST | `/api/map-layers/polygon` | admin | Create a table-backed polygon layer from a finished upload (admin only) |
+| POST | `/api/map-layers/uploads` | admin | Start a chunked GeoJSON upload for a polygon layer (admin only) |
+| DELETE | `/api/map-layers/uploads/{upload_id}` | admin | Discard a staged layer upload (admin only) |
+| PUT | `/api/map-layers/uploads/{upload_id}/chunks/{index}` | admin | Append one part of a chunked layer upload (admin only) |
 | DELETE | `/api/map-layers/{layer_id}` | admin | Delete a map layer (admin only) |
 | GET | `/api/map-layers/{layer_id}` | public | Get a layer by ID. |
 | PUT | `/api/map-layers/{layer_id}` | admin | Update a map layer (admin only) |
+| POST | `/api/map-layers/{layer_id}/backfill` | admin | Record this layer's context on existing reports that lack it (admin only) |
+| GET | `/api/map-layers/{layer_id}/features` | staff | Simplified outlines of a context layer inside a map viewport (staff). |
+| POST | `/api/map-layers/{layer_id}/features` | admin | Replace a polygon layer's features from a finished upload (admin only). |
+| GET | `/api/map-layers/{layer_id}/features/requests` | staff | Reports that fell inside one feature of a context layer (staff, own departments). |
+| GET | `/api/map-layers/{layer_id}/public-outlines` | public | Shapes of a resident-visible polygon layer inside a map viewport (public). |
 
 #### Open311
 
 | Method | Path | Access | What it does |
 |---|---|---|---|
+| GET | `/api/open311/v2/admin/keys` | admin | List Open311 API keys: prefix and metadata, never the key (admin). |
+| POST | `/api/open311/v2/admin/keys` | admin | Issue an Open311 API key. The plaintext is in this response and nowhere else (admin). |
+| POST | `/api/open311/v2/admin/keys/{key_id}/revoke` | admin | Revoke an Open311 API key. Takes effect on the next request (admin). |
+| GET | `/api/open311/v2/admin/settings` | admin | The Open311 switches (admin). |
+| PUT | `/api/open311/v2/admin/settings` | admin | Change the Open311 switches; each change is audited (admin). |
 | GET | `/api/open311/v2/discovery.json` | public | Open311 v2 Discovery endpoint — API metadata and capability advertisement. |
+| GET | `/api/open311/v2/discovery.xml` | public | Open311 v2 Discovery endpoint, XML. |
 | POST | `/api/open311/v2/photos/screen` | public | Moderate and blur one photo now, and hand back a handle for it. |
+| POST | `/api/open311/v2/portal/requests` | public | File a report from the town's resident portal (first-party, browser only). |
 | GET | `/api/open311/v2/public/requests` | public | Public endpoint - List all requests WITHOUT personal information (cached) |
 | GET | `/api/open311/v2/public/requests/{request_id}` | public | Get full public request details including media - for detail view |
 | GET | `/api/open311/v2/public/requests/{request_id}/audit-log` | public | Get public audit log for a request - shows status changes only, no internal details. |
 | GET | `/api/open311/v2/public/requests/{request_id}/comments` | public | Get external/public comments for a request - no auth required. |
 | POST | `/api/open311/v2/public/requests/{request_id}/comments` | public | Add a public comment to a request - no auth required, always external visibility |
-| GET | `/api/open311/v2/requests.json` | staff | Open311 v2 compatible - List service requests (staff only) |
-| POST | `/api/open311/v2/requests.json` | public | Open311 v2 compatible - Create a new service request (public) |
+| GET | `/api/open311/v2/public/requests/{request_id}/media/{index}` | public | One published photo of a report, as an image (public). |
+| GET | `/api/open311/v2/requests.json` | public | GeoReport v2 GET Service Requests (public, no PII). |
+| POST | `/api/open311/v2/requests.json` | public | GeoReport v2 POST Service Request (third-party clients; api_key required). |
+| GET | `/api/open311/v2/requests.xml` | public | GeoReport v2 GET Service Requests (public, no PII). |
+| POST | `/api/open311/v2/requests.xml` | public | GeoReport v2 POST Service Request (third-party clients; api_key required). |
 | GET | `/api/open311/v2/requests/asset/{asset_id}/related` | staff | Get all requests that matched to the same asset (staff, own departments) |
 | POST | `/api/open311/v2/requests/manual` | staff | Create a request from manual intake (phone, walk-in, email, other) — staff only. |
 | DELETE | `/api/open311/v2/requests/{request_id}` | staff | Soft delete a service request with justification (staff/admin, own departments) |
-| GET | `/api/open311/v2/requests/{request_id}.json` | staff | Get service request details (staff only, own departments) |
+| GET | `/api/open311/v2/requests/{request_id}.json` | public | GeoReport v2 GET Service Request: a one-element array (public, no PII). |
+| GET | `/api/open311/v2/requests/{request_id}.xml` | public | GeoReport v2 GET Service Request: a one-element array (public, no PII). |
 | POST | `/api/open311/v2/requests/{request_id}/accept-ai-priority` | staff | Accept AI-suggested priority score (staff, own departments) |
 | GET | `/api/open311/v2/requests/{request_id}/audit-log` | staff | Get audit log for a request (staff only - full history) |
 | GET | `/api/open311/v2/requests/{request_id}/audit-log/verify` | staff | Verify the tamper-evidence of a request's audit trail. |
@@ -539,8 +639,13 @@ The first line of each handler's docstring. The access column uses the classes a
 | POST | `/api/open311/v2/requests/{request_id}/restore` | staff | Restore a soft-deleted service request (staff/admin, own departments) |
 | PUT | `/api/open311/v2/requests/{request_id}/status` | staff | Update service request status (staff only, own departments) |
 | GET | `/api/open311/v2/services.json` | public | Open311 v2 compatible - List services |
+| GET | `/api/open311/v2/services.xml` | public | Open311 v2 compatible - List services, XML. |
 | GET | `/api/open311/v2/services/{service_code}.json` | public | Open311 v2 Service Definition endpoint. |
-| GET | `/api/open311/v2/tokens/{service_request_id}.json` | public | Open311 v2 Token Lookup endpoint. |
+| GET | `/api/open311/v2/services/{service_code}.xml` | public | Open311 v2 Service Definition endpoint, XML. |
+| GET | `/api/open311/v2/staff/requests` | staff | List service requests with staff fields (staff only, own departments). |
+| GET | `/api/open311/v2/staff/requests/{request_id}` | staff | Get service request details (staff only, own departments) |
+| GET | `/api/open311/v2/tokens/{service_request_id}.json` | public | Open311 v2 Token Lookup endpoint: `[{"service_request_id", "token"}]`. |
+| GET | `/api/open311/v2/tokens/{service_request_id}.xml` | public | Open311 v2 Token Lookup endpoint, XML. |
 
 #### Platform Feedback
 
@@ -642,7 +747,7 @@ The first line of each handler's docstring. The access column uses the classes a
 | GET | `/api/system/config` | public | Deployment-mode flags (public). The setup UI uses managed_mode to show |
 | GET | `/api/system/connectors/health` | admin | What each integration is actually doing, as opposed to whether its |
 | POST | `/api/system/connectors/{connector}/mute` | admin | "I know about this one." Stops the emails; leaves the badge alone. |
-| GET | `/api/system/current-version` | admin | Get current git version information (admin only). |
+| GET | `/api/system/current-version` | admin | The release this image was built as: stamped version and git SHA, and the image digests the updater reported (admin only). |
 | POST | `/api/system/disclaimer/acknowledge` | public | Log that a user has acknowledged the non-emergency disclaimer. |
 | POST | `/api/system/domain/configure` | admin | Point the town's own domain at this deployment, and make Caddy serve it. |
 | GET | `/api/system/domain/status` | admin | Get current domain configuration status |
@@ -656,8 +761,7 @@ The first line of each handler's docstring. The access column uses the classes a
 | GET | `/api/system/providers/status` | admin | Which provider each capability is on, and which providers are set up. |
 | POST | `/api/system/providers/{capability}/save` | admin | Select a provider for a capability and save its settings/secrets. |
 | POST | `/api/system/providers/{capability}/test` | admin | Live connectivity check for the currently-configured provider of a |
-| GET | `/api/system/releases` | admin | Fetch available releases from GitHub (admin only). |
-| GET | `/api/system/releases/{ref}/security` | admin | Fetch security verification status for a specific release/commit (admin only). |
+| GET | `/api/system/releases` | admin | Releases the host updater last reported, with signature, gate, attestation and schema-compatibility badges. The app never calls GitHub or GitLab (admin only). |
 | GET | `/api/system/retention/export` | admin | Export records in answer to a public-records request. |
 | GET | `/api/system/retention/export/fields` | admin | What a records custodian can choose to include, and what is sensitive. |
 | GET | `/api/system/retention/legal-hold` | admin | Get all requests currently under legal hold. |
@@ -665,7 +769,7 @@ The first line of each handler's docstring. The access column uses the classes a
 | POST | `/api/system/retention/policy` | admin | Update retention policy configuration (admin only). |
 | GET | `/api/system/retention/preview` | admin | What pressing "Run now" would actually do. |
 | POST | `/api/system/retention/run` | admin | Run retention enforcement now. |
-| POST | `/api/system/runbook/{action}` | admin | Execute emergency runbook actions (admin only). |
+| POST | `/api/system/runbook/{action}` | admin | Emergency runbook actions: `clear-cache`, `vacuum`, `restore` (admin only). `restart-*` answers `410`: restarts are `restart` upgrade requests run by the host updater. |
 | GET | `/api/system/secrets` | admin | Every secret this town has, and whether it is really there. |
 | POST | `/api/system/secrets` | admin | Create or update a secret (admin only) - values are encrypted at rest and stored in Secret Manager |
 | POST | `/api/system/secrets/migrate-encryption` | admin | Migrate existing plaintext secrets to encrypted format. |
@@ -679,16 +783,27 @@ The first line of each handler's docstring. The access column uses the classes a
 | POST | `/api/system/setup/state` | admin | "I am done here." Said by a person, because nothing else can say it. |
 | GET | `/api/system/statistics` | staff | Request counts by status and category, plus the ten newest requests. |
 | GET | `/api/system/statistics/redirected` | staff | How many residents were redirected instead of filing, and to whom. |
-| POST | `/api/system/switch-version` | admin | Production-grade version deployment with automatic rollback. |
 | GET | `/api/system/timezone` | admin | Which clock the console shows times on. |
 | POST | `/api/system/timezone` | admin | Set the town's IANA timezone (admin only). |
 | POST | `/api/system/translate/auto` | admin | Auto-translate an object (dictionary) to multiple languages (admin only). |
 | POST | `/api/system/translate/batch` | public | Batch translate multiple UI strings (public endpoint). |
+| GET | `/api/system/translate/budget` | admin | Today's and this month's translation spend against the budget (admin). |
+| PUT | `/api/system/translate/budget` | admin | Set the daily and monthly character budgets (admin only, audited). |
 | POST | `/api/system/translate/health` | admin | Check if Google Cloud Translation API key is configured (admin only) |
-| GET | `/api/system/translate/languages` | public | Get list of supported languages (public) |
+| GET | `/api/system/translate/languages` | public | Target languages the selected translation provider supports (public). |
 | POST | `/api/system/translate/suggest` | admin | Auto-translate text using LibreTranslate (admin only). |
 | GET | `/api/system/translation/catalog` | admin | Translation provider catalog (Google / Azure) + current selection. |
-| POST | `/api/system/update` | admin | Pull updates from GitHub (admin only). Code changes reload automatically. |
+| GET | `/api/system/updater-tokens` | admin | Updater tokens: prefix, label and use, never the token (admin). |
+| POST | `/api/system/updater-tokens` | admin | Mint an updater token; the plaintext is in this response only (admin). |
+| POST | `/api/system/updater-tokens/{token_id}/revoke` | admin | Revoke an updater token (admin). |
+| GET | `/api/system/upgrade-requests` | admin | Upgrade, rollback and restart requests, newest first, with whether the caller may approve or cancel each (admin). |
+| POST | `/api/system/upgrade-requests` | admin | File an upgrade (to a release the updater reported as verified and compatible), rollback or restart, with a reason and optional schedule. Upgrades and rollbacks need a second admin while two-person approval is on (admin). |
+| GET | `/api/system/upgrade-requests/{request_id}` | admin | One request and every step the updater reported for it (admin). |
+| POST | `/api/system/upgrade-requests/{request_id}/approve` | admin | Approve a pending request; must be a different admin while two-person approval is on (admin). |
+| POST | `/api/system/upgrade-requests/{request_id}/cancel` | admin | Cancel a request the updater has not claimed yet (admin). |
+| POST | `/api/system/upgrade-requests/{request_id}/fail` | admin | Mark a claimed or running request failed when its updater has stopped; a late report is then refused (admin). |
+| GET | `/api/system/upgrade-settings` | admin | Two-person approval and what the updater last reported (admin). |
+| PUT | `/api/system/upgrade-settings` | admin | Turn two-person approval on or off; audited (admin). |
 | POST | `/api/system/upload/image` | staff | Upload an image file (staff only). Returns the URL to access it. |
 
 #### Telemetry (orchestrator)
@@ -710,3 +825,4 @@ The first line of each handler's docstring. The access column uses the classes a
 | GET | `/api/users/{user_id}` | admin | Get user by ID (admin only) |
 | PUT | `/api/users/{user_id}` | admin | Update user (admin only) |
 | POST | `/api/users/{user_id}/reset-password-json` | admin | Reset user password via JSON body (admin only) |
+| POST | `/api/users/{user_id}/revoke-sessions` | admin | Sign a user out everywhere (admin only). |

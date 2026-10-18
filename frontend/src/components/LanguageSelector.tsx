@@ -2,17 +2,19 @@ import { useEffect, useRef, useState } from 'react';
 import { Globe, Check, ChevronDown, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useTranslation } from '../context/TranslationContext';
-import { LANGUAGES } from '../utils/languages';
+import { LANGUAGES, useSupportedLanguages } from '../utils/languages';
 
 export default function LanguageSelector() {
     const [isOpen, setIsOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const { language, setLanguage } = useTranslation();
+    // Only what the town's translation provider can actually translate into.
+    const offered = useSupportedLanguages(language);
 
     const currentLanguage = LANGUAGES.find(lang => lang.code === language) || LANGUAGES.find(l => l.code === 'en')!;
 
     // Filter languages based on search
-    const filteredLanguages = LANGUAGES.filter(lang =>
+    const filteredLanguages = offered.filter(lang =>
         lang.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         lang.nativeName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         lang.code.toLowerCase().includes(searchQuery.toLowerCase())
@@ -116,7 +118,7 @@ export default function LanguageSelector() {
                                     />
                                 </div>
                                 <div className="mt-2 text-xs text-white/40">
-                                    {filteredLanguages.length} of {LANGUAGES.length} languages
+                                    {filteredLanguages.length} of {offered.length} languages
                                 </div>
                             </div>
 

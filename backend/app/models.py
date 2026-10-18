@@ -3,6 +3,7 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
+from sqlalchemy.dialects.postgresql import JSONB
 from datetime import datetime, timezone
 from app.db.session import Base
 # encryption is imported lazily in hybrid properties to avoid circular imports
@@ -36,7 +37,11 @@ class User(Base):
     hashed_password = Column(String(255), nullable=True)  # Nullable for SSO users
     role = Column(String(20), default="staff")  # admin, staff, researcher
     is_active = Column(Boolean, default=True)
-    
+    # Session generation. Every token carries the value it was issued under;
+    # bumping it (sign-out, deactivation, role/department change, password
+    # reset) ends all of this account's sessions. See app/core/auth.py.
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
+
     # Auth0 SSO
     auth0_id = Column(String(255), unique=True, index=True)  # Auth0 user ID (sub claim)
     
@@ -420,6 +425,16 @@ class ServiceRequest(Base):
     
     # Matched asset from map layers (detected on submit)
     matched_asset = Column(JSON)  # { layer_name, asset_id, asset_type, properties, distance_meters }
+
+    # Which polygon features of the town's context layers (tax parcels, zones,
+    # districts) this report fell inside, captured at intake:
+    #   [{layer_id, layer_name, feature_id, feature_key, label, properties}]
+    # `properties` is the layer's staff allowlist ONLY, snapshotted then -- the
+    # GIS history. Re-uploading a layer does not rewrite what the parcel record
+    # said when the report came in. Staff-only: never on a public schema.
+    # JSONB on Postgres so "reports in this parcel" is an indexed containment
+    # query. See app/services/gis_layers.py.
+    gis_context = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     
     # Custom question responses from resident portal
     custom_fields = Column(JSON)  # { question_id: answer }
@@ -537,6 +552,14 @@ class AuditAnchor(Base):
                         default=lambda: datetime.now(timezone.utc))
     head_hash = Column(String(64))   # latest RequestAuditLog.entry_hash at anchor time
     entry_count = Column(Integer)    # number of hashed entries at anchor time
+    # The auth/admin audit chain (audit_logs) at the same moment. Verification
+    # checks each of these is still in the chain at the same position with
+    # the same count before it, so deleting the tail is detectable. Null on
+    # anchors written before the chain was anchored.
+    auth_head_id = Column(Integer)          # audit_logs.id of the head
+    auth_head_hash = Column(String(64))     # its entry_hash
+    auth_entry_count = Column(Integer)      # rows with id <= auth_head_id
+    auth_legacy_count = Column(Integer)     # of those, chain_version 1 rows
 
 
 def _canonical_request_audit(action, old_value, new_value, actor_type,
@@ -616,6 +639,13 @@ def _request_audit_hash_chain(session, flush_context, instances):
     if not pending:
         return
     pending.sort(key=lambda o: getattr(o, "_seq", 0))
+    # Serialise writers, as _auth_audit_hash_chain does: without the lock two
+    # transactions read the same last hash and both link to it, forking the
+    # chain so verification reports tampering that never happened.
+    if session.get_bind().dialect.name == "postgresql":
+        from sqlalchemy import text as _text
+        from app.core import audit_chain as _chain
+        session.execute(_text("SELECT pg_advisory_xact_lock(:k)"), {"k": _chain.REQUEST_CHAIN_LOCK_KEY})
     tbl = RequestAuditLog.__table__
     running = session.execute(
         select(tbl.c.entry_hash).order_by(tbl.c.id.desc()).limit(1)
@@ -625,6 +655,35 @@ def _request_audit_hash_chain(session, flush_context, instances):
             row.created_at = datetime.now(timezone.utc)
         row.previous_hash = running
         row.entry_hash = compute_request_audit_hash(row, running)
+        running = row.entry_hash
+
+
+
+@event.listens_for(_Session, "before_flush")
+def _auth_audit_hash_chain(session, flush_context, instances):
+    """Chain new audit_logs rows (chain version 2, see app/core/audit_chain).
+
+    Every ORM insert goes through here, including the few call sites that
+    build AuditLog directly instead of using AuditService. On Postgres a
+    transaction-scoped advisory lock is held from reading the previous hash
+    until commit, so two writers cannot both link to the same predecessor and
+    fork the chain; ids are drawn under the lock, so id order is chain order.
+    """
+    pending = [o for o in session.new if isinstance(o, AuditLog)]
+    if not pending:
+        return
+    from sqlalchemy import inspect as _inspect, text as _text
+    from app.core import audit_chain as _chain
+    # Insert order is the order the unit of work assigns ids in.
+    pending.sort(key=lambda o: _inspect(o).insert_order)
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(_text("SELECT pg_advisory_xact_lock(:k)"), {"k": _chain.CHAIN_LOCK_KEY})
+    tbl = AuditLog.__table__
+    running = session.execute(
+        select(tbl.c.entry_hash).order_by(tbl.c.id.desc()).limit(1)
+    ).scalar()
+    for row in pending:
+        _chain.seal(row, running)
         running = row.entry_hash
 
 
@@ -910,10 +969,68 @@ class MapLayer(Base):
     
     # Routing for polygons (redirect requests within polygon to third-party)
     routing_config = Column(JSON)  # { "message": "...", "contacts": [{ "name": "...", "phone": "...", "url": "..." }] }
-    
+
+    # Where the features live. "inline": in `geojson` above (point layers and
+    # the small hand-drawn routing polygons this table started with). "table":
+    # one row per feature in map_layer_features, with `geojson` left as an
+    # empty FeatureCollection -- tax parcels are tens of thousands of polygons,
+    # far too many to ship in one JSON column to every browser.
+    feature_storage = Column(String(10), nullable=False, default="inline", server_default="inline")
+    # Context layers (routing_mode == "context"). Which property identifies a
+    # feature (PARCEL_ID, PIN...), which one labels it, and which ones staff
+    # may see -- an allowlist chosen from `available_properties`, empty by
+    # default. Nothing outside the allowlist is ever copied onto a report.
+    feature_id_property = Column(String(100), nullable=True)
+    label_property = Column(String(100), nullable=True)
+    staff_properties = Column(JSON, nullable=True)
+    available_properties = Column(JSON, nullable=True)
+    feature_count = Column(Integer, nullable=True)
+    features_imported_at = Column(DateTime(timezone=True), nullable=True)
+
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+# "Reports in this parcel" is a containment query on gis_context
+# (`gis_context @> '[{"layer_id": 3, "feature_key": "12-4"}]'`); jsonb_path_ops
+# is the GIN opclass built for exactly @>. Declared here as well as in the
+# migration so create_all installs and the reconciler get it too.
+Index(
+    "ix_service_requests_gis_context",
+    ServiceRequest.gis_context,
+    postgresql_using="gin",
+    postgresql_ops={"gis_context": "jsonb_path_ops"},
+)
+
+
+class MapLayerFeature(Base):
+    """One polygon of a table-backed map layer (a tax parcel, a zone).
+
+    `geom` is stored repaired (ST_MakeValid) and as MultiPolygon, in WGS84,
+    with a GIST index: "which parcels contain this report" is one ST_Covers
+    probe per report. There is no second, simplified geometry: the staff map
+    asks for features inside its viewport at parcel zoom and the server
+    simplifies on the fly (ST_SimplifyPreserveTopology, capped per request),
+    which keeps imports half the size and leaves nothing to go stale.
+
+    `feature_key` is the stable identity across re-uploads -- the layer's ID
+    property (PARCEL_ID, PIN) when it has one, else a hash of the geometry --
+    and is what report history is keyed on. `id` changes on every re-upload.
+    """
+
+    __tablename__ = "map_layer_features"
+
+    id = Column(Integer, primary_key=True)
+    layer_id = Column(Integer, ForeignKey("map_layers.id", ondelete="CASCADE"), nullable=False)
+    feature_key = Column(String(200), nullable=True)
+    properties = Column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
+    geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=False), nullable=False)
+
+    __table_args__ = (
+        Index("ix_map_layer_features_layer_key", "layer_id", "feature_key"),
+        Index("ix_map_layer_features_geom", "geom", postgresql_using="gist"),
+    )
 
 
 class ResearchAccessLog(Base):
@@ -989,6 +1106,14 @@ class AuditLog(Base):
     # Tamper detection (hash of previous log entry for integrity chain)
     previous_hash = Column(String(64))  # SHA-256 of previous audit log
     entry_hash = Column(String(64))  # SHA-256 of this entry
+    # 1 = written before the chain could be verified (its hash covers a
+    # timestamp that was never stored); 2 = app/core/audit_chain. Existing
+    # rows take the server default; new rows are set to 2 when sealed.
+    chain_version = Column(Integer, nullable=False, server_default="1")
+    # Commitment to ip_address/user_agent, which retention deletes at 90 days.
+    # The salt is deleted with them; the digest stays in the chain.
+    context_salt = Column(String(32))
+    context_digest = Column(String(64))
     
     # Relationship
     user = relationship("User", backref="audit_logs")
@@ -1559,3 +1684,194 @@ class ScreenedPhoto(Base):
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class Open311ApiKey(Base):
+    """A key a third-party Open311 client presents as `api_key` on POST requests.json.
+
+    Only a SHA-256 hash of the key is stored. The plaintext is shown to the
+    administrator once, in the response that creates it, and is unrecoverable
+    afterwards: a lost key is revoked and replaced, never looked up. The first
+    eight characters (`key_prefix`) are kept for two reasons only -- an admin
+    telling keys apart in a list, and narrowing the lookup before the
+    constant-time hash comparison (see services/open311_keys.py).
+
+    Revocation is a timestamp, not a delete, so the audit trail and the
+    "which integrator filed this" note on each report keep pointing at a row.
+    """
+
+    __tablename__ = "open311_api_keys"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(200), nullable=False)            # who it is for, e.g. "SeeClickFix"
+    contact_email = Column(String(254), nullable=False)   # the integrator's contact, not a resident's
+    key_prefix = Column(String(16), nullable=False, index=True)
+    key_hash = Column(String(64), nullable=False, unique=True)
+    # Requests per minute for this key. NULL means the default in open311_keys.
+    rate_limit_per_minute = Column(Integer, nullable=True)
+    created_by = Column(String(100))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_by = Column(String(100), nullable=True)
+
+
+class Open311Settings(Base):
+    """How the public Open311 interface behaves. One row; absent means defaults.
+
+    Its own table rather than columns on system_settings so the Open311 switches
+    are read and audited in one place and no settings form elsewhere can save
+    over them by round-tripping a stale copy.
+    """
+
+    __tablename__ = "open311_settings"
+
+    id = Column(Integer, primary_key=True)
+    # OFF by default: POST requests.json needs a valid api_key. A town that
+    # wants the old open behaviour turns this on, and the change is audited.
+    allow_anonymous_submissions = Column(Boolean, nullable=False, default=False, server_default="false")
+    # When set, a jurisdiction_id sent by a client must equal it. NULL accepts
+    # any (or none), which is what a single-jurisdiction deployment needs.
+    jurisdiction_id = Column(String(100), nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_by = Column(String(100), nullable=True)
+
+
+# ---------------------------------------------------------------------------
+# Secure upgrades, Phase 3 (docs/design/secure-upgrades.md section 4).
+#
+# The app records requests; the host-side updater (updater/) is the only thing
+# that executes them. It polls /api/internal/updater/* over loopback with a
+# per-instance token, claims approved requests, reports each step and the
+# outcome, and publishes the release list it verified. Nothing here can pull
+# an image or restart a container.
+# ---------------------------------------------------------------------------
+
+
+class UpgradeRequest(Base):
+    """One upgrade, rollback or restart an admin asked the updater to run.
+
+    status:
+      pending_approval  waiting for a second admin (two-person approval on)
+      approved          ready for the updater; it claims it once scheduled_for passes
+      claimed           an updater took it (exactly one claim wins)
+      running           the first step has been reported
+      succeeded | failed | rolled_back | refused | needs_approval
+                        terminal outcomes reported by the updater; needs_approval
+                        means a destructive migration was held and the old
+                        version is still serving -- file a new request with
+                        allow_destructive to go ahead
+      cancelled         an admin cancelled it before it was claimed
+    """
+
+    __tablename__ = "upgrade_requests"
+
+    id = Column(Integer, primary_key=True)
+    action = Column(String(16), nullable=False)               # upgrade | rollback | restart
+    target_tag = Column(String(128), nullable=True)           # release tag; NULL for rollback/restart
+    reason = Column(Text, nullable=False)
+    requested_by = Column(String(100), nullable=False)
+    requested_by_id = Column(Integer, nullable=True)
+    requested_at = Column(DateTime(timezone=True), server_default=func.now())
+    scheduled_for = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(24), nullable=False, default="pending_approval", index=True)
+    approved_by = Column(String(100), nullable=True)
+    approved_by_id = Column(Integer, nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_by = Column(String(100), nullable=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=True)
+    # Server time of the last claim/step/outcome report: the lease clock. An
+    # in-flight request silent for longer than its lease becomes failed
+    # (services/upgrades.expire_stale).
+    last_report_at = Column(DateTime(timezone=True), nullable=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    # The updater's own outcome word (succeeded, rolled_back, migration_failed...)
+    # next to the coarser status, and its one-line summary.
+    outcome = Column(String(32), nullable=True)
+    outcome_summary = Column(Text, nullable=True)
+    # A destructive migration needs its own explicit, admin-confirmed yes.
+    allow_destructive = Column(Boolean, nullable=False, default=False, server_default="false")
+
+
+class UpgradeRequestStep(Base):
+    """One step the updater reported for a request (preflight, backup, ...)."""
+
+    __tablename__ = "upgrade_request_steps"
+
+    id = Column(Integer, primary_key=True)
+    request_id = Column(Integer, ForeignKey("upgrade_requests.id", ondelete="CASCADE"), nullable=False, index=True)
+    step = Column(String(64), nullable=False)
+    status = Column(String(24), nullable=False)
+    detail = Column(Text, nullable=True)
+    at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UpdaterToken(Base):
+    """The credential the host updater presents on /api/internal/updater/*.
+
+    Same storage rule as Open311ApiKey: only a SHA-256 hash and an 8-character
+    prefix are kept; the plaintext is shown once, at creation.
+    """
+
+    __tablename__ = "updater_tokens"
+
+    id = Column(Integer, primary_key=True)
+    label = Column(String(100), nullable=True)
+    token_prefix = Column(String(16), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True)
+    created_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_by = Column(String(100), nullable=True)
+
+
+class UpdaterRelease(Base):
+    """The release list the updater last reported (replaced on every report).
+
+    The app never calls GitHub or GitLab itself: what an admin can pick from is
+    exactly what the updater resolved and verified.
+    """
+
+    __tablename__ = "updater_releases"
+
+    id = Column(Integer, primary_key=True)
+    tag = Column(String(128), nullable=False, unique=True)
+    version = Column(String(64), nullable=True)
+    name = Column(String(200), nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    url = Column(String(500), nullable=True)
+    prerelease = Column(Boolean, nullable=False, default=False, server_default="false")
+    # NULL means "not checked" (the updater verifies the newest few only).
+    signature_verified = Column(Boolean, nullable=True)
+    gate_passed = Column(Boolean, nullable=True)
+    attested = Column(Boolean, nullable=True)
+    db_revision = Column(String(64), nullable=True)
+    min_db_revision = Column(String(64), nullable=True)
+    compatible_with_this_instance = Column(Boolean, nullable=True)
+    compatibility_detail = Column(Text, nullable=True)
+    backend_digest = Column(String(80), nullable=True)
+    frontend_digest = Column(String(80), nullable=True)
+    reported_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class UpdaterSettings(Base):
+    """Upgrade policy and what the updater last said. One row; absent = defaults.
+
+    Its own table, like Open311Settings, so no other settings form can save
+    over the approval switch by round-tripping a stale copy.
+    """
+
+    __tablename__ = "updater_settings"
+
+    id = Column(Integer, primary_key=True)
+    # ON by default: a request needs an admin other than the requester.
+    require_two_person_approval = Column(Boolean, nullable=False, default=True, server_default="true")
+    updater_last_seen_at = Column(DateTime(timezone=True), nullable=True)
+    updater_version = Column(String(32), nullable=True)
+    # What the updater says this instance runs: {version, backend, frontend}
+    # image references by digest, from its release.lock.
+    current_report = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_by = Column(String(100), nullable=True)

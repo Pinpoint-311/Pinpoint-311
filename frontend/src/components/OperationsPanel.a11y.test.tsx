@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 /**
  * Three ways this panel spoke only to people who could see it:
  *
- *   Restart All / Clear Cache / DB Vacuum reported their result in a card that
+ *   Clear Cache / DB Vacuum (and the old Restart All) reported their result in a card that
  *   slid in at the bottom of a long page and announced nothing at all, so
  *   "restarted everything" and "the restart failed" were the same experience.
  *
@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event';
  *   read your memory usage" and "your memory usage is nil" read identically.
  */
 
-let runbookResult: any = { action: 'restart-all', status: 'success', timestamp: '2026-08-18T00:00:00Z', details: {} };
+let runbookResult: any = { action: 'clear-cache', status: 'success', timestamp: '2026-08-18T00:00:00Z', details: {} };
 let runbookThrows = false;
 let healthPayload: any = null;
 let proactivePayload: any = null;
@@ -28,6 +28,8 @@ vi.mock('../services/api', () => {
         getHealthDashboard: async () => healthPayload,
         getConnectorHealth: async () => ({ connectors: [], needs_attention: [] }),
         getProactiveHealth: async () => proactivePayload,
+        // Restarts are host-updater requests now (OperationsPanel.restart.test.tsx).
+        getUpgradeRequests: async () => ({ requests: [], updater: { connected: true, last_seen_at: null, version: null, current: null, require_two_person_approval: true }, require_two_person_approval: true }),
         executeRunbook: async () => {
             if (runbookThrows) throw new Error('the server did not answer');
             return runbookResult;
@@ -78,7 +80,7 @@ const assertive = () => document.getElementById('aria-live-region-assertive')!.t
 
 beforeEach(() => {
     runbookThrows = false;
-    runbookResult = { action: 'restart-all', status: 'success', timestamp: '2026-08-18T00:00:00Z', details: {} };
+    runbookResult = { action: 'clear-cache', status: 'success', timestamp: '2026-08-18T00:00:00Z', details: {} };
     healthPayload = null;
     proactivePayload = null;
 });
@@ -89,9 +91,9 @@ describe('runbook results', () => {
         const user = userEvent.setup();
         mount();
 
-        await user.click(await screen.findByRole('button', { name: /restart all/i }));
+        await user.click(await screen.findByRole('button', { name: /clear cache/i }));
 
-        await waitFor(() => expect(polite()).toContain('Restart All Services finished successfully'));
+        await waitFor(() => expect(polite()).toContain('Clear Cache finished successfully'));
     });
 
     it('announces a failure assertively', async () => {

@@ -270,6 +270,34 @@ export default function PrintWorkOrder({
             </div>
         ` : '';
 
+        // Location context: the parcel / zone the report fell in, as recorded
+        // at intake with the layer's staff allowlist only. Already escaped by
+        // escapeDeep above (keys and values), so interpolated as-is.
+        const gisContext = (((request as any).gis_context || []) as Array<{
+            layer_name?: string; label?: string; feature_key?: string; properties?: Record<string, unknown>;
+        }>).filter(e => e && typeof e === 'object');
+        const contextValue = (v: unknown) => (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v));
+        const contextHtml = gisContext.length ? `
+            <div class="section asset context">
+                <h3>${icons.location} Location Context</h3>
+                ${gisContext.map(e => {
+                    const props = Object.entries(e.properties || {})
+                        .filter(([, v]) => v !== null && v !== undefined && v !== '');
+                    return `
+                    <div class="context-entry">
+                        <div class="asset-header">
+                            <div><strong>Layer:</strong> ${e.layer_name || ''}</div>
+                            <div><strong>${e.label && e.label !== e.feature_key ? 'Feature' : 'ID'}:</strong> ${e.label || e.feature_key || ''}</div>
+                        </div>
+                        ${props.length ? `
+                        <div class="grid asset-grid">
+                            ${props.map(([k, v]) => `<div><span class="prop-label">${formatPropertyLabel(k)}:</span> ${contextValue(v)}</div>`).join('')}
+                        </div>` : ''}
+                    </div>`;
+                }).join('')}
+            </div>
+        ` : '';
+
         // Build timeline HTML
         const timelineHtml = auditLog?.length ? `
             <div class="section timeline">
@@ -568,6 +596,15 @@ export default function PrintWorkOrder({
                         padding: 12px;
                         border-radius: 6px;
                         border-left: 4px solid #10b981;
+                    }
+                    .asset.context {
+                        background: #fffbeb;
+                        border-left-color: #f59e0b;
+                    }
+                    .context-entry + .context-entry {
+                        border-top: 1px solid rgba(245, 158, 11, 0.3);
+                        margin-top: 8px;
+                        padding-top: 8px;
                     }
                     .asset-header {
                         display: grid;
@@ -893,6 +930,7 @@ export default function PrintWorkOrder({
 
                 ${customFieldsHtml}
                 ${assetHtml}
+                ${contextHtml}
                 ${photosHtml}
                 ${aiHtml}
                 ${staffNotesHtml}

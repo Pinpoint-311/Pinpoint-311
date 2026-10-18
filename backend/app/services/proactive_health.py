@@ -349,18 +349,23 @@ async def _redaction_check() -> Dict[str, Any]:
 
     The dispatch now degrades to on-server detection rather than to nothing, so
     the harm is contained. But degraded is still not what the town selected: it
-    is paying for Azure and getting OpenCV, which finds fewer faces. That is
-    worth a warning rather than silence.
+    is paying for Azure and getting the on-server fallback, which finds fewer
+    faces. That is worth a warning rather than silence.
+
+    The on-server plate model is checked too: selected but missing or broken,
+    every photo is withheld (fail closed) -- safe, but not what anyone wants.
     """
     try:
         from app.services.image_redaction import (
-            _usable, effective_provider, resolve_provider,
+            _usable, effective_provider, face_fallback, plate_detector, resolve_provider,
         )
+
+        plate_warning = await _plate_model_check(plate_detector)
 
         selected = await resolve_provider()
         if not selected:
-            return _check("redaction", "Photo redaction", "ok", "off",
-                          "Photo redaction is switched off, as configured.")
+            return plate_warning or _check("redaction", "Photo redaction", "ok", "off",
+                                           "Photo redaction is switched off, as configured.")
 
         actual, degraded_from = await effective_provider(selected)
 
@@ -377,22 +382,61 @@ async def _redaction_check() -> Dict[str, Any]:
             )
 
         if degraded_from:
+            fallback = await face_fallback()
+            name = "YuNet" if fallback == "yunet" else "OpenCV"
             return _check(
                 "redaction", "Photo redaction", "warning", actual,
-                f"Blurring is running on this server because {degraded_from} has no "
-                f"usable credentials. Photos are still redacted, less accurately.",
+                f"Degraded: on-server fallback in use. {degraded_from} has no usable "
+                f"credentials, so faces are being blurred on this server ({name}). "
+                f"Photos are still redacted, less accurately.",
                 action=(
                     f"Fix the {degraded_from} credentials on the Photo Redaction card, "
                     f"or choose on-server detection so the page matches what is running."
                 ),
             )
 
+        if plate_warning:
+            return plate_warning
         return _check("redaction", "Photo redaction", "ok", actual,
                       f"Faces and plates are being blurred using {actual}.")
     except Exception:
         logger.debug("Redaction health probe failed", exc_info=True)
         return _check("redaction", "Photo redaction", "unknown", None,
                       "Could not determine which detector is redacting photos.")
+
+
+async def _plate_model_check(plate_detector) -> Optional[Dict[str, Any]]:
+    """Warn when an on-server plate detector is selected and cannot run."""
+    mode = await plate_detector()
+    if mode == "yolo":
+        from app.services import onnx_detectors
+
+        status = onnx_detectors.plate_holder.status()
+        if status["present"] and not status["error"]:
+            return None
+        problem = ("its model file is missing" if not status["present"]
+                   else f"its model failed to load ({status['error'][:120]})")
+        return _check(
+            "redaction", "Photo redaction", "warning", "plate-model-unavailable",
+            f"The on-server license plate detector is selected but {problem}. "
+            f"Photos are being held back for staff review until it works.",
+            action=(f"Put {status['file']} in the models directory "
+                    f"({onnx_detectors.models_dir()}) — see docs/PHOTO_REDACTION_MODELS.md — "
+                    f"or choose text recognition on the Photo Redaction card."),
+        )
+    if mode == "redactor":
+        from app.services.image_redaction import redactor_health
+
+        health = await redactor_health()
+        if health and health.get("status") == "ok":
+            return None
+        return _check(
+            "redaction", "Photo redaction", "warning", "redactor-unavailable",
+            "The experimental EgoBlur plate detector is selected but the redactor service "
+            "is unreachable or has no model files. Photos are being held back.",
+            action="See redactor/README.md, or choose the default plate detector.",
+        )
+    return None
 
 
 async def _cpu_check(window: float = 0.4) -> Dict[str, Any]:
@@ -476,6 +520,43 @@ async def _retention_check(db) -> Dict[str, Any]:
                       "Could not determine which retention schedule is in force.")
 
 
+async def _translation_budget_check() -> Dict[str, Any]:
+    """Is translation close to, or at, the town's spend budget?
+
+    Warning at 80% of the day's or the month's character budget, critical at
+    100%. At 100% residents are being served the source text instead of a
+    translation -- deliberately, so a scraper cannot run up the bill -- and the
+    admin is the one person who can decide whether that is right today. Read
+    from the shared counters in services/translation_budget.py.
+    """
+    try:
+        from app.services import translation_budget as tb
+
+        u = await tb.usage()
+        day, month = u["day"], u["month"]
+        # Whichever period is closer to its ceiling is the one to talk about.
+        worst = max((day, month), key=lambda v: (["ok", "warning", "critical"].index(tb.status_of(v)), v["percent"]))
+        status = tb.status_of(worst)
+        which = "today's" if worst is day else "this month's"
+        resets = "at midnight UTC" if worst is day else "on the 1st (UTC)"
+        message = (
+            f"Translation has used {worst['used']:,} of {which} {worst['limit']:,}-character "
+            f"budget ({worst['percent']:g}%)."
+        )
+        if status == "critical":
+            message += f" Residents see untranslated text until it resets {resets}."
+        return _check(
+            "translation_budget", "Translation budget", status, worst["percent"], message,
+            ("Raise the budget on Settings > Service Providers > Translation Provider if this use "
+             "is expected; if it is not, the traffic is worth investigating before it resets.")
+            if status != "ok" else "",
+        )
+    except Exception as e:
+        logger.warning(f"[proactive] translation budget check failed: {e}")
+        return _check("translation_budget", "Translation budget", "unknown", None,
+                      "Could not read translation usage.")
+
+
 # Every key `collect_checks` can emit. Named here so the mute route can refuse
 # a key that is not a real check -- muting is a write, and without an allowlist
 # any admin request could insert arbitrary rows into the health table.
@@ -489,6 +570,7 @@ CHECK_KEYS = (
     "kms",
     "redaction",
     "retention",
+    "translation_budget",
 )
 
 
@@ -504,6 +586,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _kms_check(),
         await _redaction_check(),
         await _retention_check(db),
+        await _translation_budget_check(),
     ]
     return checks
 

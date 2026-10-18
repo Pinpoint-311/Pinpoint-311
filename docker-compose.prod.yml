@@ -1,20 +1,23 @@
-# Production override - uses prebuilt images from GHCR
-# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
+# Published images from GHCR, for a town that does not build its own.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# docker-compose.yml already runs images only (no build, no source mount, no
+# Docker socket); this file just changes the default image names to the ones
+# CI publishes and signs. It is a convenience for trying a release, not how a
+# production instance should be pinned: a moving tag such as :latest can change
+# under you. Pin by digest with a release.lock instead, which wins over these
+# defaults because it sets BACKEND_IMAGE / FRONTEND_IMAGE:
+#
+#   docker compose --env-file .env --env-file release.lock \
+#     -f docker-compose.yml up -d
+#
+# See docs/RELEASES.md for cutting a release, writing release.lock and
+# verifying a signature before you deploy it.
 services:
   backend:
-    image: ghcr.io/pinpoint-311/pinpoint-311-backend:latest
-    build: !reset null
-    volumes:
-      - .:/project # Keep project mount for config access
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-
+    image: ${BACKEND_IMAGE:-ghcr.io/pinpoint-311/pinpoint-311-backend:latest}
   worker:
-    image: ghcr.io/pinpoint-311/pinpoint-311-backend:latest
-    build: !reset null
-    volumes: !reset []
-
+    image: ${BACKEND_IMAGE:-ghcr.io/pinpoint-311/pinpoint-311-backend:latest}
   frontend:
-    image: ghcr.io/pinpoint-311/pinpoint-311-frontend:latest
-    build: !reset null
-    volumes: !reset []
+    image: ${FRONTEND_IMAGE:-ghcr.io/pinpoint-311/pinpoint-311-frontend:latest}

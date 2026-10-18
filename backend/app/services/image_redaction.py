@@ -525,6 +525,7 @@ class RedactionResult:
     plates: int = 0
     changed: bool = False
     skipped_reason: str = ""                     # why nothing happened, for the audit trail
+    detector: str = ""                           # set when a fallback, not the selection, looked
 
     @property
     def total(self) -> int:
@@ -565,6 +566,10 @@ class RedactionResult:
 WITHHOLD_REASONS = frozenset({
     "error", "provider-error", "no-detector", "blur-failed",
     "unreadable-image", "image-too-large",
+    # The on-server plate detector is selected and could not answer: model file
+    # missing, failed to load, or failed on this photo. Same reasoning as
+    # provider-error -- nobody looked for plates, so the photo is held.
+    "plate-detector-error",
 })
 
 # Above this, we decline to decode at all.
@@ -868,6 +873,163 @@ async def _flag(key: str, default: bool) -> bool:
     if raw is None or str(raw).strip() == "":
         return default
     return str(raw).strip().lower() in ("1", "true", "yes", "on", "enabled")
+
+
+# ---- on-server detectors -----------------------------------------------------
+#
+# Plates. The cloud path finds plates by reading text (`plate_like`), which
+# cannot see a plate without a digit -- "CRAZYGUY" and "KATYDID" were published
+# unblurred -- and blurs street signs and bus displays that do have one
+# ("243 ST", "KKA-6282" both score 0.92). A real plate detector
+# (onnx_detectors: YOLOv9, ~0.5 s a photo on CPU) runs here instead, in the
+# same synchronous pass and alongside the town's cloud face detector.
+#
+#   PLATE_DETECTOR   yolo | ocr | off       unset: yolo if the model file is
+#                                           present, else ocr
+#                    (redactor: EXPERIMENTAL, the opt-in EgoBlur sidecar --
+#                    practical only on a GPU; see redactor/README.md)
+#   PLATE_OCR_UNION  true/false, default false. With a plate model selected,
+#                    also run the OCR heuristic and blur either's boxes. Off by
+#                    default: on the evaluation set the model found every plate
+#                    the heuristic did, and the heuristic added false positives
+#                    on signs.
+#
+# Faces. The town's provider stays the face detector. When it cannot answer
+# (down, timeout, rejected credentials, quota), the on-server fallback is YuNet
+# (onnx_detectors; OpenCV's own face model, MIT) rather than the Haar cascades.
+#
+#   FACE_FALLBACK    yunet | opencv | off   unset: yunet if the model file is
+#                                           present, else opencv (Haar). off:
+#                                           no fallback -- the photo is withheld.
+#
+# Order: cloud provider -> YuNet -> withhold. A model that is configured but
+# missing or broken is never silently skipped: plates withhold the photo
+# ("plate-detector-error"), faces fail like any detector ("no-detector").
+
+PLATE_DETECTOR_KEY = "PLATE_DETECTOR"
+PLATE_MODEL_TIMEOUT_S = 15.0
+PLATE_OCR_UNION_KEY = "PLATE_OCR_UNION"
+FACE_FALLBACK_KEY = "FACE_FALLBACK"
+PLATE_DETECTORS = ("yolo", "ocr", "off", "redactor")
+FACE_FALLBACKS = ("yunet", "opencv", "off")
+_CHOICE_ALIASES = {
+    "onnx": "yolo", "model": "yolo", "text": "ocr", "egoblur": "redactor",
+    "haar": "opencv", "local": "opencv", "none": "off", "disabled": "off",
+}
+
+
+async def _choice(key: str, allowed: Sequence[str]) -> str:
+    try:
+        from app.services.secret_manager import get_secret
+        raw = ((await get_secret(key)) or "").strip().lower()
+    except Exception:
+        return ""
+    raw = _CHOICE_ALIASES.get(raw, raw)
+    return raw if raw in allowed else ""
+
+
+async def plate_detector() -> str:
+    """The plate detector in force: yolo | ocr | off | redactor."""
+    chosen = await _choice(PLATE_DETECTOR_KEY, PLATE_DETECTORS)
+    if chosen:
+        return chosen
+    from app.services import onnx_detectors
+    return "yolo" if onnx_detectors.plate_holder.present() else "ocr"
+
+
+async def face_fallback() -> str:
+    """What answers for faces when the town's provider cannot: yunet | opencv | off."""
+    chosen = await _choice(FACE_FALLBACK_KEY, FACE_FALLBACKS)
+    if chosen:
+        return chosen
+    from app.services import onnx_detectors
+    return "yunet" if onnx_detectors.face_holder.present() else "opencv"
+
+
+async def _model_plates(mode: str, raw: bytes, width: int, height: int) -> Optional[List[Box]]:
+    """Plate boxes from the selected plate model, or None if it could not look."""
+    try:
+        if mode == "redactor":
+            return await redactor_detect(raw, width, height, ("plate",))
+        from app.services import onnx_detectors
+        # Bounded: this is on the resident's request. ~0.5 s normally; three
+        # photos queue on one slot, so the ceiling is generous but finite.
+        found = await asyncio.wait_for(
+            asyncio.get_running_loop().run_in_executor(None, onnx_detectors.detect_plates, raw),
+            timeout=PLATE_MODEL_TIMEOUT_S)
+        return [Box(x0, y0, x1, y1, "plate", score) for x0, y0, x1, y1, score in found]
+    except Exception as exc:
+        from app.core.sanitize import sanitize_for_log
+        logger.warning("[Redaction] plate detector (%s) could not answer: %s",
+                       mode, sanitize_for_log(str(exc)))
+        return None
+
+
+# ---- EXPERIMENTAL: the EgoBlur sidecar (redactor/) ------------------------
+#
+# Opt-in, behind the `redactor` compose profile. EgoBlur Gen2 is a ~104M
+# parameter Faster R-CNN; a same-size proxy took ~24 s a photo on this class of
+# CPU, so it is only practical with a GPU. Fails closed like the ONNX model.
+
+DEFAULT_REDACTOR_URL = "http://redactor:8000"
+
+
+class RedactorUnavailable(RuntimeError):
+    """The redactor could not answer."""
+
+
+def redactor_url() -> str:
+    import os
+    return (os.environ.get("REDACTOR_URL") or DEFAULT_REDACTOR_URL).rstrip("/")
+
+
+def redactor_boxes(payload: Any, kinds: Sequence[str]) -> List[Box]:
+    """Parse the sidecar's /detect answer; a malformed one is an error, not []."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("detections"), list):
+        raise RedactorUnavailable("malformed-response")
+    boxes: List[Box] = []
+    for det in payload["detections"]:
+        try:
+            box = Box(float(det["x0"]), float(det["y0"]), float(det["x1"]), float(det["y1"]),
+                      str(det["kind"]), float(det.get("score", 1.0))).clamped()
+        except (KeyError, TypeError, ValueError):
+            raise RedactorUnavailable("malformed-response")
+        if box.kind in kinds and box.area > 0:
+            boxes.append(box)
+    return boxes
+
+
+async def redactor_detect(raw: bytes, width: int, height: int, kinds: Sequence[str],
+                          timeout: float = 30.0) -> List[Box]:
+    import httpx
+
+    probe, pw, ph = probe_bytes(raw, width, height)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=3.0)) as client:
+            resp = await client.post(f"{redactor_url()}/detect", params={"kinds": ",".join(kinds)},
+                                     headers={"Content-Type": "application/octet-stream"},
+                                     content=probe)
+    except Exception as exc:
+        raise RedactorUnavailable(f"unreachable: {type(exc).__name__}") from exc
+    if resp.status_code != 200:
+        raise RedactorUnavailable(f"http-{resp.status_code}")
+    try:
+        payload = resp.json()
+    except Exception:
+        raise RedactorUnavailable("malformed-response")
+    return rescaled(redactor_boxes(payload, kinds), pw, ph, width, height)
+
+
+async def redactor_health() -> Optional[Dict[str, Any]]:
+    """The sidecar's /health, or None. Never raises."""
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0)) as client:
+            resp = await client.get(f"{redactor_url()}/health")
+        body = resp.json() if resp.status_code == 200 else None
+        return body if isinstance(body, dict) else None
+    except Exception:
+        return None
 
 
 async def resolve_provider() -> Optional[str]:
@@ -1251,7 +1413,8 @@ def _cascade(name: str):
     return None if classifier.empty() else classifier
 
 
-def _detect_local_sync(raw: bytes, faces: bool, plates: bool) -> List[Box]:
+def _detect_local_sync(raw: bytes, faces: bool, plates: bool,
+                       face_engine: str = "haar") -> List[Box]:
     import cv2
     import numpy as np
 
@@ -1283,7 +1446,14 @@ def _detect_local_sync(raw: bytes, faces: bool, plates: bool) -> List[Box]:
             out.append(Box(x / small_w, y / small_h,
                            (x + w) / small_w, (y + h) / small_h, kind, confidence).clamped())
 
-    if faces:
+    if faces and face_engine == "yunet":
+        # YuNet (onnx_detectors) instead of the cascades. It raises if the
+        # model is missing or fails, which detect() turns into "could not
+        # answer" -- the photo is withheld, never passed as face-free.
+        from app.services import onnx_detectors
+        for x0, y0, x1, y1, score in onnx_detectors.detect_faces(raw):
+            out.append(Box(x0, y0, x1, y1, "face", score).clamped())
+    elif faces:
         # Frontal first, then profile, and merge_boxes collapses the overlap for
         # a three-quarter view that both happen to catch.
         run(_cascade("haarcascade_frontalface_default.xml"), "face", (24, 24), 0.6)
@@ -1313,8 +1483,15 @@ async def _local_detect(raw: bytes, width: int, height: int,
                         faces: bool, plates: bool) -> List[Box]:
     if not (faces or plates):
         return []
+    # YuNet when the town has it (FACE_FALLBACK=yunet, the default once its
+    # model file is present); the Haar cascades only when it chose opencv or
+    # has no YuNet model.
+    engine = "yunet" if faces and await face_fallback() in ("yunet", "off") else "haar"
+    if engine == "yunet" and await face_fallback() == "off":
+        from app.services import onnx_detectors
+        engine = "yunet" if onnx_detectors.face_holder.present() else "haar"
     return await asyncio.get_event_loop().run_in_executor(
-        None, _detect_local_sync, raw, faces, plates)
+        None, _detect_local_sync, raw, faces, plates, engine)
 
 
 # --------------------------------------------------------------------------
@@ -1420,42 +1597,76 @@ async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> 
         return RedactionResult(media, skipped_reason=refusal)
     raw, width, height = upright(raw, width, height)
 
+    # Plates: a plate model when the town has one (onnx_detectors), the OCR
+    # heuristic otherwise -- or both, with PLATE_OCR_UNION. The model runs
+    # alongside the provider's face call, not after it.
+    mode = await plate_detector() if plates else "off"
+    model_plates = mode in ("yolo", "redactor")
+    text_plates = plates and (mode == "ocr" or (
+        model_plates and await _flag(PLATE_OCR_UNION_KEY, False)))
+    plate_task = (asyncio.ensure_future(_model_plates(mode, raw, width, height))
+                  if model_plates else None)
+
+    async def _done(result: RedactionResult) -> RedactionResult:
+        if plate_task is not None and not plate_task.done():
+            plate_task.cancel()
+        return result
+
+    selected = provider
     provider, degraded_from = await effective_provider(provider)
+    fallback = await face_fallback() if faces else ""
+    if degraded_from and degraded_from != provider and fallback == "off":
+        # The town chose no on-server face fallback: hold the photo for staff.
+        return await _done(RedactionResult(media, skipped_reason="no-detector"))
     if degraded_from == provider:
         # Nothing can blur. Keep the photo -- dropping it helps nobody -- but do
         # not let this be reported as "we looked and there was no one there".
         cleaned = strip_exif(raw)
         payload = _encode(cleaned, "image/jpeg") if cleaned is not None else media
-        return RedactionResult(payload, changed=False, skipped_reason="no-detector")
+        return await _done(RedactionResult(payload, changed=False, skipped_reason="no-detector"))
 
-    found = await detect(provider, raw, width, height, faces, plates)
+    found = (await detect(provider, raw, width, height, faces, text_plates)
+             if (faces or text_plates) else [])
+    # Which detector looked, when it was not the town's selection: the audit
+    # trail has to show photos blurred by a fallback.
+    fallback_name = f"{'yunet' if fallback == 'yunet' else 'opencv'}-fallback"
+    ran = fallback_name if (degraded_from and selected != "local") else ""
 
     # The detector failed *during* the call, which `effective_provider` above
     # cannot predict -- it can only see whether credentials are present. Try the
     # on-server detector before giving up, the same way a missing credential
-    # would have.
-    if found is None and provider != "local" and await _usable("local"):
+    # would have -- unless the town switched the fallback off.
+    if found is None and provider != "local" and fallback != "off" and await _usable("local"):
         logger.warning(
             "[Redaction] %s failed on this photo; retrying with on-server "
             "detection so it is still blurred. If this repeats, the credentials "
             "are being rejected -- check the Photo Redaction card.", provider,
         )
-        found = await detect("local", raw, width, height, faces, plates)
+        found = await detect("local", raw, width, height, faces, text_plates)
+        ran = fallback_name
 
     if found is None:
         # Nothing could look at it. Keep the photo, but do not let this be
         # recorded as "we looked and there was nobody there".
         cleaned = strip_exif(raw)
         payload = _encode(cleaned, "image/jpeg") if cleaned is not None else media
-        return RedactionResult(payload, changed=False, skipped_reason="no-detector")
+        return await _done(RedactionResult(payload, changed=False, skipped_reason="no-detector"))
+
+    if plate_task is not None:
+        plate_boxes = await plate_task
+        if plate_boxes is None:
+            # Selected, and could not look. Fail closed: nobody checked this
+            # photo for plates, so it is held like any detector failure.
+            return RedactionResult(media, skipped_reason="plate-detector-error")
+        found = list(found) + plate_boxes
 
     if not found:
         # No faces, but the EXIF is still worth removing -- see strip_exif.
         cleaned = strip_exif(raw)
         if cleaned is not None:
             return RedactionResult(_encode(cleaned, "image/jpeg"), changed=False,
-                                   skipped_reason="no-detections")
-        return RedactionResult(media, skipped_reason="no-detections")
+                                   skipped_reason="no-detections", detector=ran)
+        return RedactionResult(media, skipped_reason="no-detections", detector=ran)
 
     padded = [b.padded(FACE_PADDING if b.kind == "face" else PLATE_PADDING) for b in found]
     boxes = merge_boxes(padded)
@@ -1469,6 +1680,7 @@ async def redact_image(media: str, provider: str, faces: bool, plates: bool) -> 
         faces=sum(1 for b in boxes if b.kind == "face"),
         plates=sum(1 for b in boxes if b.kind == "plate"),
         changed=True,
+        detector=ran,
     )
 
 
@@ -1513,6 +1725,11 @@ async def redact_media(media: Optional[List[str]]) -> BatchResult:
         out.plates += result.plates
         if not result.changed and result.skipped_reason not in ("", "no-detections"):
             out.skipped.append(result.skipped_reason)
+        if result.detector:
+            # Blurred by a fallback, not by the town's selection: say so.
+            out.skipped.append(f"detector:{result.detector}")
+            logger.warning("[Redaction] photo %d redacted by %s, not the selected "
+                           "provider", index, result.detector)
 
     # Anything past MAX_IMAGES was never a candidate; carry it through unchanged
     # so this function cannot silently drop a photo.
@@ -1551,9 +1768,20 @@ async def _google_screen_and_redact_one(media: str, faces: bool, plates: bool):
     # the smaller copy; the detections are scaled back up before the blur.
     probe, probe_w, probe_h = probe_bytes(raw, width, height)
 
+    # The plate model (if selected) runs alongside the Vision call; Vision's
+    # TEXT_DETECTION is only requested when the OCR heuristic is in use.
+    mode = await plate_detector() if plates else "off"
+    model_plates = mode in ("yolo", "redactor")
+    text_plates = plates and (mode == "ocr" or (
+        model_plates and await _flag(PLATE_OCR_UNION_KEY, False)))
+    plate_task = (asyncio.ensure_future(_model_plates(mode, raw, width, height))
+                  if model_plates else None)
+
     try:
-        payload = await vision_annotate(probe, google_features(faces, plates, safesearch=True))
+        payload = await vision_annotate(probe, google_features(faces, text_plates, safesearch=True))
     except Exception as exc:
+        if plate_task is not None:
+            plate_task.cancel()
         from app.core.sanitize import sanitize_for_log
         logger.info("[Redaction] vision unavailable: %s", sanitize_for_log(str(exc)))
         # Same flag as detect(): this combined moderation+redaction call is the
@@ -1561,16 +1789,36 @@ async def _google_screen_and_redact_one(media: str, faces: bool, plates: bool):
         # quota an administrator needs to hear about exactly once per window.
         from app.services import connector_health
         await connector_health.note_quota_failure("redaction", exc, provider="google")
-        return ModerationResult(), RedactionResult(media, skipped_reason="provider-error")
+        # Fall back the way the AWS/Azure path does (redact_image): a Vision
+        # failure mid-call used to withhold the photo outright, without trying
+        # the on-server detectors. SafeSearch is lost with the call; image
+        # moderation fails open on every provider (content_moderation
+        # .screen_images), so the verdict here is the same empty one.
+        fallback = await face_fallback() if faces else ""
+        if fallback == "off" or not await _usable("local"):
+            return ModerationResult(), RedactionResult(media, skipped_reason="provider-error")
+        logger.warning("[Redaction] google failed on this photo; using on-server detection.")
+        result = await redact_image(media, "local", faces, plates)
+        if result.skipped_reason in ("", "no-detections"):
+            result.detector = f"{'yunet' if fallback == 'yunet' else 'opencv'}-fallback"
+        return ModerationResult(), result
 
     verdict = safesearch_from_payload(payload)
-    found = rescaled(boxes_from_vision(payload, probe_w, probe_h, faces, plates),
+    found = rescaled(boxes_from_vision(payload, probe_w, probe_h, faces, text_plates),
                      probe_w, probe_h, width, height)
 
     # An image about to be rejected as explicit is not worth blurring; the
     # caller raises before anything is stored.
     if verdict.should_block:
+        if plate_task is not None:
+            plate_task.cancel()
         return verdict, RedactionResult(media, skipped_reason="blocked")
+
+    if plate_task is not None:
+        plate_boxes = await plate_task
+        if plate_boxes is None:
+            return verdict, RedactionResult(media, skipped_reason="plate-detector-error")
+        found = list(found) + plate_boxes
 
     if not found:
         cleaned = strip_exif(raw)

@@ -635,6 +635,7 @@ async def _import_external_record(db, integration, record):
         source=f"integration_{integration.platform}",
         status=record.status or "open",
         assigned_department_id=service.assigned_department_id,
+        gis_context=await _gis_context(db, lat, lng, service.service_code),
     )
     db.add(sr)
     await db.flush()
@@ -654,6 +655,12 @@ async def _import_external_record(db, integration, record):
         actor_name=integration.display_name,
     ))
     return sr
+
+
+async def _gis_context(db, lat, lng, service_code):
+    """The imported report's location context, as every intake path records it."""
+    from app.services import gis_layers
+    return await gis_layers.context_for_point(db, lat, lng, service_code)
 
 
 # A pull can surface many old changes at once -- the first poll after a

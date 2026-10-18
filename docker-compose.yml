@@ -89,19 +89,27 @@ services:
       - no-new-privileges:true
 
   backend:
-    build: ./backend
+    # A built, stamped image -- never a build context or mounted source. Which
+    # image is set per instance in its release.lock (an --env-file): a signed
+    # release pinned by digest, e.g.
+    #   BACKEND_IMAGE=ghcr.io/pinpoint-311/pinpoint-311-backend@sha256:...
+    # The default is what scripts/build-release.sh --latest tags locally.
+    # Contributors: docker-compose.dev.yml adds the build context, the source
+    # mount and --reload. See docs/RELEASES.md.
+    image: ${BACKEND_IMAGE:-pinpoint-311-backend:latest}
     restart: unless-stopped
-    # No --reload. This file is what the live deployment runs, and ./backend is
-    # bind-mounted, so --reload made the API restart on any file write: every
-    # deploy, and every stray editor save. Each restart drops in-flight requests
-    # and starts with a cold secret cache, which is most of why this instance had
-    # 13,433 Secret Manager reads. Backend code changes now need an explicit
-    # `docker compose restart backend`, which is what a deploy does anyway.
+    # No --reload: there is no source here to watch. docker-compose.dev.yml
+    # turns it back on for contributors, who mount ./backend.
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    # No source mount, no repository mount and no Docker socket. The code that
+    # runs is the code in the image, so what was signed is what serves; and a
+    # compromise of this internet-facing container is not a compromise of the
+    # host. Upgrades and restarts are done from the host (docs/RELEASES.md).
     volumes:
-      - ./backend:/app
-      - .:/project
-      - uploads_data:/project/uploads
+      # Resident photos. Used to sit at /project/uploads, nested under the
+      # repository mount; it is the same named volume at its own path now, and
+      # UPLOAD_DIR below tells the app where.
+      - uploads_data:/data/uploads
       # Pre-migration pg_dumps land here. Local-only and pruned to the newest
       # three: each is an unencrypted copy of the whole resident database.
       - migration_backups:/backups
@@ -112,7 +120,9 @@ services:
       # every provisioned tenancy along with it.
       - ${TENANT_CADDY_PATH:-/home/ubuntu/centralizedhosting/tenants/_caddy}:/etc/caddy/tenants
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Photo-redaction models (plate detector, face fallback), downloaded by
+      # the town -- never bundled. Read-only. See docs/PHOTO_REDACTION_MODELS.md.
+      - ${REDACTION_MODELS_DIR:-./models}:/models:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
@@ -139,7 +149,7 @@ services:
       # .env.example for the token list.
       CONTACT_FORM_URL: ${CONTACT_FORM_URL:-}
       CONTACT_FORM_EMBED: ${CONTACT_FORM_EMBED:-true}
-      PROJECT_ROOT: /project
+      UPLOAD_DIR: /data/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -170,15 +180,16 @@ services:
       - no-new-privileges:true
 
   worker:
-    build: ./backend
+    image: ${BACKEND_IMAGE:-pinpoint-311-backend:latest}
     restart: unless-stopped
     command: celery -A app.core.celery_app worker --beat --loglevel=info
     volumes:
-      - ./backend:/app
       # The worker shares the entrypoint, so it can be the container that wins
       # the advisory lock and performs the migration. It needs somewhere to put
       # the pre-migration dump, or it would refuse to start.
       - migration_backups:/backups
+      # Same models, so the health scan can see whether they are installed.
+      - ${REDACTION_MODELS_DIR:-./models}:/models:ro
     environment:
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
@@ -221,7 +232,7 @@ services:
       - no-new-privileges:true
 
   frontend:
-    build: ./frontend
+    image: ${FRONTEND_IMAGE:-pinpoint-311-frontend:latest}
     restart: unless-stopped
     ports:
       # Bind to loopback only -- public traffic reaches the frontend via Caddy,
@@ -280,6 +291,41 @@ services:
           memory: 512M
         reservations:
           memory: 64M
+    security_opt:
+      - no-new-privileges:true
+
+  # EXPERIMENTAL, opt-in: the EgoBlur plate/face detector sidecar. Off unless
+  # started with `--profile redactor`. EgoBlur is a ~104M-parameter model
+  # (~25 s a photo on this class of CPU), so it is practical only with a GPU;
+  # the default plate detector runs inside the backend instead. Internal only:
+  # no published ports. See redactor/README.md.
+  redactor:
+    profiles: [ redactor ]
+    image: ${REDACTOR_IMAGE:-pinpoint-311-redactor:egoblur}
+    build:
+      context: ./redactor
+      target: egoblur
+    restart: unless-stopped
+    volumes:
+      - ${REDACTOR_MODELS_DIR:-./models}:/models:ro
+    environment:
+      REDACTOR_THREADS: ${REDACTOR_THREADS:-2}
+      REDACTOR_TIMEOUT_S: ${REDACTOR_TIMEOUT_S:-60}
+    read_only: true
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     security_opt:
       - no-new-privileges:true
 

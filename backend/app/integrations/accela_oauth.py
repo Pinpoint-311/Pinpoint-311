@@ -195,6 +195,23 @@ def verify_state(state: str, max_age: int = STATE_TTL_SECONDS) -> Optional[Dict[
     return payload
 
 
+async def consume_state(db, payload: Dict[str, Any]) -> bool:
+    """Burn a verified state so it opens exactly one callback.
+
+    The signature and the ten-minute window say the state is ours and fresh,
+    not that it is unused: without this, a state captured from the redirect
+    (browser history, a proxy log) could be replayed inside that window with
+    a different authorization code. Recorded in the database, so the refusal
+    holds across workers and restarts. False means "already used".
+    """
+    from app.services import one_time
+
+    nonce = str((payload or {}).get("n") or "")
+    if not nonce:
+        return False
+    return await one_time.burn(db, "accela_state", f"{payload.get('iid')}:{nonce}")
+
+
 # ---------------------------------------------------------------------------
 # The flow
 # ---------------------------------------------------------------------------

@@ -80,6 +80,7 @@ import { bellAppearance, markKeyRead, readIdsFromStorage, readKey, unreadCount }
 import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 import MatchedAssetCard from '../components/MatchedAssetCard';
+import { LocationContextSection } from '../components/LocationContextCard';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
 
@@ -3822,6 +3823,13 @@ export default function StaffDashboard() {
                                                             onOpenReport={loadRequestDetail}
                                                         />
                                                     )}
+
+                                                    {/* Location context: the parcel / zone it fell in, recorded at intake */}
+                                                    <LocationContextSection
+                                                        entries={selectedRequest.gis_context}
+                                                        requestId={selectedRequest.service_request_id}
+                                                        onOpenReport={loadRequestDetail}
+                                                    />
                                                 </div>
                                             )
                                         }

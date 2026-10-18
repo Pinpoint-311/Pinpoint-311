@@ -18,6 +18,7 @@ STAFF = "staff"  # staff or admin
 RESEARCHER = "researcher"  # researcher or admin
 SIGNED_IN = "signed-in"  # any active account
 ORCHESTRATOR = "orchestrator-token"
+UPDATER = "updater-token"
 PUBLIC = "public"
 
 DESCRIPTIONS = {
@@ -26,6 +27,9 @@ DESCRIPTIONS = {
     RESEARCHER: "Researcher or admin JWT, and the Research Suite module must be enabled.",
     SIGNED_IN: "Any signed-in account (JWT).",
     ORCHESTRATOR: "Hosting-panel shared secret (X-Provisioning-Token / X-Panel-Token header); 404 when not configured.",
+    UPDATER: ("Host updater token only (Authorization: Bearer, hashed at rest, constant-time compare). "
+              "Internal: Caddy answers 404 for /api/internal/* and the backend refuses proxied requests; "
+              "the updater calls the backend's loopback port. 404 in managed mode."),
     PUBLIC: "Public, no authentication.",
 }
 
@@ -48,11 +52,15 @@ _VERIFIED_IN_HANDLER = {
     "verify_bootstrap": "Public; requires the bootstrap secret, rate limited with lockout.",
     "use_bootstrap_token": "Public; requires a one-time bootstrap token.",
     "redeem_onboarding_token": "Public; requires a single-use signed onboarding token.",
+    "exchange_login_code": "Public; requires the single-use, 60-second code the sign-in callback issued.",
     "exchange_break_glass": "Managed mode only; requires a panel-signed break-glass token.",
     "integration_webhook": "Public URL; requires the integration's webhook token in the path.",
+    "create_request_open311": "Requires a valid, unrevoked Open311 `api_key` in the body, unless an admin allowed anonymous Open311 submissions. Rate limited per key (anonymous: per client).",
+    "create_request": "Public, first-party only: the town's resident portal. Same-origin browser submissions (Fetch Metadata / Origin), 10/minute per client.",
     "accela_oauth_callback": "Public URL; requires a signed, time-limited OAuth state.",
     "delete_comment": "Any signed-in account; only the comment's author or an admin succeeds.",
     "logout": "Any signed-in account.",
+    "public_layer_outlines": "Public; only for a polygon layer an admin put on the resident portal (404 otherwise). Simplified geometry only, no properties or ids; capped per request, rate limited.",
 }
 
 
@@ -79,6 +87,8 @@ def route_access(route) -> str:
         return SIGNED_IN
     if deps & {"require_provisioning_token", "require_panel_token"}:
         return ORCHESTRATOR
+    if "require_updater_token" in deps:
+        return UPDATER
     return PUBLIC
 
 

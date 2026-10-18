@@ -6,6 +6,7 @@ import { useTranslation } from '../context/TranslationContext';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { BANDS, bandFor, bandLabel } from './priority';
 import { humanize } from '../utils/humanize';
+import { useContextLayerOutlines } from './useContextLayerOutlines';
 import {
     GeoJsonLayerHandle,
     MapRenderer,
@@ -58,6 +59,12 @@ interface StaffDashboardMapProps {
     townshipBoundary?: object | null;
     defaultCenter?: { lat: number; lng: number };
     defaultZoom?: number;
+    /**
+     * Resident map only: draw the polygon layers (parcels, zones) an admin put
+     * on the resident portal, as thin shape-only outlines from the public
+     * route. Point asset layers stay off either way; see ResidentPortal.
+     */
+    residentOutlines?: boolean;
     onRequestSelect: (requestId: string) => void;
 }
 
@@ -236,6 +243,7 @@ export default function StaffDashboardMap({
     townshipBoundary,
     defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 14,
+    residentOutlines = false,
     onRequestSelect,
 }: StaffDashboardMapProps) {
     const { language } = useTranslation();
@@ -264,6 +272,13 @@ export default function StaffDashboardMap({
     // UI state
     const [isLoading, setIsLoading] = useState(true);
     const [mapReady, setMapReady] = useState(false);
+    // Staff only: the resident portal renders this map without operationalFilters.
+    const {
+        layers: contextLayers, visible: contextVisible, setVisible: setContextVisible, status: contextStatus,
+    } = useContextLayerOutlines(
+        mapInstanceRef, popupRef, mapReady,
+        operationalFilters ? 'staff' : residentOutlines ? 'public' : 'off',
+    );
     const [showFilters, setShowFilters] = useState(true);
     // Close filters on mobile after mount
     useEffect(() => {
@@ -761,6 +776,7 @@ export default function StaffDashboardMap({
             newFilters[Number(key)] = value;
         });
         setLayerFilters(newFilters);
+        setContextVisible(Object.fromEntries(contextLayers.map(l => [l.id, value])));
     };
 
     if (!hasMapCredential(config)) {
@@ -1078,7 +1094,7 @@ export default function StaffDashboardMap({
                     )}
 
                     {/* GeoJSON Layers */}
-                    {operationalFilters && mapLayers.length > 0 && (
+                    {operationalFilters && (mapLayers.length > 0 || contextLayers.length > 0) && (
                         <FilterSection
                             id="map-filter-layers"
                             label="Map layers"
@@ -1121,6 +1137,31 @@ export default function StaffDashboardMap({
                                     />
                                     <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
                                         {layer.name}
+                                    </span>
+                                </label>
+                            ))}
+                            {/* Context layers (parcels, zones): outlines fetched per viewport */}
+                            {contextLayers.map(layer => (
+                                <label key={`ctx-${layer.id}`} className="flex items-center gap-3 cursor-pointer group">
+                                    <input
+                                        type="checkbox"
+                                        checked={contextVisible[layer.id] ?? true}
+                                        onChange={(e) => setContextVisible(prev => ({ ...prev, [layer.id]: e.target.checked }))}
+                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
+                                    />
+                                    <span
+                                        className="w-4 h-4 rounded border-2"
+                                        style={{ borderColor: layer.stroke_color }}
+                                        aria-hidden="true"
+                                    />
+                                    <span className="min-w-0 text-sm text-white/70 group-hover:text-white transition-colors">
+                                        <span className="block truncate">{layer.name}</span>
+                                        {contextVisible[layer.id] && contextStatus[layer.id] === 'zoom_in' && (
+                                            <span className="block text-[11px] text-white/45">Zoom in to see outlines</span>
+                                        )}
+                                        {contextVisible[layer.id] && contextStatus[layer.id] === 'error' && (
+                                            <span className="block text-[11px] text-amber-300">Outlines didn't load</span>
+                                        )}
                                     </span>
                                 </label>
                             ))}

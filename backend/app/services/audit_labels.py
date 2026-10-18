@@ -38,6 +38,7 @@ SKIP_PREFIXES = (
     "/api/auth/",              # sign-in and sign-out write their own events
     "/api/system/translate/",  # a rendering call, made per page view
     "/api/system/upload/",     # the request it belongs to records the upload
+    "/api/map-layers/uploads", # 8 MB parts of one file; the import records itself
     "/api/open311/",           # work on a request lives on that request's timeline
     "/api/research/",          # read-only analysis with its own access log
     "/api/telemetry",          # machine polling
@@ -68,6 +69,7 @@ _SUBJECTS = (
     ("/system/integrations", "an integration"),
     ("/gis/boundaries", "the town boundary"),
     ("/gis/layers", "a map layer"),
+    ("/map-layers", "a map layer"),
     ("/departments", "a department"),
     ("/services", "a service category"),
     ("/users", "a staff account"),

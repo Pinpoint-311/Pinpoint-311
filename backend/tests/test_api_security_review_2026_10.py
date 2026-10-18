@@ -314,4 +314,6 @@ async def test_discovery_key_service_is_not_the_staff_login():
     request = types.SimpleNamespace(base_url="https://town.example/")
     discovery = await open311.open311_discovery(request)
     assert "/api/auth/login" not in discovery["key_service"]
-    assert "No API key" in discovery["key_service"]
+    # Keys are issued by the town's administrators, and the text says so.
+    assert "api_key" in discovery["key_service"]
+    assert "administrator" in discovery["key_service"]

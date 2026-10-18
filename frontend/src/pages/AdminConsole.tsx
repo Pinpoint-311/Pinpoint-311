@@ -70,6 +70,8 @@ import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
+import Open311ApiKeys from '../components/Open311ApiKeys';
+import { ContextLayerSettingsModal, PolygonLayerUploadModal, layerPurposeLabel } from '../components/PolygonLayerManager';
 import AuditLogViewer from '../components/AuditLogViewer';
 import SignInProviderNote from '../components/SignInProviderNote';
 import { useSignInProvider } from '../hooks/useSignInProvider';
@@ -909,6 +911,8 @@ export default function AdminConsole() {
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
     const [showLayerModal, setShowLayerModal] = useState(false);
     const [editingLayer, setEditingLayer] = useState<MapLayer | null>(null);
+    const [polygonUploadOpen, setPolygonUploadOpen] = useState(false);
+    const [polygonSettingsLayer, setPolygonSettingsLayer] = useState<MapLayer | null>(null);
     const [newLayer, setNewLayer] = useState({
         name: '',
         description: '',
@@ -2111,11 +2115,14 @@ export default function AdminConsole() {
 
                         {/* Integrations Tab - Card-based Setup & Integrations */}
                         {currentTab === 'integration' && (
-                            <SetupIntegrationsPage
-                                secrets={secrets}
-                                onSaveSecret={handleSaveSecretDirect}
-                                onRefresh={loadTabData}
-                            />
+                            <div className="space-y-6">
+                                <SetupIntegrationsPage
+                                    secrets={secrets}
+                                    onSaveSecret={handleSaveSecretDirect}
+                                    onRefresh={loadTabData}
+                                />
+                                <Open311ApiKeys />
+                            </div>
                         )}
 
 
@@ -2606,9 +2613,10 @@ export default function AdminConsole() {
                                                     </div>
                                                     <div className="min-w-0">
                                                         <h2 className="text-sm font-semibold text-white">Custom Map Layers</h2>
-                                                        <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map</p>
+                                                        <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map, and polygon layers (parcels, zones) recorded on reports</p>
                                                     </div>
                                                 </div>
+                                                <div className="flex flex-wrap justify-end gap-2">
                                                 <Button
                                                     size="sm"
                                                     className="shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
@@ -2635,6 +2643,16 @@ export default function AdminConsole() {
                                                 >
                                                     Add Layer
                                                 </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="secondary"
+                                                    className="shrink-0"
+                                                    onClick={() => setPolygonUploadOpen(true)}
+                                                    leftIcon={<Plus className="w-4 h-4" />}
+                                                >
+                                                    Add Polygon Layer
+                                                </Button>
+                                                </div>
                                     </div>
                                     <div className="px-5 sm:px-6 py-5">
                                             {mapLayers.length === 0 ? (
@@ -2669,6 +2687,12 @@ export default function AdminConsole() {
                                                                         {layer.layer_type && (
                                                                             <Chip tone="neutral" value={layer.layer_type} />
                                                                         )}
+                                                                        {layerPurposeLabel(layer) && (
+                                                                            <Chip tone="info">{layerPurposeLabel(layer)}</Chip>
+                                                                        )}
+                                                                        {layer.feature_storage === 'table' && layer.feature_count != null && (
+                                                                            <span className="text-xs text-white/40">{layer.feature_count.toLocaleString()} polygons</span>
+                                                                        )}
                                                                         {!layer.is_active && (
                                                                             <Chip tone="danger">Disabled</Chip>
                                                                         )}
@@ -2700,6 +2724,11 @@ export default function AdminConsole() {
                                                                     </button>
                                                                     <button
                                                                         onClick={() => {
+                                                                            // Polygon layers built from an upload have their own settings.
+                                                                            if (layer.feature_storage === 'table') {
+                                                                                setPolygonSettingsLayer(layer);
+                                                                                return;
+                                                                            }
                                                                             setEditingLayer(layer);
                                                                             setNewLayer({
                                                                                 name: layer.name,
@@ -4943,6 +4972,27 @@ export default function AdminConsole() {
                     </div>
                 </form>
             </Modal>
+
+            {/* Polygon (context) layers: chunked upload and settings */}
+            <PolygonLayerUploadModal
+                isOpen={polygonUploadOpen}
+                onClose={() => setPolygonUploadOpen(false)}
+                onCreated={(layer) => {
+                    setPolygonUploadOpen(false);
+                    loadTabData();
+                    // Straight on to choosing what staff see: nothing is shown until then.
+                    setPolygonSettingsLayer(layer);
+                }}
+            />
+            <ContextLayerSettingsModal
+                layer={polygonSettingsLayer}
+                isOpen={!!polygonSettingsLayer}
+                onClose={() => setPolygonSettingsLayer(null)}
+                onSaved={(layer) => {
+                    setPolygonSettingsLayer(layer);
+                    loadTabData();
+                }}
+            />
 
             {/* Layer Upload/Edit Modal */}
             <Modal

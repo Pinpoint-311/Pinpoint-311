@@ -39,7 +39,7 @@ jobs:
         if: failure() && env.PROD_HOST != ''
         env:
           PROD_HOST: ${{ secrets.PROD_HOST }}
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@55dabf81b49d4120609345970c91507e2d734799 # v1.0.0
         with:
           host: ${{ secrets.PROD_HOST }}
           username: ubuntu
@@ -71,7 +71,7 @@ jobs:
 
       - name: Notify on Failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
             const hasSshSecrets = '${{ secrets.PROD_HOST }}' !== '';

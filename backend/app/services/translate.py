@@ -1,8 +1,16 @@
 """
-Translation service for multilingual notifications.
-Uses Google Cloud Translation API to translate email and SMS content.
+Translation for multilingual notifications (email and SMS).
+
+A thin wrapper over app.services.translation, which uses the town's configured
+provider, the database cache and the translation spend budget. This module used
+to POST to "/api/system/translate/batch" -- a relative URL, which httpx cannot
+send -- so every notification went out untranslated and the failure was only a
+warning in the worker log.
+
+Both functions keep their old signatures (target before source) because the
+notification tasks call them that way, and both always return text: the
+original when translation is off, unsupported for the language, or over budget.
 """
-import httpx
 import logging
 from typing import List
 
@@ -10,78 +18,26 @@ logger = logging.getLogger(__name__)
 
 
 async def translate_text(text: str, target_lang: str, source_lang: str = "en") -> str:
-    """
-    Translate text to target language using Google Cloud Translation API.
-    
-    Args:
-        text: Text to translate
-        target_lang: Target language code (e.g., 'es', 'hi', 'zh')
-        source_lang: Source language code (default: 'en')
-    
-    Returns:
-        Translated text, or original text if translation fails
-    """
-    # If target is English, no translation needed
-    if target_lang == "en" or not target_lang:
+    """Translate one string; the original text if translation is unavailable."""
+    if not text or not target_lang or target_lang == source_lang:
         return text
-    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "/api/system/translate/batch",
-                json={
-                    "texts": [text],
-                    "target_lang": target_lang
-                },
-                timeout=10.0
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("translations") and len(data["translations"]) > 0:
-                    return data["translations"][0]
-        
-        logger.warning(f"Translation failed for lang={target_lang}, using original text")
-        return text
-    except Exception as e:
-        logger.error(f"Translation error: {e}")
+        from app.services.translation import translate_text as service_translate
+        translated = await service_translate(text, source_lang, target_lang)
+        return translated or text
+    except Exception as e:  # noqa: BLE001 -- a notification must still go out
+        logger.warning("Notification translation failed (lang=%s): %s", target_lang, e)
         return text
 
 
 async def translate_batch(texts: List[str], target_lang: str, source_lang: str = "en") -> List[str]:
-    """
-    Translate multiple texts in a single API call for efficiency.
-    
-    Args:
-        texts: List of texts to translate
-        target_lang: Target language code
-        source_lang: Source language code (default: 'en')
-    
-    Returns:
-        List of translated texts (same order as input)
-    """
-    # If target is English, no translation needed
-    if target_lang == "en" or not target_lang:
+    """Translate several strings, same order as input; originals where unavailable."""
+    if not texts or not target_lang or target_lang == source_lang:
         return texts
-    
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                "/api/system/translate/batch",
-                json={
-                    "texts": texts,
-                    "target_lang": target_lang
-                },
-                timeout=15.0
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("translations"):
-                    return data["translations"]
-        
-        logger.warning(f"Batch translation failed for lang={target_lang}, using original texts")
-        return texts
-    except Exception as e:
-        logger.error(f"Batch translation error: {e}")
+        from app.services.translation import translate_batch as service_batch
+        results = await service_batch(texts, source_lang, target_lang)
+        return [results.get(t) or t for t in texts]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Notification translation failed (lang=%s): %s", target_lang, e)
         return texts

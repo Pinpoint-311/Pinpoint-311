@@ -12,6 +12,90 @@ export interface PlatformLanguage {
     nativeName: string;
 }
 
+import { useEffect, useState } from 'react';
+
+/**
+ * What one public translate request may carry (backend/app/api/system.py:
+ * MAX_TRANSLATE_TEXTS, MAX_TRANSLATE_TEXT_CHARS, MAX_TRANSLATE_TOTAL_CHARS_ANON),
+ * with a little headroom under the character cap.
+ */
+export const TRANSLATE_MAX_TEXTS = 100;
+export const TRANSLATE_MAX_TEXT_CHARS = 2_000;
+export const TRANSLATE_MAX_BATCH_CHARS = 7_500;
+
+/**
+ * Split strings into requests the public endpoint accepts. A string longer than
+ * the per-string limit is left out (it stays in the source language) rather
+ * than sent and getting the whole batch refused with a 413.
+ */
+export function chunkForTranslation(
+    texts: string[],
+    maxTexts = TRANSLATE_MAX_TEXTS,
+    maxChars = TRANSLATE_MAX_BATCH_CHARS,
+    maxText = TRANSLATE_MAX_TEXT_CHARS,
+): string[][] {
+    const chunks: string[][] = [];
+    let current: string[] = [];
+    let chars = 0;
+    for (const t of texts) {
+        if (t.length > maxText) continue;
+        if (current.length && (current.length >= maxTexts || chars + t.length > maxChars)) {
+            chunks.push(current);
+            current = [];
+            chars = 0;
+        }
+        current.push(t);
+        chars += t.length;
+    }
+    if (current.length) chunks.push(current);
+    return chunks;
+}
+
+/**
+ * Codes the town's translation provider supports, from
+ * GET /api/system/translate/languages -- the backend's list is the one source
+ * of truth for *which* languages; this file only supplies their names.
+ * Fetched once per page load. Null until it answers, and stays null if it
+ * fails, in which case callers offer the full list as before.
+ */
+let supportedPromise: Promise<string[] | null> | null = null;
+
+export function fetchSupportedLanguageCodes(): Promise<string[] | null> {
+    if (!supportedPromise) {
+        supportedPromise = fetch('/api/system/translate/languages')
+            .then(r => (r.ok ? r.json() : null))
+            .then(body => (body && Array.isArray(body.codes) ? (body.codes as string[]) : null))
+            .catch(() => null);
+    }
+    return supportedPromise;
+}
+
+/** Test hook: forget the cached answer. */
+export function resetSupportedLanguageCache(): void {
+    supportedPromise = null;
+}
+
+/**
+ * LANGUAGES narrowed to what the provider supports. English and `keep` (the
+ * language currently chosen) are always included, so a resident is never left
+ * with a picker that cannot show where they are.
+ */
+export function filterSupported(codes: string[] | null, keep?: string): PlatformLanguage[] {
+    if (!codes) return LANGUAGES;
+    const allowed = new Set([...codes, 'en', ...(keep ? [keep] : [])]);
+    return LANGUAGES.filter(l => allowed.has(l.code));
+}
+
+export function useSupportedLanguages(keep?: string): PlatformLanguage[] {
+    const [codes, setCodes] = useState<string[] | null>(null);
+    useEffect(() => {
+        let live = true;
+        fetchSupportedLanguageCodes().then(c => { if (live) setCodes(c); });
+        return () => { live = false; };
+    }, []);
+    return filterSupported(codes, keep);
+}
+
 /** "Spanish (Español)" for a code, or the code itself when unknown. */
 export function languageLabel(code?: string | null): string {
     if (!code) return 'English';
