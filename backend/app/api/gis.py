@@ -8,11 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
 import json
+import logging
 import httpx
 
 from app.db.session import get_db
 from app.models import User, SystemSettings
 from app.core.auth import get_current_admin
+logger = logging.getLogger(__name__)
+
 from app.services.geocoding import (
     get_geocoding_service, get_boundary_service
 )

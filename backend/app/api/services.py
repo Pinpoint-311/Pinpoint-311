@@ -29,34 +29,26 @@ async def list_services(
     )
     services = result.scalars().all()
     
+    # Serialised here, while every relationship is loaded, rather than handing
+    # ORM objects to FastAPI to read after the endpoint returns -- that read is
+    # outside the async context, so any attribute needing a load raised
+    # MissingGreenlet ("assigned_department") and the resident got a 500.
+    payload = [ServiceResponse.model_validate(service).model_dump() for service in services]
+
     # Get target language from header
     accept_language = request.headers.get('Accept-Language', 'en')
     target_lang = accept_language.split(',')[0].split('-')[0].strip()
-    
-    # If not English, translate the response (not the database objects)
+
+    # If not English, translate the response (not the database objects). It
+    # starts from the full payload: the hand-built dict this replaced left out
+    # display_order, location_mode and hidden_from_public, so a resident
+    # browsing in Spanish saw a hidden category as public and a location-
+    # required one as optional.
     if target_lang != 'en':
         from app.services.translation import translate_service_response
-        translated_services = []
-        for service in services:
-            service_dict = {
-                "id": service.id,
-                "service_code": service.service_code,
-                "service_name": service.service_name,
-                "description": service.description,
-                "icon": service.icon,
-                "is_active": service.is_active,
-                "sla_hours": service.sla_hours,
-                "routing_mode": service.routing_mode,
-                "routing_config": service.routing_config,
-                "assigned_department_id": service.assigned_department_id,
-                "departments": [{"id": d.id, "name": d.name, "description": d.description, "is_active": d.is_active, "routing_email": d.routing_email} for d in service.departments],
-                "assigned_department": {"id": service.assigned_department.id, "name": service.assigned_department.name, "description": service.assigned_department.description, "is_active": service.assigned_department.is_active, "routing_email": service.assigned_department.routing_email} if service.assigned_department else None
-            }
-            translated = await translate_service_response(service_dict, target_lang)
-            translated_services.append(translated)
-        return translated_services
-    
-    return services
+        return [await translate_service_response(item, target_lang) for item in payload]
+
+    return payload
 
 
 @router.get("/all", response_model=List[ServiceResponse])
@@ -71,7 +63,7 @@ async def list_all_services(
         .options(selectinload(ServiceDefinition.assigned_department))
         .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
-    return result.scalars().all()
+    return [ServiceResponse.model_validate(service).model_dump() for service in result.scalars().all()]
 
 
 # NOTE: /reorder MUST be defined BEFORE /{service_id} routes,

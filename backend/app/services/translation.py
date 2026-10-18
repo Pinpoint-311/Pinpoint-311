@@ -87,9 +87,13 @@ async def get_cached_translation(text: str, target_lang: str) -> Optional[str]:
                         Translation.source_text == text,
                         Translation.target_lang == target_lang
                     )
-                )
+                ).order_by(Translation.id).limit(1)
             )
-            cached = result.scalar_one_or_none()
+            # first(), not scalar_one_or_none(): the table has no unique key, so
+            # two concurrent batches can both cache the same string, and from
+            # then on every lookup raised "Multiple rows were found", was read
+            # as a miss, and paid the translation API again.
+            cached = result.scalars().first()
             
             if cached:
                 from app.core.sanitize import sanitize_for_log
@@ -115,9 +119,9 @@ async def save_translation_to_cache(text: str, target_lang: str, translated: str
                         Translation.source_text == text,
                         Translation.target_lang == target_lang
                     )
-                )
+                ).order_by(Translation.id).limit(1)
             )
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
             
             if not existing:
                 translation = Translation(

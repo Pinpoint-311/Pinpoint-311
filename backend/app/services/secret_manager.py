@@ -309,14 +309,8 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
                         api_calls=1
                     )
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None:
-                loop.create_task(_track())
-            else:
+            from app.core.background import spawn
+            if not spawn(_track()):
                 logger.debug(
                     "Secret Manager read not metered: no event loop in this thread. "
                     "This is the secret-write path; metering it would cross event loops."

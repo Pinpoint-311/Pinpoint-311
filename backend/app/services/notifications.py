@@ -10,6 +10,8 @@ from email.utils import formataddr
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 
+SMTP_TIMEOUT_SECONDS = 30
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,13 +152,16 @@ class EmailProvider:
                 msg.attach(MIMEText(body_text, "plain"))
             msg.attach(MIMEText(body_html, "html"))
             
+            # A timeout: smtplib's default is none, so a mail server that stopped
+            # answering held the task until Celery's 300 s hard limit killed
+            # the worker process (Sentry: TimeLimitExceeded, SIGKILL).
             if self.use_tls:
-                with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=SMTP_TIMEOUT_SECONDS) as server:
                     server.starttls()
                     server.login(self.smtp_user, self.smtp_password)
                     server.send_message(msg)
             else:
-                with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port) as server:
+                with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=SMTP_TIMEOUT_SECONDS) as server:
                     server.login(self.smtp_user, self.smtp_password)
                     server.send_message(msg)
             
@@ -484,12 +489,8 @@ class NotificationService:
         worth the deadlock risk.
         """
         try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        try:
-            loop.create_task(self._record_health(connector, success))
+            from app.core.background import spawn
+            spawn(self._record_health(connector, success))
         except Exception as exc:
             logger.debug("Could not schedule %s health: %s", connector, exc)
 
@@ -564,10 +565,8 @@ class NotificationService:
                         )
                 
                 # Run in new event loop if needed
-                try:
-                    asyncio.get_running_loop()  # Check if loop is running
-                    asyncio.create_task(_track())
-                except RuntimeError:
+                from app.core.background import spawn
+                if not spawn(_track()):
                     asyncio.run(_track())
             except Exception as e:
                 logger.debug(f"Failed to track email usage: {e}")

@@ -6,7 +6,12 @@ from app.services import email_layout as L
 from app.services.town_time import format_town
 from sqlalchemy import select
 import asyncio
+import logging
 import os
+
+# Module-level: most tasks define their own, and anchor_audit_chain did not,
+# so its first log line raised NameError and the nightly anchor never ran.
+logger = logging.getLogger(__name__)
 
 
 def run_async(coro):
@@ -31,6 +36,10 @@ def run_async(coro):
         try:
             return await coro
         finally:
+            # Let fire-and-forget writes (usage metering, connector health)
+            # finish rather than be cancelled when this loop closes.
+            from app.core.background import drain
+            await drain()
             await engine.dispose()
 
     return asyncio.run(_runner())

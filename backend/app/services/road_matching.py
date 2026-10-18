@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 # Street-type suffixes collapsed to a canonical short form. Both the clerk's
 # entry and the geocoder's output are mapped through this, so either spelling
