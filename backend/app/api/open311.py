@@ -1252,6 +1252,7 @@ async def _finalize_new_request(
     actor_type: str,
     actor_name: str,
     notify_resident: bool,
+    audit_extra: Optional[dict] = None,
 ):
     """Post-creation pipeline shared by resident and manual intake: audit log,
     AI triage, govtech push, resident confirmation, and department notification.
@@ -1277,6 +1278,7 @@ async def _finalize_new_request(
         new_value="open",
         actor_type=actor_type,
         actor_name=actor_name,
+        extra_data=audit_extra,
     )
     db.add(audit_entry)
     await db.commit()
@@ -1390,8 +1392,35 @@ async def get_request(
     #
     # Set on the ORM instance rather than built into a dict, so the response
     # model keeps reading every other field straight off the row.
-    request.external_links = await _linked_platforms(db, request.id)
+    await _decorate_detail(db, request)
     return request
+
+
+async def _decorate_detail(db: AsyncSession, request: ServiceRequest) -> None:
+    """Computed facts every staff detail response carries. Never raises.
+
+    Set on the ORM instance (not stored), on every route that returns the
+    detail schema -- the panel replaces its copy with the response after an
+    edit, so a fact only the GET set would vanish the moment staff saved.
+    """
+    request.external_links = await _linked_platforms(db, request.id)
+    request.sla_due_datetime = None
+    request.sla_state = None
+    try:
+        from datetime import timedelta
+        from app.services import sla
+        hours = (await db.execute(
+            select(ServiceDefinition.sla_hours).where(ServiceDefinition.service_code == request.service_code)
+        )).scalar_one_or_none()
+        if hours and hours > 0 and request.requested_datetime:
+            # A reopened request keeps its old closed_datetime; it is open again.
+            closed_at = request.closed_datetime if request.status == "closed" else None
+            state = sla.classify(request.requested_datetime, closed_at, hours)
+            if state != "no_sla":
+                request.sla_due_datetime = request.requested_datetime + timedelta(hours=hours)
+                request.sla_state = state
+    except Exception as exc:
+        logger.warning("Could not compute SLA for %s: %s", request.service_request_id, exc)
 
 
 async def _linked_platforms(db: AsyncSession, service_request_id: int) -> List[str]:
@@ -1451,10 +1480,15 @@ async def update_request_status(
     # unchanged; the important half is that this is the ONLY path that writes
     # `legal_hold`, and it is admin-gated. The unauthenticated public-comment
     # moderation path sets `flagged` alone and can no longer create a hold.
+    #
+    # One direction only now. A client that still posts the legacy `flagged`
+    # (an older admin console mid-rollout) is asking for a hold, so that maps to
+    # `legal_hold`. A hold posted as `legal_hold` no longer sets `flagged`: that
+    # column is the content screen's mark, and mirroring the hold into it made
+    # every held record look moderated -- and removing a hold cleared a real
+    # moderation flag.
     if "flagged" in update_dict and "legal_hold" not in update_dict:
-        update_dict["legal_hold"] = update_dict["flagged"]
-    elif "legal_hold" in update_dict and "flagged" not in update_dict:
-        update_dict["flagged"] = update_dict["legal_hold"]
+        update_dict["legal_hold"] = update_dict.pop("flagged")
     
     for field, value in update_dict.items():
         # A null used to be skipped for EVERY field, so "Department..." (i.e.
@@ -1584,6 +1618,7 @@ async def update_request_status(
     # Reload the relationship if department was set
     if request.assigned_department_id:
         await db.refresh(request, ['assigned_department'])
+    await _decorate_detail(db, request)
     return request
 
 
@@ -1620,6 +1655,7 @@ async def set_public_archived(
 
     was_archived = bool(request.public_archived)
     if was_archived == payload.public_archived:
+        await _decorate_detail(db, request)
         return request  # no change, no audit noise
 
     request.public_archived = payload.public_archived
@@ -1640,6 +1676,7 @@ async def set_public_archived(
     await db.refresh(request)
     if request.assigned_department_id:
         await db.refresh(request, ['assigned_department'])
+    await _decorate_detail(db, request)
     return request
 
 
@@ -1697,6 +1734,7 @@ async def review_withheld_photo(
     await db.refresh(sr)
     if sr.assigned_department_id:
         await db.refresh(sr, ['assigned_department'])
+    await _decorate_detail(db, sr)
     return sr
 
 
@@ -1706,11 +1744,14 @@ async def create_manual_intake(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Create a request from manual intake (phone, walk-in, or email) — staff only.
+    """Create a request from manual intake (phone, walk-in, email, other) — staff only.
 
     Runs the exact same pipeline as a resident submission (assignment, AI triage,
     govtech push, notifications). Resident contact fields are optional; the
-    caller is emailed a confirmation only if they actually provided an address.
+    caller is emailed a confirmation only if they actually provided an address
+    and the clerk left `send_confirmation` on. The clerk may also choose the
+    department, assignee and priority and leave an internal note; anything left
+    out is decided exactly as it would be for a resident submission.
     """
     # Validate service code
     result = await db.execute(
@@ -1736,25 +1777,6 @@ async def create_manual_intake(
             and hasattr(intake_data, "matched_asset"):
         intake_data.matched_asset = None
 
-    # Same redaction as a resident submission. A photo emailed in or attached
-    # by a clerk from a phone call is no less likely to have a bystander in it,
-    # and it goes to exactly the same public places.
-    #
-    # Redaction only, not the moderation screen: this path never image-moderated
-    # and adding it here would start rejecting a clerk's own submissions on a
-    # SafeSearch score, which is the wrong party to second-guess.
-    from app.services import image_redaction
-    intake_redacted = await image_redaction.redact_media(intake_data.media_urls)
-    intake_data.media_urls = intake_redacted.media
-
-    # A photo the redactor could not clear is held back here too, rather than
-    # published unblurred. The clerk is a member of staff and can release it
-    # from the request itself -- often immediately, since they are usually
-    # looking at the photo already.
-    intake_pending = [p for p in intake_redacted.withheld if p.get("media")][:3]
-    if intake_pending:
-        logger.warning("[MANUAL INTAKE] %d photo(s) held for staff review", len(intake_pending))
-
     # Same jurisdiction rules as a resident submission, but a staffer may
     # knowingly override them. A clerk on the phone can see that the caller is
     # describing a county road and still decide to log it -- because the caller
@@ -1762,6 +1784,11 @@ async def create_manual_intake(
     # faster than explaining. Refusing them would just push the work into a
     # notepad. Residents get no override; staff exercising judgement is the
     # whole reason the role exists.
+    #
+    # Checked before any photo handle is redeemed: handles are single-use, and
+    # the usual answer to this 409 is the same submission again with "Log it
+    # anyway" ticked. Spending the handles first would make that second press
+    # resend every photo inline for no reason.
     block = await road_blocking.evaluate(db, service, intake_data.lat, intake_data.long)
     if block.blocked and not intake_data.override_jurisdiction:
         await road_blocking.record(db, block, service, intake_data.lat, intake_data.long)
@@ -1771,18 +1798,37 @@ async def create_manual_intake(
                 "error": "redirected",
                 "jurisdiction": block.jurisdiction,
                 "message": block.message,
+                "message_is_default": block.message_is_default,
                 "contacts": block.contacts,
                 "road": block.road_name,
                 "can_override": True,
             },
         )
 
-    # Same auto-assignment/routing as a resident submission
+    # Staff choices are checked before anything is written, so a typo in a
+    # username is a 400 the clerk can fix rather than a request routed nowhere.
+    chosen_department_id, chosen_assignee = await _validate_intake_staff_options(db, intake_data)
+
+    # Photos: redeemed from pick-time handles where the browser screened them,
+    # redacted inline otherwise. See _redeem_intake_media.
+    intake_data.media_urls, intake_pending = await _redeem_intake_media(
+        db, intake_data.media_urls, flagged=intake_data.media_flagged or [])
+    if intake_pending:
+        logger.warning("[MANUAL INTAKE] %d photo(s) held for staff review", len(intake_pending))
+
+    # Same auto-assignment/routing as a resident submission, unless the clerk
+    # chose otherwise. Each choice overrides only its own half: picking a
+    # department leaves the category's staff routing alone, and vice versa.
     assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+    if chosen_department_id is not None:
+        assigned_department_id = chosen_department_id
+    if chosen_assignee:
+        assigned_to = chosen_assignee
 
     # A caller may not leave an email; keep a unique placeholder for the row but
     # remember whether a real one was given so we only email real addresses.
     has_email = bool(intake_data.email)
+    staff_notes = (intake_data.staff_notes or "").strip() or None
 
     service_request = ServiceRequest(
         service_request_id=generate_request_id(),
@@ -1797,6 +1843,7 @@ async def create_manual_intake(
         email=intake_data.email or f"manual-{uuid.uuid4().hex[:8]}@intake.local",
         phone=intake_data.phone,
         preferred_language=intake_data.preferred_language or "en",
+        contact_opt_out=not intake_data.send_confirmation,
         media_urls=intake_data.media_urls[:3] if intake_data.media_urls else [],
         media_pending_review=intake_pending,
         matched_asset=intake_data.matched_asset,
@@ -1805,11 +1852,38 @@ async def create_manual_intake(
         source=intake_data.source.value,
         assigned_department_id=assigned_department_id,
         assigned_to=assigned_to,
+        manual_priority_score=intake_data.manual_priority_score,
+        staff_notes=staff_notes,
     )
 
     db.add(service_request)
     await db.commit()
     await db.refresh(service_request)
+
+    # What the clerk chose at intake, on the "submitted" audit entry. Field
+    # names and routing values only: the internal note is recorded as present,
+    # never quoted, because the audit trail is read more widely than the note.
+    chosen_fields = [
+        name for name, chosen in (
+            ("assigned_department_id", chosen_department_id is not None),
+            ("assigned_to", bool(chosen_assignee)),
+            ("manual_priority_score", intake_data.manual_priority_score is not None),
+            ("staff_notes", staff_notes is not None),
+            ("send_confirmation", not intake_data.send_confirmation),
+        ) if chosen
+    ]
+    audit_extra = None
+    if chosen_fields:
+        options = {"fields": chosen_fields}
+        if chosen_department_id is not None:
+            options["assigned_department_id"] = chosen_department_id
+        if chosen_assignee:
+            options["assigned_to"] = chosen_assignee
+        if intake_data.manual_priority_score is not None:
+            options["manual_priority_score"] = intake_data.manual_priority_score
+        if not intake_data.send_confirmation:
+            options["send_confirmation"] = False
+        audit_extra = {"intake_options": options}
 
     # Attribute the submission to the staff member who took it down. The row is
     # already persisted, so a hiccup in the best-effort background pipeline
@@ -1820,7 +1894,11 @@ async def create_manual_intake(
         await _finalize_new_request(
             db, service_request, assigned_department_id,
             actor_type="staff", actor_name=current_user.username,
-            notify_resident=has_email,
+            # Only a real address, and only when the clerk left the
+            # confirmation on -- a caller who asked not to be contacted, or a
+            # duplicate logged for the record, should not get an email.
+            notify_resident=has_email and intake_data.send_confirmation,
+            audit_extra=audit_extra,
         )
     except Exception:
         logger.exception(
@@ -1829,6 +1907,101 @@ async def create_manual_intake(
         )
 
     return service_request
+
+
+async def _validate_intake_staff_options(db: AsyncSession, intake_data: ManualIntakeCreate):
+    """Check the department and assignee a clerk chose at intake.
+
+    Returns (department_id or None, username or None). Raises 400 for a
+    department that does not exist (or was retired) and for an assignee who is
+    not an active staff member or administrator -- a researcher account, a
+    deactivated user or a typo would otherwise receive a request nobody works.
+    """
+    department_id = intake_data.assigned_department_id
+    if department_id is not None:
+        dept = (await db.execute(
+            select(Department).where(Department.id == department_id)
+        )).scalar_one_or_none()
+        if dept is None or dept.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That department doesn't exist. Choose another one.",
+            )
+
+    username = (intake_data.assigned_to or "").strip() or None
+    if username:
+        user = (await db.execute(
+            select(User).where(User.username == username)
+        )).scalar_one_or_none()
+        if user is None or user.role not in ("staff", "admin") or user.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assign the request to an active staff member.",
+            )
+    return department_id, username
+
+
+async def _redeem_intake_media(db: AsyncSession, media, flagged=()):
+    """Photos for a staff-entered request: (media_urls, media_pending_review).
+
+    The staff form screens photos when they are picked, exactly like the
+    resident form, and sends a handle for each one the screen cleared. Those
+    are redeemed here without a second Vision call; anything else (a pasted
+    data URI, a photo the screen could not reach) is redacted inline.
+
+    Redaction only, never the moderation screen: this path has never
+    image-moderated, and starting now would reject a clerk's own submission on
+    a SafeSearch score, which is the wrong party to second-guess. That is why a
+    handle that came back *blocked* is not refused the way create_request
+    refuses it -- it holds no bytes, so it is named alongside the stale ones
+    and the client resends that photo inline, where it is blurred like any
+    other. Redaction still applies to every photo either way: a photo emailed
+    in or attached from a phone call is no less likely to have a bystander in
+    it, and it goes to exactly the same public places.
+    """
+    from app.services import image_redaction, photo_handles
+
+    resolved = await photo_handles.resolve(db, media)
+    resend = list(resolved.stale) + list(resolved.blocked_handles)
+    if resend:
+        logger.info("[MANUAL INTAKE] %d photo handle(s) to resend inline", len(resend))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "stale_photo_handles",
+                "handles": resend,
+                "message": "The photos took too long to attach. Log the request again.",
+            },
+        )
+
+    redacted = await image_redaction.redact_media([value for _, value in resolved.inline])
+    # Rebuild the order the photos were attached in. redact_media's early
+    # returns leave `kept` empty while still returning every photo, so an empty
+    # `kept` with media present means "all of them, in order".
+    kept = redacted.kept or list(range(len(redacted.media)))
+    slots = dict(resolved.screened)
+    for out_index, src_index in enumerate(kept):
+        if src_index < len(resolved.inline) and out_index < len(redacted.media):
+            slots[resolved.inline[src_index][0]] = redacted.media[out_index]
+    ordered = [slots[i] for i in sorted(slots)]
+
+    # A photo the redactor could not clear is held back rather than published
+    # unblurred. The clerk is a member of staff and can release it from the
+    # request itself -- often immediately, since they are usually looking at it.
+    pending = [p for p in (list(resolved.withheld) + list(redacted.withheld))
+               if p.get("media")]
+
+    # Photos the content screen flagged at pick time. The clerk kept them, so
+    # they are not refused -- but they are not published either: redacted, then
+    # held for a staff decision like any photo the redactor could not clear.
+    # Without this a flagged photo went straight to the public map.
+    flagged = [f for f in (flagged or []) if f][:3]
+    if flagged:
+        held = await image_redaction.redact_media(flagged)
+        for item in (held.media or []):
+            pending.append({"media": item, "reason": "content-screen"})
+        pending.extend(p for p in held.withheld if p.get("media"))
+    return ordered, pending[:3]
 
 
 @router.delete("/requests/{request_id}")

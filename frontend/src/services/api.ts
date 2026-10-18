@@ -681,6 +681,8 @@ class ApiClient {
         requestId: string,
         data: {
             status?: string;
+            /** Admin-only legal hold (exempt from retention). */
+            legal_hold?: boolean;
             staff_notes?: string;
             priority?: number;
             assigned_department_id?: number;
@@ -729,11 +731,36 @@ class ApiClient {
         });
     }
 
-    async createManualIntake(data: ManualIntakeCreate): Promise<ServiceRequest> {
-        return this.request<ServiceRequest>('/open311/v2/requests/manual', {
-            method: 'POST',
-            body: JSON.stringify(data),
-        });
+    /**
+     * Log a request on a resident's behalf (staff).
+     *
+     * Photos travel the way the resident form sends them -- a handle for each
+     * one screened at pick time -- and `inlineFallback` resends the original of
+     * any handle the server could not honour, exactly as createRequest does.
+     */
+    async createManualIntake(
+        data: ManualIntakeCreate,
+        inlineFallback?: Record<string, string>,
+    ): Promise<ServiceRequest> {
+        try {
+            return await this.request<ServiceRequest>('/open311/v2/requests/manual', {
+                method: 'POST',
+                body: JSON.stringify(data),
+            });
+        } catch (err) {
+            const detail = (err as Error & { detail?: any }).detail;
+            const stale: string[] = detail?.error === 'stale_photo_handles' ? detail.handles || [] : [];
+            if (!stale.length || !inlineFallback) throw err;
+
+            const retried = (data.media_urls || []).map(
+                (m) => (stale.includes(m) && inlineFallback[m]) || m,
+            ).filter((m) => !stale.includes(m));
+
+            return this.request<ServiceRequest>('/open311/v2/requests/manual', {
+                method: 'POST',
+                body: JSON.stringify({ ...data, media_urls: retried }),
+            });
+        }
     }
 
     // Request Comments

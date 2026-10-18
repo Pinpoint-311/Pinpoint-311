@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 /**
@@ -14,9 +14,10 @@ import userEvent from '@testing-library/user-event';
  * mouse-only: a `<ul role="listbox">` full of `<li><button>`, no arrow keys, no
  * Escape, no aria-activedescendant.
  *
- * The contract now: every field has a real <label for>, a failed submit
- * announces itself and puts focus on the field at fault with the message tied
- * to it, and the category combobox is fully operable from the keyboard.
+ * The contract now: every field has a real <label for>, a failed submit puts
+ * focus on a summary of everything wrong -- each entry a link that focuses the
+ * field at fault, which carries its own message -- and the category combobox
+ * is fully operable from the keyboard.
  */
 
 const created = {
@@ -48,6 +49,9 @@ vi.mock('../context/SettingsContext', () => ({
 vi.mock('./LocationPicker', () => ({ default: () => null }));
 
 import ManualIntake from './ManualIntake';
+
+// framer-motion measures layout through scrollTo, which jsdom does not have.
+window.scrollTo = (() => { }) as any;
 import { AccessibilityProvider } from '../context/AccessibilityContext';
 
 if (!window.matchMedia) {
@@ -84,6 +88,7 @@ const category = () => screen.getByRole('button', { name: /^category/i });
 const logRequest = () => screen.getByRole('button', { name: /log request/i });
 
 beforeEach(() => {
+    try { localStorage.clear(); } catch { /* no storage */ }
     createManualIntake.mockClear();
     onCreated.mockClear();
     onClose.mockClear();
@@ -129,40 +134,40 @@ describe('ManualIntake validation feedback', () => {
         expect((logRequest() as HTMLButtonElement).disabled).toBe(false);
     });
 
-    it('announces the missing category and puts focus on it', async () => {
+    it('summarizes the missing category, takes focus, and links to the field', async () => {
         const user = userEvent.setup();
         await open();
 
         await user.click(logRequest());
 
-        /* Found by id, not by text: the app's shared assertive region holds
-         * the same words a moment later, so a text query matches two nodes as
-         * soon as the timing shifts. */
-        const alert = await waitFor(() => {
-            const el = document.getElementById('intake-error')!;
+        /* The same pattern as the resident form: one summary of everything
+         * that is wrong, focused, so pressing "Log request" always leads
+         * somewhere a screen reader reads aloud. Not role="alert" -- moving
+         * focus is the announcement, and a second assertive region in the
+         * same commit would silence both. */
+        const summary = await waitFor(() => {
+            const el = document.getElementById('intake-error-summary')!;
             expect(el).toBeTruthy();
             return el;
         });
-        /* Visible, and deliberately silent: the shared assertive region below
-         * is the one that speaks. A role="alert" here would be a second
-         * assertive region in the same commit, and then neither is announced. */
-        expect(alert.hasAttribute('role')).toBe(false);
-        expect(alert.textContent).toContain('Pick a category');
-        // Focus is on the control at fault, not left on the button.
-        expect(document.activeElement).toBe(category());
-        expect(category().getAttribute('aria-invalid')).toBe('true');
-        expect(category().getAttribute('aria-describedby')).toBe(alert.id);
+        expect(summary.hasAttribute('role')).toBe(false);
+        expect(document.activeElement).toBe(summary);
+        expect(summary.textContent).toContain('Pick a category');
 
-        // And it reaches the app's live region, so it is spoken even though
-        // focus moved somewhere that does not contain the message.
-        await waitFor(() => {
-            expect(document.getElementById('aria-live-region-assertive')!.textContent)
-                .toContain('Pick a category');
-        });
+        // The link goes to the control at fault, and focuses it.
+        const link = within(summary).getByRole('link', { name: /pick a category/i });
+        expect(link.getAttribute('href')).toBe('#intake-category');
+        await user.click(link);
+        expect(document.activeElement).toBe(category());
+
+        // The field carries its own message, so arriving there reads it again.
+        expect(category().getAttribute('aria-invalid')).toBe('true');
+        const describedBy = category().getAttribute('aria-describedby')!;
+        expect(document.getElementById(describedBy)!.textContent).toContain('Pick a category');
         expect(createManualIntake).not.toHaveBeenCalled();
     });
 
-    it('moves focus to the description when only that is missing', async () => {
+    it('flags a short description and links to it', async () => {
         const user = userEvent.setup();
         await open();
 
@@ -170,16 +175,17 @@ describe('ManualIntake validation feedback', () => {
         await user.keyboard('{ArrowDown}{Enter}');   // picks the first category
         await user.click(logRequest());
 
+        const summary = document.getElementById('intake-error-summary')!;
+        expect(document.activeElement).toBe(summary);
+        await user.click(within(summary).getByRole('link', { name: /at least 10 characters/i }));
+
         const description = screen.getByLabelText(/what is the caller reporting/i);
         expect(document.activeElement).toBe(description);
         expect(description.getAttribute('aria-invalid')).toBe('true');
-        await waitFor(() => {
-            expect(document.getElementById('intake-error')!.textContent)
-                .toContain('Add a short description');
-        });
+        expect(description.getAttribute('aria-describedby')).toContain('intake-description-error');
     });
 
-    it('moves focus to a malformed email, inside the collapsed contact block', async () => {
+    it('opens the collapsed contact block for a malformed email and links to it', async () => {
         const user = userEvent.setup();
         const description = await open();
 
@@ -191,11 +197,16 @@ describe('ManualIntake validation feedback', () => {
         const email = screen.getByLabelText(/caller email/i);
         email.focus();
         await user.keyboard('not-an-email');
+        // Collapse it again: the error must re-open it.
+        await user.click(screen.getByRole('button', { name: /caller details/i }));
 
         await user.click(logRequest());
 
-        expect(document.activeElement).toBe(email);
-        expect(email.getAttribute('aria-invalid')).toBe('true');
+        const summary = document.getElementById('intake-error-summary')!;
+        await user.click(within(summary).getByRole('link', { name: /valid email/i }));
+        const reopened = screen.getByLabelText(/caller email/i);
+        expect(document.activeElement).toBe(reopened);
+        expect(reopened.getAttribute('aria-invalid')).toBe('true');
         expect(createManualIntake).not.toHaveBeenCalled();
     });
 

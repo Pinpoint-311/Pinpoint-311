@@ -177,7 +177,12 @@ export interface ServiceRequest {
     requested_datetime: string;
     updated_datetime: string | null;
     source: string;
+    /** Set by the content screen (profanity etc.), with flag_reason. Not a hold. */
     flagged: boolean;
+    /** Admin-placed legal hold: exempt from the retention policy. */
+    legal_hold?: boolean;
+    /** The language the resident asked for; notifications go out in it. */
+    preferred_language?: string | null;
     /** false = unlisted: hidden from public feeds/APIs (staff always see it).
      *  The RESIDENT's choice, made at submission. Staff never write it. */
     is_public?: boolean;
@@ -236,6 +241,9 @@ export interface PendingReviewPhoto {
 }
 
 export interface ServiceRequestDetail extends ServiceRequest {
+    /** Due time under the category's SLA, and where it stands. Absent with no SLA. */
+    sla_due_datetime?: string | null;
+    sla_state?: 'on_track' | 'at_risk' | 'overdue' | 'met' | 'breached' | null;
     first_name: string | null;
     last_name: string | null;
     email: string;
@@ -338,13 +346,24 @@ export interface ManualIntakeCreate {
     phone?: string;
     preferred_language?: string;
     media_urls?: string[];
+    /** Photos the content screen flagged; held for staff review, not published. */
+    media_flagged?: string[];
     matched_asset?: Record<string, any> | null;
     custom_fields?: Record<string, string | string[]>;
     /** false = unlisted: excluded from public feeds/APIs, still viewable by direct link. */
     is_public?: boolean;
     /** Staff may knowingly log a report on a road another agency maintains. */
     override_jurisdiction?: boolean;
-    source: 'phone' | 'walk_in' | 'email';
+    source: 'phone' | 'walk_in' | 'email' | 'other';
+    /** Staff choices at intake. Left out, each falls back to what a resident
+     *  submission gets: category routing, AI triage, no note. */
+    assigned_department_id?: number;
+    assigned_to?: string;
+    /** 1-10, the same scale as every other priority edit. */
+    manual_priority_score?: number;
+    staff_notes?: string;
+    /** Email the caller a confirmation. Only ever sent to a real address. */
+    send_confirmation?: boolean;
 }
 
 // System Settings types

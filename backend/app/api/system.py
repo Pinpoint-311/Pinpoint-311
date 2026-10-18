@@ -204,9 +204,9 @@ def _requirement_groups(provider: Dict[str, Any]) -> List[List[str]]:
 
     Some providers cannot be described by a per-field flag. Azure photo
     redaction needs an AI Face resource for faces and a separate AI Vision
-    resource for plates, and having either one is a working setup -- a town
-    stuck behind Microsoft's Limited Access review for Face runs on Vision
-    alone. Marking all four required calls that town unconfigured; marking none
+    resource for plates (or one AI Services resource for both), and having
+    either one is a working setup -- a town that has only Vision still blurs
+    plates. Marking all four required calls that town unconfigured; marking none
     required is what let an Azure card with four empty boxes read as ready.
 
     So the provider declares the alternatives and this reads them. Fields that
@@ -1683,7 +1683,7 @@ async def _test_redaction(db=None) -> dict:
             f"beginning \"[Redaction] {actual} could not detect\" has the vendor's own words.")}
 
     return {"ok": True, "detail": _steps(
-        "Built a one-pixel test image on this server.",
+        "Built a small test image on this server.",
         f"Sent it to {actual} for a live face and license-plate scan.",
         "It answered: nothing to blur — the correct answer for this image — "
         "so the detector is accepting requests and real photos will be redacted.",

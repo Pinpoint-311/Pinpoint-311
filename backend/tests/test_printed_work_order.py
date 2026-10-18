@@ -72,10 +72,15 @@ def test_the_closing_date_is_printed(source):
     assert "request.closed_datetime" in source
 
 
-def test_a_legal_hold_says_why(source):
-    """"Under legal hold" with no reason leaves whoever picks this up unable to
-    tell whether it still applies."""
-    assert "request.flag_reason" in source
+def test_the_legal_hold_banner_reads_the_hold_not_the_moderation_flag(source):
+    """It read the content screen's `flagged` and printed its moderation reason
+    as the hold reason, so any report with mild profanity printed as "under
+    legal hold" (a records-retention claim that was false). The banner follows
+    `legal_hold`; the moderation note is internal and stays off the crew sheet.
+    There is no stored hold reason to print."""
+    assert "legal_hold ?" in source or "legal_hold)" in source
+    assert "request.flagged ?" not in source
+    assert "request.flag_reason" not in source
 
 
 def test_the_matched_asset_is_printed_once(source):

@@ -39,6 +39,10 @@ class RequestSource(str, Enum):
     phone = "phone"
     walk_in = "walk_in"
     email = "email"
+    # Any other channel staff take a report through -- a letter, a council
+    # meeting, a note left at the front desk. `source` is a plain String(50)
+    # column with no CHECK constraint, so this needs no migration.
+    other = "other"
 
 
 # ============ Auth ============
@@ -288,6 +292,9 @@ class ServiceRequestResponse(BaseModel):
     requested_datetime: Optional[datetime] = None
     updated_datetime: Optional[datetime] = None
     source: str
+    # The language the resident asked for; notifications go out in it. Staff
+    # see it so a callback is made in the right language.
+    preferred_language: Optional[str] = None
     # Content moderation said a human should look at this.
     flagged: bool = False
     # Exempt from the retention schedule until an admin lifts it. Distinct from
@@ -525,10 +532,18 @@ class ServiceRequestDetailResponse(ServiceRequestResponse):
     ai_classification: Optional[str] = None
     manual_priority_score: Optional[float] = None  # Human-approved priority
     ai_analyzed_at: Optional[datetime] = None
+    # When this report is due under its category's SLA, and where it stands
+    # (on_track | at_risk | overdue | met | breached). Absent when the category
+    # has no SLA. Computed per response; not stored.
+    sla_due_datetime: Optional[datetime] = None
+    sla_state: Optional[str] = None
 
 
 # ============ Manual Intake ============
 class ManualIntakeCreate(BaseModel):
+    # Photos the content screen flagged when the clerk attached them. Redacted
+    # and held for staff review (media_pending_review), never published directly.
+    media_flagged: Optional[List[str]] = Field(default_factory=list, max_length=3)
     """Staff-entered request (call taker, walk-in, or email intake).
 
     Mirrors ServiceRequestCreate so manual intake runs through the exact same
@@ -555,6 +570,17 @@ class ManualIntakeCreate(BaseModel):
     # Residents cannot; this is the judgement call the role exists for.
     override_jurisdiction: bool = False
     source: RequestSource = RequestSource.phone
+
+    # Optional staff choices made at intake. Each one left out falls back to
+    # what a resident submission would get: routing from the category, AI
+    # triage for priority, no internal note, and a confirmation whenever the
+    # caller left an email address.
+    assigned_department_id: Optional[int] = None
+    assigned_to: Optional[str] = Field(default=None, max_length=100)
+    # Same scale and bounds as ServiceRequestUpdate.manual_priority_score.
+    manual_priority_score: Optional[float] = Field(default=None, ge=1, le=10)
+    staff_notes: Optional[str] = Field(default=None, max_length=10000)
+    send_confirmation: bool = True
 
 
 # ============ System Settings ============

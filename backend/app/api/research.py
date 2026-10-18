@@ -15,6 +15,7 @@ All endpoints:
 - Query sanitized data (no PII)
 - Log all access for audit purposes
 """
+from app.services.priority import effective_priority
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1813,7 +1814,7 @@ COLUMN_DICTIONARY = [
     ("status_change_count", "integer", "Number of status changes (audit entries with action=status_change)", "Bureaucratic Friction Pack"),
     
     # Civic Engagement
-    ("submission_channel", "string", "How submitted: portal, phone, walk_in, email", "Core"),
+    ("submission_channel", "string", "How submitted: portal, phone, walk_in, email, other", "Core"),
     ("department_id", "integer", "ID of assigned department", "Core"),
     ("comment_count", "integer", "Total comments on request (internal + external)", "Core"),
     ("public_comment_count", "integer", "Public/external comments visible to reporter", "Core"),
@@ -2499,7 +2500,7 @@ def build_dataset_row(req, _eq, privacy_mode, *, packs=None, operational=False, 
         "ai_vs_manual_priority_diff": ai_priority_diff,
         "status": req.status,
         "closed_substatus": req.closed_substatus,
-        "priority": req.priority,
+        "priority": effective_priority(req),
         "resolution_outcome": resolution_outcome,
         "address_anonymized": address_anon,
         "latitude": lat,

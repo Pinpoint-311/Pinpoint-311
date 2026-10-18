@@ -504,6 +504,18 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             if not request:
                 return {"error": "Request not found"}
             
+            # The resident asked not to be contacted about this report.
+            if getattr(request, "contact_opt_out", False):
+                logger.info(f"[Notification] Skipping {notification_type} for {request.service_request_id}: resident opted out")
+                return {"status": "skipped", "reason": "resident opted out"}
+            # A placeholder address (manual-...@intake.local, integration-...@
+            # intake.local, archived-...@retention.local) is not a mailbox:
+            # sending to it bounces and harms the town's sender reputation.
+            if (request.email or "").strip().lower().rsplit("@", 1)[-1].split(".")[-1] == "local":
+                email_enabled = False
+                if not (sms_enabled and request.phone):
+                    return {"status": "skipped", "reason": "no deliverable contact"}
+
             logger.info(f"[Notification] Sending {notification_type} for request {request.service_request_id} (email={email_enabled}, sms={sms_enabled})")
             
             # Get user's preferred language for translation

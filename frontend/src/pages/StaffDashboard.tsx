@@ -48,12 +48,14 @@ import {
     FlagTriangleRight,
     Lock,
     Globe,
+    SlidersHorizontal,
 } from 'lucide-react';
 import { CommentCard, CommentEmptyState } from '../components/commentUI';
-import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
+import { Button, Card, Modal, Textarea, StatusBadge, Badge } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
+import { languageLabel } from '../utils/languages';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData, PlatformFeedbackStatistics } from '../types';
@@ -184,7 +186,6 @@ export default function StaffDashboard() {
     const [statsLoading, setStatsLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
-    const [showIntakeModal, setShowIntakeModal] = useState(false);
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [statistics, setStatistics] = useState<Statistics | null>(null);
     const [advancedStats, setAdvancedStats] = useState<AdvancedStatistics | null>(null);
@@ -207,16 +208,6 @@ export default function StaffDashboard() {
     // One config for every map on this page, from the town's chosen provider.
     const mapConfig = useMemo(() => resolveMapProviderConfig(mapsConfig), [mapsConfig]);
 
-    // Intake form state
-    const [intakeData, setIntakeData] = useState({
-        service_code: '',
-        description: '',
-        address: '',
-        first_name: '',
-        last_name: '',
-        phone: '',
-        source: 'phone',
-    });
 
     // Comments state
     const [comments, setComments] = useState<RequestComment[]>([]);
@@ -555,6 +546,11 @@ export default function StaffDashboard() {
     // Whether an admin has hidden this report's whole category from public view.
     const categoryHidden = !!(selectedRequest
         && services.find(s => s.service_code === selectedRequest.service_code)?.hidden_from_public);
+
+    // Filters set in the collapsible panel (department, category, priority),
+    // counted on the Filters button so a closed panel still shows they're on.
+    const activePanelFilters = (filterDepartment !== null ? 1 : 0) + (filterService !== null ? 1 : 0)
+        + (mapPriorityFilter !== 'all' ? 1 : 0);
 
     const hasActiveFilters = searchQuery.trim() || filterDepartment !== null || filterService !== null || filterAssignment !== 'all' || mapPriorityFilter !== 'all' || filterPhotoReview;
 
@@ -1076,29 +1072,6 @@ export default function StaffDashboard() {
             console.error('Failed to delete request:', err);
         } finally {
             setIsDeleting(false);
-        }
-    };
-
-    const handleCreateIntake = async (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            await api.createManualIntake({
-                ...intakeData,
-                source: intakeData.source as 'phone' | 'walk_in' | 'email',
-            });
-            setShowIntakeModal(false);
-            setIntakeData({
-                service_code: '',
-                description: '',
-                address: '',
-                first_name: '',
-                last_name: '',
-                phone: '',
-                source: 'phone',
-            });
-            loadInitialData();
-        } catch (err) {
-            console.error('Failed to create intake:', err);
         }
     };
 
@@ -2367,32 +2340,6 @@ export default function StaffDashboard() {
                                             ({isLoading ? '…' : sortedRequests.length})
                                         </span>
                                     </h2>
-                                    <div className="flex items-center gap-2">
-                                        {/* Was an icon-only toggle with no accessible
-                                            name at all (1.1.1), no aria-expanded or
-                                            aria-controls to say what it operates
-                                            (4.1.2), and "filters are active" conveyed
-                                            by a bullet glyph tinted primary-400 — a
-                                            bullet is not a word and a colour is not a
-                                            state (1.4.1). The name now carries both. */}
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            onClick={() => setShowFilters(!showFilters)}
-                                            aria-expanded={showFilters}
-                                            /* Only while the panel exists -- it is unmounted when
-                                               collapsed, so a constant aria-controls left a dangling
-                                               reference for assistive tech to follow nowhere. */
-                                            aria-controls={showFilters ? 'request-filters' : undefined}
-                                            className={hasActiveFilters ? 'text-primary-400' : ''}
-                                        >
-                                            <Search className="w-4 h-4" aria-hidden="true" />
-                                            <span className="sr-only">
-                                                {hasActiveFilters ? 'Filters, filters active' : 'Filters'}
-                                            </span>
-                                            {hasActiveFilters && <span className="ml-1 text-xs" aria-hidden="true">•</span>}
-                                        </Button>
-                                    </div>
                                 </div>
 
                                 {/* The photo-review backlog.
@@ -2473,8 +2420,13 @@ export default function StaffDashboard() {
                                 </div>
 
 
-                                {/* Search Input */}
-                                <div className="relative">
+                                {/* Search, with the filter toggle beside it. The toggle was an
+                                    icon-only magnifying glass in the far corner of the header --
+                                    hard to find, and a magnifying glass reads as "search", not
+                                    "filters". Here it is labeled, sits where people look when
+                                    narrowing the list, and says how many filters are on. */}
+                                <div className="flex items-stretch gap-2">
+                                <div className="relative flex-1 min-w-0">
                                     {/* z-10: glass-input carries backdrop-filter, so without it
                                         the input paints over this icon and blurs it. */}
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 z-10" aria-hidden="true" />
@@ -2495,6 +2447,26 @@ export default function StaffDashboard() {
                                             <X className="w-4 h-4" aria-hidden="true" />
                                         </button>
                                     )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFilters(!showFilters)}
+                                    aria-expanded={showFilters}
+                                    /* Only while the panel exists -- it is unmounted when collapsed. */
+                                    aria-controls={showFilters ? 'request-filters' : undefined}
+                                    aria-label={activePanelFilters ? `Filters, ${activePanelFilters} active` : 'Filters'}
+                                    className={`shrink-0 inline-flex items-center gap-1.5 px-3 rounded-xl text-sm font-medium border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${showFilters || activePanelFilters
+                                        ? 'bg-primary-500/20 border-primary-400/50 text-white'
+                                        : 'bg-white/5 border-white/15 text-white/80 hover:bg-white/10 hover:text-white'}`}
+                                >
+                                    <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+                                    <span>Filters</span>
+                                    {activePanelFilters > 0 && (
+                                        <span className="min-w-[1.25rem] h-5 px-1 rounded-full bg-primary-500 text-white text-[11px] font-semibold inline-flex items-center justify-center" aria-hidden="true">
+                                            {activePanelFilters}
+                                        </span>
+                                    )}
+                                </button>
                                 </div>
 
                                 {/* Search by resident: a server lookup over encrypted PII,
@@ -2757,6 +2729,24 @@ export default function StaffDashboard() {
                                                 <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
                                                     <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
+                                                    {selectedRequest.sla_due_datetime && selectedRequest.sla_state && (() => {
+                                                        const due = new Date(selectedRequest.sla_due_datetime);
+                                                        const when = due.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                                                        const look = {
+                                                            on_track: { cls: 'bg-sky-500/15 text-sky-200 border-sky-400/30', text: `Due ${when}` },
+                                                            at_risk: { cls: 'bg-amber-500/15 text-amber-200 border-amber-400/30', text: `Due soon · ${when}` },
+                                                            overdue: { cls: 'bg-red-500/20 text-red-200 border-red-400/40', text: `Overdue · was due ${when}` },
+                                                            met: { cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30', text: 'Met SLA' },
+                                                            breached: { cls: 'bg-red-500/10 text-red-200/80 border-red-400/25', text: 'Missed SLA' },
+                                                        }[selectedRequest.sla_state];
+                                                        return look ? (
+                                                            <span className={`inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded border ${look.cls}`}>
+                                                                <Clock className="w-3 h-3" aria-hidden="true" />
+                                                                {look.text}
+                                                                <span className="sr-only"> (service level target)</span>
+                                                            </span>
+                                                        ) : null;
+                                                    })()}
                                                     {categoryHidden && (
                                                         <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-400/30">
                                                             <EyeOff className="w-3 h-3" aria-hidden="true" />
@@ -2952,16 +2942,53 @@ export default function StaffDashboard() {
                                             )}
                                         </div>
 
-                                        {/* Row 4: Legal Hold Toggle (Admin Only) - Hidden on mobile, shown in menu */}
+                                        {/* Content-screen flag. Shown on its own: it used to be read as
+                                            a legal hold, so every profanity-flagged report looked held. */}
+                                        {/* A flag with no reason on a held record is the old hold
+                                            control's mirror, not a moderation flag -- not shown. */}
+                                        {selectedRequest.flagged === true
+                                            && !(selectedRequest.legal_hold === true && !selectedRequest.flag_reason) && (
+                                            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-100/90">
+                                                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300" aria-hidden="true" />
+                                                <span className="flex-1"><strong className="font-semibold">Flagged for review.</strong>{selectedRequest.flag_reason ? ` ${selectedRequest.flag_reason}` : ' The content screen marked this report.'}</span>
+                                                {user?.role === 'admin' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={async () => {
+                                                            try {
+                                                                // Both fields, so the server clears the content flag
+                                                                // and leaves any legal hold exactly as it is.
+                                                                const updated = await api.updateRequest(selectedRequest.service_request_id, {
+                                                                    flagged: false,
+                                                                    legal_hold: selectedRequest.legal_hold === true,
+                                                                });
+                                                                setSelectedRequest(updated);
+                                                                setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+                                                                announce('Flag cleared.');
+                                                            } catch (err) {
+                                                                console.error('Failed to clear flag:', err);
+                                                                announce("Couldn't clear the flag. Try again.", 'assertive');
+                                                            }
+                                                        }}
+                                                        className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded border border-amber-300/50 text-amber-100 hover:bg-amber-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                                                    >
+                                                        Clear flag
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Row 4: Legal Hold Toggle (Admin Only) — reads and writes `legal_hold`, the
+                                            field retention honors, never the content-screen `flagged`. - Hidden on mobile, shown in menu */}
                                         {user?.role === 'admin' && (
                                             <button
                                                 onClick={async () => {
-                                                    if (selectedRequest.flagged !== true) {
+                                                    if (selectedRequest.legal_hold !== true) {
                                                         // Show confirmation before placing on legal hold
                                                         if (window.confirm('Place this request under Legal Hold?\n\nThis will prevent the record from being archived or deleted by the retention policy.\n\nContinue?')) {
                                                             try {
                                                                 const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                    flagged: true
+                                                                    legal_hold: true
                                                                 });
                                                                 setSelectedRequest(updated);
                                                                 setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
@@ -2975,7 +3002,7 @@ export default function StaffDashboard() {
                                                         // Allow direct removal without confirmation
                                                         try {
                                                             const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                flagged: false
+                                                                legal_hold: false
                                                             });
                                                             setSelectedRequest(updated);
                                                             setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
@@ -2986,17 +3013,17 @@ export default function StaffDashboard() {
                                                         }
                                                     }
                                                 }}
-                                                className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.flagged === true
+                                                className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.legal_hold === true
                                                     ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30 ring-2 ring-white/20'
                                                     : 'bg-white/5 border border-white/10 text-white/70 hover:bg-amber-500/20 hover:text-amber-400 hover:border-amber-500/30'
                                                     }`}
                                                 type="button"
-                                                aria-pressed={selectedRequest.flagged === true}
-                                                aria-label={selectedRequest.flagged === true ? 'Remove legal hold' : 'Place on legal hold'}
+                                                aria-pressed={selectedRequest.legal_hold === true}
+                                                aria-label={selectedRequest.legal_hold === true ? 'Remove legal hold' : 'Place on legal hold'}
                                             >
                                                 <FlagTriangleRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
-                                                <span className="hidden sm:inline">{selectedRequest.flagged === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
-                                                <span className="sm:hidden">{selectedRequest.flagged === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
+                                                <span className="hidden sm:inline">{selectedRequest.legal_hold === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
+                                                <span className="sm:hidden">{selectedRequest.legal_hold === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
                                             </button>
                                         )}
 
@@ -3690,6 +3717,11 @@ export default function StaffDashboard() {
                                                 {(selectedRequest.first_name || selectedRequest.last_name) && (
                                                     <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.first_name} {selectedRequest.last_name}</span>
                                                 )}
+                                                {selectedRequest.preferred_language && selectedRequest.preferred_language !== 'en' && (
+                                                    <span className="flex items-center gap-1 text-primary-200" title="Updates go to this resident in this language">
+                                                        <Globe className="w-3.5 h-3.5" aria-hidden="true" /> Prefers {languageLabel(selectedRequest.preferred_language)}
+                                                    </span>
+                                                )}
                                                 <a href={`mailto:${selectedRequest.email}`} className="flex items-center gap-1 hover:text-primary-400"><Mail className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.email}</a>
                                                 {selectedRequest.phone && (
                                                     <a href={`tel:${selectedRequest.phone}`} className="flex items-center gap-1 hover:text-primary-400"><Phone className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.phone}</a>
@@ -4180,50 +4212,6 @@ export default function StaffDashboard() {
                 }
             </main>
 
-            {/* Manual Intake Modal */}
-            <Modal isOpen={showIntakeModal} onClose={() => setShowIntakeModal(false)} title="New Manual Intake">
-                <form onSubmit={handleCreateIntake} className="space-y-4">
-                    <Select
-                        label="Service Category"
-                        options={[
-                            { value: '', label: 'Select a category...' },
-                            ...services.map((s) => ({ value: s.service_code, label: s.service_name })),
-                        ]}
-                        value={intakeData.service_code}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, service_code: e.target.value }))}
-                        required
-                    />
-                    <Input
-                        label="Location"
-                        placeholder="Address or intersection"
-                        value={intakeData.address}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, address: e.target.value }))}
-                    />
-                    <Textarea
-                        label="Description"
-                        placeholder="Describe the issue..."
-                        value={intakeData.description}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, description: e.target.value }))}
-                        required
-                    />
-                    <Select
-                        label="Source"
-                        options={[
-                            { value: 'phone', label: 'Phone Call' },
-                            { value: 'walk_in', label: 'Walk-In' },
-                            { value: 'email', label: 'Email' },
-                        ]}
-                        value={intakeData.source}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, source: e.target.value }))}
-                    />
-                    <div className="flex justify-end gap-3 pt-4">
-                        <Button variant="ghost" onClick={() => setShowIntakeModal(false)}>
-                            Cancel
-                        </Button>
-                        <Button type="submit">Create Intake</Button>
-                    </div>
-                </form>
-            </Modal >
 
             {/* Close Request Modal - Substatus Selection */}
             < Modal isOpen={showClosedModal} onClose={() => setShowClosedModal(false)} title="Close Request" >
@@ -4423,10 +4411,19 @@ export default function StaffDashboard() {
                 isOpen={showManualIntake}
                 onClose={() => setShowManualIntake(false)}
                 services={services}
+                requests={allRequests}
+                departments={departments}
+                staff={users}
                 onCreated={(created) => {
                     // Reflect the new request immediately without a full reload.
                     setAllRequests(prev => [created as any, ...prev]);
                     setRequests(prev => [created as any, ...prev]);
+                }}
+                onOpenRequest={(requestId) => {
+                    // The form keeps what was typed, so reopening it picks up
+                    // where the clerk left off.
+                    setShowManualIntake(false);
+                    handleMapRequestSelect(requestId);
                 }}
             />
             {/* Activity Feed Panel */}

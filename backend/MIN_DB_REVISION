@@ -17,7 +17,11 @@
 # expand case. Get it wrong in the safe direction: naming a NEWER revision only
 # blocks a rollout, while naming an older one lets a broken build reach towns.
 #
-# Head is c7d9e1f3a5b6 (category_hidden_from_public) -- one boolean column on
+# Head is d2e4f6a8b0c1 (contact_opt_out) -- one boolean column with a server
+# default. Expand: older code ignores it, so the floor is its parent,
+# c7d9e1f3a5b6.
+#
+# Before that, head was c7d9e1f3a5b6 (category_hidden_from_public) -- one boolean column on
 # service_definitions with a server default of false. Expand, so the floor is its
 # parent, b3d5f7a9c1e2.
 #
@@ -57,4 +61,4 @@
 # contract migrations (retire_hard_delete, drop_dead_documents_pushed_flag, the
 # NOT NULL on retention state) that this build genuinely cannot start against --
 # so the declared floor was claiming compatibility the image does not have.
-b3d5f7a9c1e2
+c7d9e1f3a5b6

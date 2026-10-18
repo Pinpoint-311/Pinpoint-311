@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { languageLabel } from '../utils/languages';
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 import { MapProviderConfig, mapSnapshot } from '../maps';
@@ -366,13 +367,14 @@ export default function PrintWorkOrder({
             </div>
         ` : '';
 
-        // Legal hold banner. The reason travels with it: "under legal hold"
-        // without saying why leaves whoever picks this up unable to tell
-        // whether it still applies.
-        const legalHoldHtml = request.flagged ? `
+        // Legal hold banner, from `legal_hold` -- the field retention honors.
+        // It used to read the content-screen `flagged` and print the
+        // moderation reason as the hold reason, so any report with mild
+        // profanity printed as "under legal hold". The content flag is an
+        // internal moderation note and does not belong on a crew's sheet.
+        const legalHoldHtml = (request as any).legal_hold ? `
             <div class="legal-hold-banner">
-                ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from retention policy.
-                ${request.flag_reason ? `<div class="legal-hold-reason">Reason: ${request.flag_reason}</div>` : ''}
+                ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from the retention policy.
             </div>
         ` : '';
 
@@ -909,7 +911,7 @@ export default function PrintWorkOrder({
                         <div><strong>Name:</strong> ${request.first_name || ''} ${request.last_name || ''}</div>
                         <div><strong>Email:</strong> ${request.email}</div>
                         ${request.phone ? `<div><strong>Phone:</strong> ${request.phone}</div>` : ''}
-                        <div><strong>Preferred Language:</strong> ${(request as any).preferred_language || 'en'}</div>
+                        <div><strong>Preferred Language:</strong> ${escapeHtml(languageLabel((request as any).preferred_language))}</div>
                     </div>
                 </div>
 

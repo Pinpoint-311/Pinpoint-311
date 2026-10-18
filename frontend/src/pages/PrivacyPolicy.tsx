@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { ArrowLeft, Shield } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
@@ -164,13 +164,12 @@ export default function PrivacyPolicy() {
             {/* Header */}
             <header className="glass-sidebar border-b border-white/10">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-                    <Link
-                        to="/"
+                    <BackLink
                         className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-                        aria-label="Back to home"
+                        label="Go back"
                     >
-                        <ArrowLeft className="w-5 h-5 text-white/70" />
-                    </Link>
+                        <ArrowLeft className="w-5 h-5 text-white/70" aria-hidden="true" />
+                    </BackLink>
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center">
                             <Shield className="w-5 h-5 text-primary-400" />

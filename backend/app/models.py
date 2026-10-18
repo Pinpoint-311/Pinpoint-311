@@ -326,9 +326,14 @@ class ServiceRequest(Base):
     
     # Resident's preferred language (captured from UI at submission)
     preferred_language = Column(String(10), default="en")  # ISO 639-1 code (en, es, hi, etc.)
+    # The resident asked not to be contacted about this report (a clerk unticks
+    # "Send the caller a confirmation" at intake). Every resident notification
+    # -- confirmation and later status updates, staff- or vendor-made --
+    # honors it.
+    contact_opt_out = Column(Boolean, nullable=False, default=False, server_default='false')
     
     # Metadata
-    source = Column(String(50), default="resident_portal")  # resident_portal, phone, walk_in, email
+    source = Column(String(50), default="resident_portal")  # resident_portal, phone, walk_in, email, other
     media_urls = Column(JSON, default=[])  # Array of up to 3 photo URLs/base64
 
     # Photos the redactor could not clear, parked out of sight of every public

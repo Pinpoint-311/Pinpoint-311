@@ -244,6 +244,8 @@ NEVER = {
     # resident-history lookup. Meaningless outside this town and must not leave
     # it: a vendor holding them could link a resident's reports across exports.
     "resident_email_index", "resident_name_index", "pii_index_version",
+    # The resident's contact preference governs our own notifications only.
+    "contact_opt_out",
     # Written by staff, for staff.
     "staff_notes",
     # The legal hold and the content-moderation flag, plus the moderation text
@@ -410,12 +412,14 @@ def test_attachments_are_links_and_never_inline_blobs():
 
 
 def test_the_priority_the_town_set_wins_over_the_stored_one():
-    """`manual_priority_score` is the human-approved number; `priority` is the
-    default. Sending the wrong one routes the job into the wrong queue."""
+    """`manual_priority_score` is the human-approved number; without one, the
+    AI's suggested score -- the same priority the staff screens and the printed
+    work order show (services/priority.py). The `priority` column is never
+    written, so reading it sent 5 for everything and routed jobs wrongly."""
     sr = _stand_in(manual_priority_score=9.0, priority=2)
     assert _build_payload(sr, {}, "Public Works")["priority"] == 9.0
-    sr = _stand_in(manual_priority_score=None, priority=2)
-    assert _build_payload(sr, {}, "Public Works")["priority"] == 2
+    sr = _stand_in(manual_priority_score=None, priority=2, ai_analysis={"priority_score": 7})
+    assert _build_payload(sr, {}, "Public Works")["priority"] == 7
 
 
 # ------------------------------------------------------------------ due date
