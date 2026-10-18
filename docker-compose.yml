@@ -224,7 +224,11 @@ services:
     build: ./frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-5173}:80"
+      # Bind to loopback only -- public traffic reaches the frontend via Caddy,
+      # which adds the security headers, CSP and noindex. Published on every
+      # interface, Docker's own iptables rules skip the host firewall, so only
+      # the cloud firewall stood between the internet and the bare nginx.
+      - "127.0.0.1:${FRONTEND_PORT:-5173}:80"
     environment:
       - VITE_API_URL=/api
     healthcheck:
