@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
 import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -72,6 +72,7 @@ import ActivityFeed from '../components/ActivityFeed';
 import { bellAppearance, markKeyRead, readIdsFromStorage, readKey, unreadCount } from '../components/activityBell';
 import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
+import MatchedAssetCard from '../components/MatchedAssetCard';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
 
@@ -3796,111 +3797,15 @@ export default function StaffDashboard() {
                                                         </div>
                                                     )}
 
-                                                    {/* Matched Asset Info - Below Map */}
+                                                    {/* Matched asset: picked on the map at intake */}
                                                     {(selectedRequest as any).matched_asset && (
-                                                        <div className="mt-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                                                            {/* Clear header label */}
-                                                            <div className="flex items-center gap-2 mb-2">
-                                                                <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">🔗 Matched Asset</span>
-                                                                {(selectedRequest as any).matched_asset.distance_meters && (
-                                                                    <span className="text-xs text-white/40 ml-auto">
-                                                                        {(selectedRequest as any).matched_asset.distance_meters < 1
-                                                                            ? '<1m away'
-                                                                            : `${Math.round((selectedRequest as any).matched_asset.distance_meters)}m away`}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center gap-2 mb-2">
-                                                                <div className="w-3 h-3 rounded bg-emerald-500" />
-                                                                <span className="text-sm font-medium text-emerald-400">
-                                                                    {(selectedRequest as any).matched_asset.layer_name}
-                                                                </span>
-                                                            </div>
-                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                                                                {(selectedRequest as any).matched_asset.asset_id && (
-                                                                    <>
-                                                                        <span className="text-white/40">Asset ID</span>
-                                                                        <span className="text-white/80 font-mono">{(selectedRequest as any).matched_asset.asset_id}</span>
-                                                                    </>
-                                                                )}
-                                                                {(selectedRequest as any).matched_asset.asset_type && (
-                                                                    <>
-                                                                        <span className="text-white/40">Type</span>
-                                                                        <span className="text-white/80">{(selectedRequest as any).matched_asset.asset_type}</span>
-                                                                    </>
-                                                                )}
-                                                                {(selectedRequest as any).matched_asset.properties &&
-                                                                    Object.entries((selectedRequest as any).matched_asset.properties)
-                                                                        .filter(([key, value]) => {
-                                                                            // Exclude common ID fields
-                                                                            if (['id', 'asset_id', 'name', 'layer_name', 'objectid', 'fid', 'gid'].includes(key.toLowerCase())) return false;
-                                                                            // Exclude purely numeric values (likely IDs)
-                                                                            if (typeof value === 'number' && String(value).match(/^\d+$/)) return false;
-                                                                            // Exclude null/undefined/empty
-                                                                            if (value === null || value === undefined || value === '') return false;
-                                                                            return true;
-                                                                        })
-                                                                        .slice(0, 6)
-                                                                        .map(([key, value]) => (
-                                                                            <React.Fragment key={key}>
-                                                                                <span className="text-white/40 truncate">
-                                                                                    {key.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim()}
-                                                                                </span>
-                                                                                <span className="text-white/80 truncate">
-                                                                                    {String(value)}
-                                                                                </span>
-                                                                            </React.Fragment>
-                                                                        ))
-                                                                }
-                                                            </div>
-
-                                                            {/* Asset History - Related Reports */}
-                                                            <div className="mt-3 pt-3 border-t border-emerald-500/20">
-                                                                <div className="flex items-center gap-2 mb-2">
-                                                                    <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">📋 Asset History</span>
-                                                                    {isLoadingAssetHistory && (
-                                                                        <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                                                                    )}
-                                                                </div>
-                                                                {assetRelatedRequests.length > 0 ? (
-                                                                    <div className="space-y-2">
-                                                                        <p className="text-xs text-emerald-400/80">
-                                                                            {assetRelatedRequests.length} other report{assetRelatedRequests.length !== 1 ? 's' : ''} linked to this asset
-                                                                        </p>
-                                                                        <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                                                                            {assetRelatedRequests.slice(0, 5).map((r) => (
-                                                                                <button
-                                                                                    key={r.service_request_id}
-                                                                                    onClick={() => loadRequestDetail(r.service_request_id)}
-                                                                                    className="w-full text-left p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors group"
-                                                                                >
-                                                                                    <div className="flex items-center justify-between">
-                                                                                        <span className="text-xs font-mono text-emerald-400 group-hover:text-emerald-300">{r.service_request_id}</span>
-                                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${r.status === 'closed' ? 'bg-green-500/20 text-green-400' :
-                                                                                            r.status === 'in_progress' ? 'bg-amber-500/20 text-amber-400' :
-                                                                                                'bg-red-500/20 text-red-400'
-                                                                                            }`}>{r.status.replace('_', ' ')}</span>
-                                                                                    </div>
-                                                                                    <p className="text-xs text-white/60 truncate mt-0.5">{r.service_name}</p>
-                                                                                    <p className="text-[10px] text-white/40 mt-0.5">
-                                                                                        {new Date(r.requested_datetime).toLocaleDateString()}
-                                                                                    </p>
-                                                                                </button>
-                                                                            ))}
-                                                                        </div>
-                                                                        {assetRelatedRequests.length > 5 && (
-                                                                            <p className="text-[10px] text-white/40 text-center">
-                                                                                +{assetRelatedRequests.length - 5} more reports
-                                                                            </p>
-                                                                        )}
-                                                                    </div>
-                                                                ) : !isLoadingAssetHistory ? (
-                                                                    <p className="text-xs text-white/40">
-                                                                        No previous reports for this asset
-                                                                    </p>
-                                                                ) : null}
-                                                            </div>
-                                                        </div>
+                                                        <MatchedAssetCard
+                                                            asset={(selectedRequest as any).matched_asset}
+                                                            layerColor={mapLayers.find(l => l.name === (selectedRequest as any).matched_asset.layer_name)?.fill_color}
+                                                            reports={assetRelatedRequests}
+                                                            loading={isLoadingAssetHistory}
+                                                            onOpenReport={loadRequestDetail}
+                                                        />
                                                     )}
                                                 </div>
                                             )
