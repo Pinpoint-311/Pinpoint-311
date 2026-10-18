@@ -55,8 +55,10 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "record_type", "label": "Record Type", "placeholder": "ServiceRequest/General/Complaint/NA", "required": True},
             {"key": "sync_assets", "label": "Sync Assets (true/false)", "placeholder": "false", "required": False},
             {"key": "asset_group", "label": "Asset Group Filter", "placeholder": "", "required": False},
+            {"key": "coordinate_wkid", "label": "Coordinate system (WKID) your Accela addresses use", "placeholder": "3424", "required": False},
+            {"key": "agency_timezone", "label": "Agency time zone", "placeholder": "America/New_York", "required": False},
         ],
-        "setup_notes": "Enter your agency name and environment, then sign in through Accela — Pinpoint's registered app handles the rest and stores only a revocable refresh token. If your Accela administrator would rather issue a service account, the username/password fallback still works with your own Client ID and Secret. The record type must exist in your agency configuration.",
+        "setup_notes": "Enter your agency name and environment. \"Sign in with Accela\" works once whoever runs this Pinpoint installation has registered an app at developer.accela.com and saved its Client ID and Secret (ACCELA_CLIENT_ID / ACCELA_CLIENT_SECRET); the redirect URI to register is shown in the setup window. Until then, use the username and password option with the Client ID and Secret your Accela administrator issues. The record type must exist in your agency configuration, and status values are your agency's own: confirm them under Mapping.",
     },
     "arcgis": {
         "name": "Esri ArcGIS (Feature Service)",
@@ -112,9 +114,9 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "config_fields": [
             {"key": "base_url", "label": "Open311 Base URL", "placeholder": "https://yourcity.tylerapp.com/open311/v2", "required": True},
             {"key": "jurisdiction_id", "label": "Jurisdiction ID", "placeholder": "yourcity.gov", "required": False},
-            {"key": "default_service_code", "label": "Default Service Code", "placeholder": "", "required": False},
+            {"key": "default_service_code", "label": "Fallback service code (for categories with no mapping)", "placeholder": "", "required": False},
         ],
-        "setup_notes": "Ask your Tyler implementation team for the jurisdiction's Open311 endpoint and an API key with write access.",
+        "setup_notes": "Ask your Tyler implementation team for the jurisdiction's Open311 endpoint and an API key with write access. Open311 has no way to send a status change back, so status flows one way: from Tyler to Pinpoint.",
     },
     "generic_rest": {
         "name": "Other REST System (Generic Connector)",
@@ -184,9 +186,9 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "config_fields": [
             {"key": "base_url", "label": "Open311 Base URL", "placeholder": "https://city.gov/open311/v2", "required": True},
             {"key": "jurisdiction_id", "label": "Jurisdiction ID", "placeholder": "", "required": False},
-            {"key": "default_service_code", "label": "Default Service Code", "placeholder": "", "required": False},
+            {"key": "default_service_code", "label": "Fallback service code (for categories with no mapping)", "placeholder": "", "required": False},
         ],
-        "setup_notes": "Point this at any GeoReport v2 endpoint. POSTing usually requires an api_key from the endpoint operator.",
+        "setup_notes": "Point this at any GeoReport v2 endpoint. POSTing usually requires an api_key from the endpoint operator. Open311 has no way to send a status change back, so status flows one way: from that system to Pinpoint.",
     },
 }
 
@@ -224,6 +226,8 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
             "record_type": "Where reports get filed in Accela. Copy this exactly from your Accela administrator.",
             "sync_assets": "Type true to also copy your Accela asset list (hydrants, signs, lights) onto the Pinpoint map each night.",
             "asset_group": "Optional — only sync one group of assets (ask your Accela admin for the group name).",
+            "coordinate_wkid": "Optional. Leave blank to send the street address only. Enter 4326 if your Accela stores longitude/latitude, or your state plane code (New Jersey is 3424) — ask your Accela or GIS administrator.",
+            "agency_timezone": "The time zone your Accela system runs in. Leave blank for America/New_York.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -258,7 +262,7 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
         "recommended_sync_direction": "bidirectional",
     },
     "tyler": {
-        "plain_summary": "Reports submitted here are sent into your Tyler system, and Tyler status updates show up here automatically.",
+        "plain_summary": "Reports submitted here are sent into your Tyler system, and Tyler status updates show up here automatically. Status changes made here stay here: Open311 has no way to send them back.",
         "what_you_need": [
             "The 'Open311 web address' for your town's Tyler system",
             "An API key from Tyler that allows creating requests",
@@ -272,7 +276,7 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
             "api_key": "The key Tyler sends you — a long string of letters and numbers.",
             "base_url": "Paste the web address exactly as Tyler sends it. It usually ends in /open311/v2.",
             "jurisdiction_id": "Only fill this in if Tyler says you need it. Often it looks like yourtown.gov.",
-            "default_service_code": "Optional — leave blank unless Tyler asks reports to use one specific category code.",
+            "default_service_code": "Optional. Used only for categories you have not mapped under Mapping. Leave blank to send our own category code.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -324,7 +328,7 @@ CLERK_GUIDES: Dict[str, Dict[str, Any]] = {
             "api_key": "The key the endpoint operator sends you.",
             "base_url": "The web address of the Open311 endpoint. It usually ends in /v2.",
             "jurisdiction_id": "Only fill this in if the operator says you need it.",
-            "default_service_code": "Optional — leave blank unless told otherwise.",
+            "default_service_code": "Optional. Used only for categories you have not mapped under Mapping.",
         },
         "recommended_sync_direction": "bidirectional",
     },
@@ -367,6 +371,15 @@ RETIRED_PLATFORMS: Dict[str, str] = {
     # connector against it.
     "civicplus": "CivicPlus (SeeClickFix)",
 }
+
+
+# The status words each connector assumes until a town confirms its own. Sent
+# to the Mapping step so an admin sees what is in force, labelled as defaults.
+for _key, _cls in _CONNECTOR_CLASSES.items():
+    if _key in PLATFORM_CATALOG:
+        PLATFORM_CATALOG[_key]["default_status_map_out"] = dict(_cls.DEFAULT_STATUS_MAP_OUT)
+        PLATFORM_CATALOG[_key]["default_status_map_in"] = dict(_cls.DEFAULT_STATUS_MAP_IN)
+        PLATFORM_CATALOG[_key]["status_push"] = "push_status" in PLATFORM_CATALOG[_key].get("capabilities", [])
 
 
 def is_retired(platform: str) -> bool:

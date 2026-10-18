@@ -181,3 +181,78 @@ def test_the_message_carries_no_hostname_or_credential():
 
     for leak in ("redis://", "amqp://", "://", "@", "password"):
         assert leak not in QUEUE_UNAVAILABLE, f"{leak!r} in a user-facing string"
+
+
+# ---------------------------------------------------------------------------
+# A govtech push that cannot be queued goes to the backlog, not nowhere
+# ---------------------------------------------------------------------------
+
+class CeleryTask(Task):
+    """A stand-in that looks like a real Celery task (has apply_async)."""
+
+    def apply_async(self, *args, **kwargs):  # pragma: no cover - never called
+        raise AssertionError("enqueue uses delay()")
+
+
+def _tasks_module():
+    pytest.importorskip("sqlalchemy")
+    pytest.importorskip("celery.app")
+    import app.tasks.integrations as module
+    return module
+
+
+def test_an_unqueued_push_is_written_to_the_integration_backlog(monkeypatch):
+    module = _tasks_module()
+    import app.tasks.service_requests as service_requests
+
+    recorded = []
+
+    async def fake_record(operation, **kwargs):
+        recorded.append((operation, kwargs))
+        return 1
+
+    monkeypatch.setattr(module, "record_unqueued_push", fake_record)
+    monkeypatch.setattr(service_requests, "run_async", lambda coro: __import__("asyncio").run(coro))
+
+    task = CeleryTask(raises=ConnectionRefusedError("redis down"))
+    task.name = "app.tasks.integrations.push_status_to_integrations"
+    assert enqueue(task, 12, notes="Done") is False
+    assert recorded == [("push_status", {"request_id": 12, "notes": "Done"})]
+
+
+def test_inside_the_api_loop_the_backlog_write_is_scheduled_not_blocking(monkeypatch):
+    import asyncio
+
+    module = _tasks_module()
+    recorded = []
+
+    async def fake_record(operation, **kwargs):
+        recorded.append((operation, kwargs))
+        return 1
+
+    monkeypatch.setattr(module, "record_unqueued_push", fake_record)
+    task = CeleryTask(raises=ConnectionRefusedError("redis down"))
+    task.name = "app.tasks.integrations.push_comment_to_integrations"
+
+    async def handler():
+        assert enqueue(task, 99) is False
+        await asyncio.sleep(0)  # let the scheduled write run
+
+    asyncio.run(handler())
+    assert recorded == [("push_comment", {"comment_id": 99})]
+
+
+def test_other_tasks_and_test_doubles_never_touch_the_backlog(monkeypatch):
+    module = _tasks_module()
+    called = []
+
+    async def fake_record(operation, **kwargs):
+        called.append(operation)
+
+    monkeypatch.setattr(module, "record_unqueued_push", fake_record)
+    task = CeleryTask(raises=ConnectionRefusedError("x"))
+    task.name = "app.tasks.service_requests.send_branded_notification"
+    assert enqueue(task, 1) is False
+    # The plain Task double above has no apply_async.
+    assert enqueue(Task(raises=ConnectionRefusedError("x")), 1) is False
+    assert called == []

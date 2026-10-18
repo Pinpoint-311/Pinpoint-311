@@ -21,6 +21,7 @@ Config:
     status_field        response field holding status (default "status")
     updated_field       response field holding updated timestamp (default "updated_at")
     field_map           optional {pinpoint_field: vendor_field} overrides for the create body
+    service_code_map_out  {local service code: vendor category code} for the create body
 Credentials:
     api_key             used by bearer / api_key_header / query styles
     username, password  used by basic style
@@ -202,6 +203,10 @@ class GenericRestConnector(BaseConnector):
 
     def _build_create_body(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         field_map = {**DEFAULT_FIELD_MAP, **(self.config.get("field_map") or {})}
+        mapped_code = self.map_service_code_out(payload.get("service_code"))
+        if mapped_code:
+            # The vendor's own category code, from service_code_map_out.
+            payload = {**payload, "service_code": mapped_code}
         body: Dict[str, Any] = {}
         for ours, theirs in field_map.items():
             if not theirs:

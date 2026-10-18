@@ -18,8 +18,19 @@ Two ways to authenticate, in preference order:
 Config:
     agency_name       Accela agency identifier (required)
     environment       e.g. PROD / TEST / SUPP (default PROD)
-    record_type       Accela record type alias/id for created records
-                      (e.g. "ServiceRequest/General/Complaint/NA")
+    record_type       Accela record type for created records: the four-level
+                      "Group/Type/SubType/Category" path (e.g.
+                      "ServiceRequest/General/Complaint/NA"), a record type id
+                      ("ServiceRequest-General-Complaint-NA"), or an alias
+    service_code_map_out
+                      {local service code: record type} -- a per-category
+                      record type, same formats; record_type is the fallback
+    coordinate_wkid   the spatial reference the agency stores addresses in.
+                      Unset (default): send the street address and no x/y.
+                      4326: send longitude/latitude. Anything else: reproject
+                      when pyproj is installed, otherwise omit x/y and warn.
+    agency_timezone   IANA zone the agency's Accela dates are in, used for the
+                      updateDateFrom pull window (default America/New_York)
     scope             override the requested scope groups (default "records assets")
     api_base          override, default https://apis.accela.com
     auth_base         override, default https://auth.accela.com
@@ -35,6 +46,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import json
 
@@ -63,22 +75,68 @@ def _clear_token_cache() -> None:
     _token_cache.clear()
 
 
-def _accela_window(since: datetime) -> str:
+DEFAULT_AGENCY_TIMEZONE = "America/New_York"
+
+
+def _agency_zone(name: Optional[str]) -> ZoneInfo:
+    try:
+        return ZoneInfo(str(name or DEFAULT_AGENCY_TIMEZONE))
+    except (ZoneInfoNotFoundError, ValueError):
+        logger.warning("[Accela] Unknown agency_timezone %r -- using %s",
+                       name, DEFAULT_AGENCY_TIMEZONE)
+        return ZoneInfo(DEFAULT_AGENCY_TIMEZONE)
+
+
+def _accela_window(since: datetime, tz_name: Optional[str] = None) -> str:
     """Format a pull window boundary for Accela's date parameters.
 
-    `YYYY-MM-DD HH:MM:SS`, in UTC. Accela's Construct API accepts a time
-    component here; sending date-only granularity meant a fifteen-minute poll
+    `YYYY-MM-DD HH:MM:SS`, in the agency's own local time. Accela stores and
+    compares these dates in the agency's zone with no offset attached, so a UTC
+    value read as Eastern asked for a window four or five hours in the future
+    and missed every edit in between. A naive `since` is UTC (the sync log's
+    clock). Time granularity matters too: date-only meant a fifteen-minute poll
     asked for the whole day on every run.
     """
-    if since.tzinfo is not None:
-        since = since.astimezone(timezone.utc)
-    return since.strftime("%Y-%m-%d %H:%M:%S")
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    return since.astimezone(_agency_zone(tz_name)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def record_type_body(record_type: str) -> Dict[str, str]:
+    """Accela's v4 ``type`` object for a configured record type.
+
+    The Construct API names the four levels group/type/subType/category, or
+    takes the joined ``id``. The first level used to be sent as ``module``,
+    which is not a field Accela reads, so every create was missing its group.
+    """
+    text = str(record_type).strip()
+    if "/" in text:
+        parts = [p.strip() for p in text.split("/")]
+        return {key: val for key, val in zip(("group", "type", "subType", "category"), parts) if val}
+    if text.count("-") == 3 and " " not in text:
+        return {"id": text}
+    return {"alias": text}
+
+
+def _reprojector_from_wgs84(wkid: int):
+    """A lon/lat -> agency CRS function, or None when pyproj is unavailable."""
+    try:
+        from pyproj import Transformer  # optional dependency
+    except Exception:
+        return None
+    try:
+        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{wkid}", always_xy=True)
+    except Exception:
+        return None
+    return transformer.transform
 
 
 class AccelaConnector(BaseConnector):
     platform = "accela"
     capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets", "work_orders"}
 
+    # Accela status values are agency configuration. These are common words,
+    # shown in the Mapping step as defaults to confirm, never assumed correct.
     DEFAULT_STATUS_MAP_OUT = {"open": "Open", "in_progress": "In Progress", "closed": "Closed"}
     DEFAULT_STATUS_MAP_IN = {
         "open": "open", "submitted": "open", "received": "open",
@@ -212,7 +270,10 @@ class AccelaConnector(BaseConnector):
         return {"Authorization": token, "Content-Type": "application/json"}
 
     def _record_from_accela(self, item: Dict[str, Any]) -> ExternalRecord:
-        raw_status = (item.get("status") or {}).get("text") if isinstance(item.get("status"), dict) else item.get("status")
+        status = item.get("status")
+        # `value` is the agency's status code -- what a push sends and what the
+        # Mapping step lists; `text` is its display label (usually the same).
+        raw_status = (status.get("value") or status.get("text")) if isinstance(status, dict) else status
         updated = item.get("updateDate") or item.get("statusDate")
         updated_dt = None
         if updated:
@@ -264,28 +325,18 @@ class AccelaConnector(BaseConnector):
                 "detail": f"Connected to agency {self.config['agency_name']} — {how}."}
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
-        record_type = self.config.get("record_type")
+        record_type = self.config.get("record_type") or self.map_service_code_out(payload.get("service_code"))
         if not record_type:
             raise ConnectorError("Accela config requires record_type (e.g. 'ServiceRequest/General/Complaint/NA')")
         token = await self._get_token()
 
         body: Dict[str, Any] = {
-            "type": {"alias": record_type} if "/" not in record_type else {
-                # "Module/Type/Subtype/Category" form
-                key: val for key, val in zip(
-                    ("module", "type", "subType", "category"), record_type.split("/")
-                )
-            },
+            "type": record_type_body(self.map_service_code_out(payload.get("service_code")) or record_type),
             "description": payload.get("description") or "",
             "name": (payload.get("service_name") or "Service Request")[:100],
         }
-        if payload.get("address") or payload.get("lat") is not None:
-            address: Dict[str, Any] = {}
-            if payload.get("address"):
-                address["streetAddress"] = payload["address"][:255]
-            if payload.get("lat") is not None:
-                address["xCoordinate"] = payload["long"]
-                address["yCoordinate"] = payload["lat"]
+        address = self._address_body(payload)
+        if address:
             body["addresses"] = [address]
         if payload.get("email") or payload.get("first_name"):
             body["contacts"] = [{
@@ -306,9 +357,51 @@ class AccelaConnector(BaseConnector):
             raise ConnectorError("Accela create record returned an empty result")
         return self._record_from_accela(result[0])
 
+    def _coordinates(self, lat: Any, lng: Any) -> Optional[Tuple[float, float]]:
+        """(x, y) in the agency's spatial reference, or None to leave them off.
+
+        Accela agencies usually store addresses in a projected system -- New
+        Jersey towns in State Plane feet (EPSG:3424) -- and longitude/latitude
+        written into those columns lands the point in the ocean. Coordinates are
+        only sent when the system is known.
+        """
+        raw = self.config.get("coordinate_wkid")
+        if raw in (None, ""):
+            return None
+        try:
+            wkid = int(str(raw).strip())
+            x, y = float(lng), float(lat)
+        except (TypeError, ValueError):
+            self.warn(f"Accela coordinate_wkid {raw!r} is not a number, so coordinates were left off.")
+            return None
+        if wkid == 4326:
+            return x, y
+        transform = _reprojector_from_wgs84(wkid)
+        if transform is None:
+            self.warn(
+                f"Coordinates were left off: converting to EPSG:{wkid} needs pyproj, which this "
+                "server does not have. The street address was sent."
+            )
+            return None
+        px, py = transform(x, y)
+        return float(px), float(py)
+
+    def _address_body(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        address: Dict[str, Any] = {}
+        if payload.get("address"):
+            address["streetAddress"] = payload["address"][:255]
+        if payload.get("lat") is not None and payload.get("long") is not None:
+            coords = self._coordinates(payload["lat"], payload["long"])
+            if coords:
+                address["xCoordinate"], address["yCoordinate"] = coords
+        return address or None
+
     async def push_status(self, external_id: str, status: str, notes: Optional[str] = None) -> None:
         token = await self._get_token()
-        body = {"status": {"text": self.map_status_out(status)}}
+        # `value` is what Accela matches against the agency's status list;
+        # `text` alone is display and was ignored, so status never changed.
+        mapped = self.map_status_out(status)
+        body: Dict[str, Any] = {"status": {"value": mapped, "text": mapped}}
         if notes:
             body["statusReason"] = {"text": notes[:255]}
         async with self._client() as client:
@@ -340,7 +433,7 @@ class AccelaConnector(BaseConnector):
             while offset < 10000:  # hard ceiling, matching pull_assets
                 params: Dict[str, Any] = {"limit": 100, "offset": offset}
                 if since:
-                    params["updateDateFrom"] = _accela_window(since)
+                    params["updateDateFrom"] = _accela_window(since, self.config.get("agency_timezone"))
                 resp = await client.get(
                     f"{self.api_base}/v4/records", params=params, headers=self._headers(token)
                 )

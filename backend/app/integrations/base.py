@@ -228,6 +228,13 @@ class ExternalComment:
 #   media_urls (http(s) URLs only — base64 blobs are never pushed)
 
 
+#: Prefix on an IntegrationLink.external_id that is not the vendor's record id
+#: yet. GeoReport v2 lets a server answer a create with a `token` and assign the
+#: real `service_request_id` later; the link is stored as ``token:<token>`` and
+#: the pull resolves it through the connector's ``resolve_pending_id``.
+PENDING_ID_PREFIX = "token:"
+
+
 class BaseConnector:
     """Abstract base for platform connectors."""
 
@@ -249,6 +256,30 @@ class BaseConnector:
     def __init__(self, config: Dict[str, Any], credentials: Dict[str, Any]):
         self.config = config or {}
         self.credentials = credentials or {}
+        #: Things that did not stop the operation but changed what was sent --
+        #: a layer column that does not exist, a value outside a coded domain,
+        #: coordinates left off because the agency's projection is unknown. The
+        #: sync task writes these to the sync log as warnings after each call,
+        #: so they reach the admin instead of only the worker's log.
+        self.warnings: List[str] = []
+
+    def warn(self, message: str) -> None:
+        if message and message not in self.warnings:
+            self.warnings.append(message)
+
+    def take_warnings(self) -> List[str]:
+        """Hand over and clear the warnings gathered so far."""
+        out, self.warnings = list(self.warnings), []
+        return out
+
+    # ---- Service-code mapping -------------------------------------------
+
+    def map_service_code_out(self, local_code: Optional[str]) -> Optional[str]:
+        """The vendor's code for one of our categories, or None when unmapped."""
+        if not local_code:
+            return None
+        from app.integrations.mapping import service_code_map_out
+        return service_code_map_out(self.config).get(str(local_code))
 
     # ---- Status mapping -------------------------------------------------
 
@@ -268,6 +299,18 @@ class BaseConnector:
         overrides = {str(k).lower(): v for k, v in (self.config.get("status_map_in") or {}).items()}
         if key in overrides:
             return overrides[key]
+        # A word we send is a word we understand. A town that maps
+        # in_progress -> "Under Review" outbound and never added the reverse
+        # would otherwise read its own pushed status back as "open".
+        # Only a word exactly one of our statuses maps to: Open311 sends both
+        # open and in_progress as "open", and reading that back as either would
+        # be a guess.
+        reverse: Dict[str, List[str]] = {}
+        for ours, theirs in (self.config.get("status_map_out") or {}).items():
+            if theirs:
+                reverse.setdefault(str(theirs).strip().lower(), []).append(ours)
+        if len(reverse.get(key, [])) == 1:
+            return reverse[key][0]
         return self.DEFAULT_STATUS_MAP_IN.get(key, "open" if key not in ("closed", "resolved", "archived", "complete", "completed") else "closed")
 
     # ---- Operations (override in subclasses) ----------------------------
@@ -290,6 +333,17 @@ class BaseConnector:
 
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         """Fetch a single record by external id (used for per-request refresh)."""
+        return None
+
+    async def pull_linked(self, external_ids: List[str]) -> List[ExternalRecord]:
+        """Fetch the current state of records we are already linked to
+        (capability "pull_linked"). For vendors whose change feed cannot be
+        trusted to include status edits on older records."""
+        raise ConnectorError(f"{self.platform} connector does not support polling linked records")
+
+    async def resolve_pending_id(self, external_id: str) -> Optional[str]:
+        """Turn a ``token:`` placeholder id into the vendor's real record id,
+        or None while the vendor has not assigned one yet."""
         return None
 
     # -- Comments (capability "comments") --

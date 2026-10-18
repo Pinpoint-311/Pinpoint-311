@@ -487,3 +487,128 @@ def test_catalog_entry_matches_the_connector():
     for field in meta["credential_fields"] + meta["config_fields"]:
         assert field["key"] in meta["field_help"], f"no field_help for {field['key']}"
     assert meta["plain_summary"] and meta["what_you_need"] and meta["vendor_ask"]
+
+
+# ---- Warnings that reach the admin -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_column_becomes_a_warning_not_just_a_log_line(monkeypatch):
+    """Dropping the unknown column keeps the report flowing; saying nothing
+    meant a drifted field map lost that data on every report unseen."""
+    Recorder({
+        "applyEdits": {"addResults": [{"objectId": 9, "success": True}]},
+        "metadata": LAYER_METADATA,
+    }).install(monkeypatch)
+    conn = _connector({"field_map": {"description": "no_such_column"}})
+    await conn.push_request(PAYLOAD)
+    warnings = conn.take_warnings()
+    assert any("no_such_column" in w for w in warnings)
+    assert conn.take_warnings() == [], "taken once, then cleared"
+
+
+DOMAIN_METADATA = {**LAYER_METADATA, "fields": [
+    f if f["name"] != "status" else {**f, "domain": {"type": "codedValue", "codedValues": [
+        {"name": "New", "code": "NEW"}, {"name": "Working", "code": "WIP"},
+        {"name": "Done", "code": "DONE"}]}}
+    for f in LAYER_METADATA["fields"]
+] + [{"name": "reqtype", "type": "esriFieldTypeInteger", "domain": {
+    "type": "codedValue", "codedValues": [{"name": "Pothole", "code": 1}, {"name": "Light", "code": 2}]}}]}
+
+
+@pytest.mark.asyncio
+async def test_connection_check_lists_columns_the_field_map_points_nowhere(monkeypatch):
+    Recorder({"metadata": LAYER_METADATA}).install(monkeypatch)
+    result = await _connector({"field_map": {"description": "notes_col"}}).test_connection()
+    assert result["ok"] is True
+    joined = " ".join(result.get("warnings", []))
+    assert "description → notes_col" in joined
+    # The template's reqtype column is absent from this layer too.
+    assert "service_code → reqtype" in joined
+    # Contact columns only count when this connection shares contact details.
+    assert "firstname" not in joined
+
+
+@pytest.mark.asyncio
+async def test_connection_check_has_no_warnings_on_a_matching_layer(monkeypatch):
+    metadata = {**LAYER_METADATA, "fields": LAYER_METADATA["fields"] + [
+        {"name": "reqtype", "type": "esriFieldTypeString"}]}
+    Recorder({"metadata": metadata}).install(monkeypatch)
+    result = await _connector().test_connection()
+    assert "warnings" not in result
+
+
+@pytest.mark.asyncio
+async def test_connection_check_makes_arcgis_judge_the_credential(monkeypatch):
+    """A public layer answers ?f=json to anybody, so the check sends the token
+    as a parameter, which ArcGIS validates even on a public layer -- and POSTs
+    it so the key stays out of logged URLs."""
+    rec = Recorder({"metadata": LAYER_METADATA}).install(monkeypatch)
+    result = await _connector().test_connection()
+    posts = [r for r in rec.requests if r[1] == "POST"]
+    assert posts and "token=test-key" in posts[0][2]
+    assert "test-key" not in posts[0][0]
+    assert result["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_credential_fails_the_check_on_a_public_layer(monkeypatch):
+    def metadata(body):
+        if "token=" in body:
+            return {"error": {"code": 498, "message": "Invalid token."}}
+        return LAYER_METADATA
+
+    Recorder({"metadata": metadata}).install(monkeypatch)
+    with pytest.raises(ConnectorError, match="rejected the credentials"):
+        await _connector().test_connection()
+
+
+@pytest.mark.asyncio
+async def test_connection_check_flags_status_values_outside_the_domain(monkeypatch):
+    Recorder({"metadata": DOMAIN_METADATA}).install(monkeypatch)
+    result = await _connector().test_connection()
+    joined = " ".join(result.get("warnings", []))
+    assert "Submitted" in joined and "NEW" in joined
+
+
+@pytest.mark.asyncio
+async def test_status_and_category_are_written_as_the_domain_spells_them(monkeypatch):
+    rec = Recorder({
+        "applyEdits": {"addResults": [{"objectId": 5, "success": True}]},
+        "metadata": DOMAIN_METADATA,
+    }).install(monkeypatch)
+    conn = _connector({"status_map_out": {"open": "NEW"}, "service_code_map_out": {"PTH": "1"}})
+    await conn.push_request({**PAYLOAD, "service_code": "PTH"})
+    attributes = json.loads(rec.params_for("applyEdits")["adds"])[0]["attributes"]
+    assert attributes["status"] == "NEW"
+    assert attributes["reqtype"] == 1, "the domain's own (integer) code"
+    assert conn.take_warnings() == []
+
+
+@pytest.mark.asyncio
+async def test_out_of_domain_values_are_left_off_with_a_warning(monkeypatch):
+    rec = Recorder({
+        "applyEdits": {"addResults": [{"objectId": 5, "success": True}]},
+        "metadata": DOMAIN_METADATA,
+    }).install(monkeypatch)
+    conn = _connector()
+    await conn.push_request({**PAYLOAD, "service_code": "PTH"})
+    attributes = json.loads(rec.params_for("applyEdits")["adds"])[0]["attributes"]
+    assert "status" not in attributes and "reqtype" not in attributes
+    warnings = " ".join(conn.take_warnings())
+    assert "Submitted" in warnings and "PTH" in warnings
+
+
+@pytest.mark.asyncio
+async def test_a_status_update_outside_the_domain_fails_loudly(monkeypatch):
+    Recorder({"applyEdits": {"updateResults": [{"success": True}]},
+              "metadata": DOMAIN_METADATA}).install(monkeypatch)
+    with pytest.raises(ConnectorError, match="Fix the status mapping"):
+        await _connector().push_status("12", "closed")
+
+
+@pytest.mark.asyncio
+async def test_lookups_offer_the_category_domain(monkeypatch):
+    Recorder({"metadata": DOMAIN_METADATA}).install(monkeypatch)
+    lookups = await _connector().pull_lookups()
+    assert lookups["services"] == [{"code": "1", "name": "Pothole"}, {"code": "2", "name": "Light"}]

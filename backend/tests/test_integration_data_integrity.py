@@ -260,17 +260,19 @@ async def test_the_accela_pull_asks_for_a_time_not_a_whole_day(accela):
     seen = accela({0: []})
     await connector().pull_updates(since=NOW)
     sent = dict(seen[0].url.params)["updateDateFrom"]
-    assert sent == "2026-08-05 12:00:00", sent
+    # 12:00 UTC is 08:00 in the default agency zone (America/New_York, EDT).
+    assert sent == "2026-08-05 08:00:00", sent
 
 
 @pytest.mark.asyncio
-async def test_the_accela_window_is_sent_in_utc(accela):
-    """The stored watermark is UTC; sending it in another zone would shift the
-    window by hours in whichever direction loses records."""
+async def test_the_accela_window_is_sent_in_agency_local_time(accela):
+    """Accela compares these dates in the agency's own zone with no offset, so
+    the same instant must arrive as the same local wall time however the
+    watermark was expressed."""
     seen = accela({0: []})
     eastern = NOW.astimezone(timezone(timedelta(hours=-4)))
     await connector().pull_updates(since=eastern)
-    assert dict(seen[0].url.params)["updateDateFrom"] == "2026-08-05 12:00:00"
+    assert dict(seen[0].url.params)["updateDateFrom"] == "2026-08-05 08:00:00"
 
 
 # ---------------------------------------------------------------------------

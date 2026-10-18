@@ -29,6 +29,9 @@ Config:
     external_id_field   attribute to use as the external id; default the object id
     edit_date_field     override the layer's editFieldsInfo.editDateField
     status_notes_field  layer field to write status notes into
+    service_code_map_out {local service code: layer category value} for the
+                        column `service_code` maps to (reqtype by default),
+                        checked against that column's coded-value domain
     asset_layer_url     a second layer polled for the asset inventory
     reuse_maps_api_key  "false" to stop falling back to the maps ARCGIS_API_KEY
                         (the fallback only applies to *.arcgis.com layers anyway)
@@ -345,6 +348,39 @@ class ArcGISConnector(BaseConnector):
     def _field_map(self) -> Dict[str, str]:
         return {**DEFAULT_FIELD_MAP, **(self.config.get("field_map") or {})}
 
+    @staticmethod
+    def _coded_domain(metadata: Dict[str, Any], field_name: Optional[str]) -> Optional[Dict[str, Any]]:
+        """{str(code): code} for a column's coded-value domain, or None when the
+        column has none (free text accepts anything)."""
+        if not field_name:
+            return None
+        for field in (metadata.get("fields") or []):
+            if not isinstance(field, dict) or str(field.get("name")) != str(field_name):
+                continue
+            domain = field.get("domain")
+            if isinstance(domain, dict) and domain.get("type") == "codedValue":
+                return {str(v.get("code")): v.get("code")
+                        for v in (domain.get("codedValues") or [])
+                        if isinstance(v, dict) and v.get("code") is not None}
+            return None
+        return None
+
+    def _pii_fields(self) -> set:
+        return {"first_name", "last_name", "email", "phone"}
+
+    def _expected_columns(self) -> Dict[str, str]:
+        """The layer columns a push will try to write: {pinpoint field: column}.
+        Contact columns only count when this connection shares them."""
+        share_pii = str(self.config.get("share_pii") or "").strip().lower() in ("1", "true", "yes", "on")
+        out = {}
+        for ours, theirs in self._field_map().items():
+            if not theirs:
+                continue
+            if ours in self._pii_fields() and not share_pii:
+                continue
+            out[ours] = str(theirs)
+        return out
+
     async def _build_attributes(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Map the Pinpoint payload onto the layer's own columns.
 
@@ -370,6 +406,15 @@ class ArcGISConnector(BaseConnector):
                 continue
             if ours == "status":
                 value = self.map_status_out(str(value))
+                value = self._in_domain(metadata, str(theirs), value, "status")
+                if value is None:
+                    continue
+            elif ours == "service_code":
+                mapped = self.map_service_code_out(str(value))
+                value = self._in_domain(metadata, str(theirs), mapped or value, "category",
+                                        local=str(value), mapped=bool(mapped))
+                if value is None:
+                    continue
             if theirs in date_fields:
                 value = _epoch_ms(value)
                 if value is None:
@@ -381,7 +426,41 @@ class ArcGISConnector(BaseConnector):
         for name in unknown:
             logger.warning("[ArcGIS] Layer has no field %r — omitting it from the edit", name)
             attributes.pop(name)
+        if unknown:
+            # Dropping the column keeps the report flowing (ArcGIS rejects the
+            # whole edit for one unknown name), but silently dropping it meant a
+            # drifted field map lost that data on every report with nobody told.
+            self.warn(
+                "The layer has no column named " + ", ".join(f"\"{n}\"" for n in unknown)
+                + ", so that information was left off. Fix the field mapping under Mapping."
+            )
         return attributes
+
+    def _in_domain(self, metadata: Dict[str, Any], column: str, value: Any, label: str,
+                   local: Optional[str] = None, mapped: bool = True) -> Any:
+        """The value as the layer's coded domain spells it, or None (with a
+        warning) when the column has a domain and the value is not in it.
+
+        ArcGIS accepts an out-of-domain value without complaint, so a mapping
+        typo becomes a status or category no map, filter or dashboard can show.
+        """
+        domain = self._coded_domain(metadata, column)
+        if domain is None:
+            return value
+        if str(value) in domain:
+            return domain[str(value)]
+        allowed = ", ".join(sorted(domain)[:12])
+        if label == "category" and not mapped:
+            self.warn(
+                f"Category \"{local}\" has no mapping, and \"{column}\" only accepts: {allowed}. "
+                "The category was left off. Map it under Mapping."
+            )
+        else:
+            self.warn(
+                f"\"{value}\" is not one of the values \"{column}\" accepts ({allowed}), so the "
+                f"{label} was left off. Fix the {label} mapping under Mapping."
+            )
+        return None
 
     def _geometry(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         lat, lng = payload.get("lat"), payload.get("long")
@@ -429,8 +508,58 @@ class ArcGISConnector(BaseConnector):
 
     # ---- Operations ------------------------------------------------------
 
+    async def _verify_credential(self) -> None:
+        """Make ArcGIS judge the credential itself.
+
+        A public layer answers ``?f=json`` to anybody, so reading its metadata
+        proves nothing about the key. A token sent as the ``token`` parameter is
+        validated by ArcGIS even on a public layer -- a bad or expired one comes
+        back as error 498/499 -- so this raises exactly when the credential would
+        fail on the first edit. POSTed, so the token stays out of logged URLs.
+        """
+        token = await self._get_token()
+        async with self._client() as client:
+            resp = await client.post(self.layer_url, data={"f": "json", "token": token})
+            self._raise_for_status(resp, "ArcGIS credential check")
+            self._arcgis_json(resp, "ArcGIS credential check")
+
+    def _coverage_warnings(self, metadata: Dict[str, Any]) -> List[str]:
+        """What a push would try to write that this layer cannot take."""
+        names = {str(f.get("name")) for f in (metadata.get("fields") or [])
+                 if isinstance(f, dict) and f.get("name")}
+        if not names:
+            return []
+        warnings: List[str] = []
+        missing = [f"{ours} → {col}" for ours, col in self._expected_columns().items() if col not in names]
+        missing += [f"fixed value → {col}" for col in (self.config.get("static_fields") or {}) if col not in names]
+        if missing:
+            warnings.append(
+                "These go nowhere, because the layer has no matching column: "
+                + "; ".join(missing) + ". Pick the right columns under Mapping."
+            )
+        field_map = self._field_map()
+        status_domain = self._coded_domain(metadata, field_map.get("status") or "status")
+        if status_domain is not None:
+            bad = sorted({self.map_status_out(s) for s in ("open", "in_progress", "closed")}
+                         - set(status_domain))
+            if bad:
+                warnings.append(
+                    f"Status values the layer does not accept: {', '.join(bad)}. "
+                    f"It accepts: {', '.join(sorted(status_domain)[:12])}. Fix them under Mapping."
+                )
+        category_domain = self._coded_domain(metadata, field_map.get("service_code"))
+        if category_domain is not None:
+            from app.integrations.mapping import service_code_map_out
+            bad = sorted({v for v in service_code_map_out(self.config).values()} - set(category_domain))
+            if bad:
+                warnings.append(
+                    f"Category values the layer does not accept: {', '.join(bad)}. Fix them under Mapping."
+                )
+        return warnings
+
     async def test_connection(self) -> Dict[str, Any]:
         metadata = await self._layer_metadata()
+        await self._verify_credential()
         name = metadata.get("name") or "(unnamed layer)"
         can_create = self._can(metadata, "create")
         can_update = self._can(metadata, "update")
@@ -463,7 +592,12 @@ class ArcGISConnector(BaseConnector):
                 "Editor tracking is off, so status polling will re-read the whole "
                 "layer each time instead of only what changed."
             )
-        return {"ok": True, "detail": " ".join(parts)}
+        parts.append("ArcGIS accepted the saved credential.")
+        result: Dict[str, Any] = {"ok": True, "verified": True, "detail": " ".join(parts)}
+        warnings = self._coverage_warnings(metadata)
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     async def push_request(self, payload: Dict[str, Any]) -> ExternalRecord:
         token = await self._get_token()
@@ -513,9 +647,22 @@ class ArcGISConnector(BaseConnector):
         oid_field = await self._object_id_field()
         object_id = await self._resolve_object_id(external_id)
         field_map = self._field_map()
+        status_column = field_map.get("status") or "status"
+        value = self.map_status_out(status)
+        domain = self._coded_domain(await self._layer_metadata(), status_column)
+        if domain is not None:
+            if str(value) not in domain:
+                # Raised rather than sent: an update whose only job is the status
+                # must not land a value no ArcGIS map can show. The failure goes
+                # to Failed syncs and is retried once the mapping is fixed.
+                raise ConnectorError(
+                    f"ArcGIS: \"{value}\" is not one of the values \"{status_column}\" accepts "
+                    f"({', '.join(sorted(domain)[:12])}). Fix the status mapping under Mapping."
+                )
+            value = domain[str(value)]
         attributes: Dict[str, Any] = {
             oid_field: object_id,
-            (field_map.get("status") or "status"): self.map_status_out(status),
+            status_column: value,
         }
         notes_field = self.config.get("status_notes_field")
         if notes and notes_field:
@@ -663,6 +810,8 @@ class ArcGISConnector(BaseConnector):
         """
         metadata = await self._layer_metadata()
         status_field = self._field_map().get("status") or "status"
+        category_field = self._field_map().get("service_code")
+        services: List[Dict[str, str]] = []
         statuses: List[Dict[str, str]] = []
         fields: List[Dict[str, str]] = []
         for field in (metadata.get("fields") or []):
@@ -670,9 +819,15 @@ class ArcGISConnector(BaseConnector):
                 continue
             name = str(field["name"])
             fields.append({"code": name, "name": str(field.get("alias") or name)})
+            domain = field.get("domain")
+            if name == category_field and isinstance(domain, dict) and domain.get("type") == "codedValue":
+                services = [
+                    {"code": str(v.get("code")), "name": str(v.get("name") or v.get("code"))}
+                    for v in (domain.get("codedValues") or [])
+                    if isinstance(v, dict) and v.get("code") is not None
+                ]
             if name != status_field:
                 continue
-            domain = field.get("domain")
             if isinstance(domain, dict) and domain.get("type") == "codedValue":
                 statuses = [
                     {"code": str(v.get("code")), "name": str(v.get("name") or v.get("code"))}
@@ -683,7 +838,14 @@ class ArcGISConnector(BaseConnector):
         return {
             "statuses": statuses,
             "fields": fields,
+            "services": services,
             "_source": {
+                "services": (
+                    f"the coded-value domain on \"{category_field}\" in layer \"{layer_name}\""
+                    if services else
+                    f"\"{category_field or 'the category column'}\" has no coded-value domain, "
+                    "so it accepts any text"
+                ),
                 "statuses": (
                     f"the coded-value domain on \"{status_field}\" in layer \"{layer_name}\""
                     if statuses else

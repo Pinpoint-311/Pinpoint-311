@@ -128,6 +128,7 @@ def _reject_unknown_keys(platform: str, credentials: Optional[Dict[str, Any]],
 _EXTRA_CONFIG_KEYS = {
     "config_fields": {
         "share_pii", "import_new_records", "service_code_map",
+        "service_code_map_out", "service_code_map_in", "attribute_map",
         "default_local_service_code", "status_map_in", "status_map_out",
         "field_map", "static_fields", "max_retries", "max_pull_pages",
         "list_items_field", "next_field", "comments_path", "comments_items_field",
@@ -922,10 +923,33 @@ async def accela_oauth_callback(
 
 
 class MappingApproval(BaseModel):
-    """A mapping an admin has looked at and accepted."""
+    """A mapping an admin has looked at and accepted.
+
+    `service_code_map_out` is our category code -> the vendor's code, sent on
+    every push; `service_code_map_in` is the vendor's code or name -> ours, used
+    when a vendor record is imported. `service_code_map` is the original single
+    key, still accepted, and means the outbound map: its values were always
+    checked against the vendor's codes here.
+    """
     status_map_out: Optional[Dict[str, str]] = None
     status_map_in: Optional[Dict[str, str]] = None
     service_code_map: Optional[Dict[str, str]] = None
+    service_code_map_out: Optional[Dict[str, str]] = None
+    service_code_map_in: Optional[Dict[str, str]] = None
+    # ArcGIS / generic REST: Pinpoint field -> the vendor's column or field name.
+    field_map: Optional[Dict[str, str]] = None
+    # Open311: the vendor's attribute code -> Pinpoint field or custom answer.
+    attribute_map: Optional[Dict[str, str]] = None
+    share_pii: Optional[bool] = None
+    import_new_records: Optional[bool] = None
+
+
+def _clean_mapping(mapping: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    """Blank entries mean "not mapped", so they are dropped rather than stored."""
+    if mapping is None:
+        return None
+    return {str(k).strip(): str(v).strip() for k, v in mapping.items()
+            if str(k).strip() and v is not None and str(v).strip()}
 
 
 def _unknown_codes(mapping: Optional[Dict[str, str]], known: List[Dict[str, Any]]) -> List[str]:
@@ -1021,15 +1045,32 @@ async def approve_integration_mapping(
     integration = await _get_integration(db, integration_id)
     lookups = integration.lookups_cache or {}
 
+    status_out = _clean_mapping(data.status_map_out)
+    status_in = _clean_mapping(data.status_map_in)
+    code_out = _clean_mapping(data.service_code_map_out if data.service_code_map_out is not None
+                              else data.service_code_map)
+    code_in = _clean_mapping(data.service_code_map_in)
+    field_map = _clean_mapping(data.field_map) if data.field_map is not None else None
+    attribute_map = _clean_mapping(data.attribute_map)
+
     problems = []
     for label, mapping, known in (
-        ("status", data.status_map_out, lookups.get("statuses") or []),
-        ("service code", data.service_code_map, lookups.get("services") or []),
+        ("status", status_out, lookups.get("statuses") or []),
+        ("service code", code_out, lookups.get("services") or []),
+        ("layer column", field_map, lookups.get("fields") or []),
     ):
         unknown = _unknown_codes(mapping, known)
         if unknown:
             problems.append(
                 f"{label}(s) this vendor does not have: {', '.join(unknown)}")
+    # Our side of the map has a list too, and it is always available: a key that
+    # is not one of this town's categories is a mapping that will never fire.
+    local_keys = set(code_out or {}) | set((code_in or {}).values())
+    if local_keys:
+        known_local = set((await db.execute(select(ServiceDefinition.service_code))).scalars().all())
+        stray = sorted(k for k in local_keys if k not in known_local)
+        if stray:
+            problems.append(f"categories this town does not have: {', '.join(stray)}")
     if problems:
         raise HTTPException(
             status_code=400,
@@ -1039,11 +1080,26 @@ async def approve_integration_mapping(
         )
 
     config = dict(integration.config or {})
-    for key, value in (("status_map_out", data.status_map_out),
-                       ("status_map_in", data.status_map_in),
-                       ("service_code_map", data.service_code_map)):
+    for key, value in (("status_map_out", status_out),
+                       ("status_map_in", status_in),
+                       ("service_code_map_out", code_out),
+                       ("service_code_map_in", code_in),
+                       ("attribute_map", attribute_map)):
         if value is not None:
             config[key] = value
+    if field_map is not None:
+        # Blank values are meaningful in a field map ("send nothing to this
+        # column"), so the raw entries are kept for the keys that were sent.
+        config["field_map"] = {str(k): (str(v).strip() if v is not None else "")
+                               for k, v in (data.field_map or {}).items() if str(k).strip()}
+    if code_out is not None:
+        # Migrated: the old single key is gone once an explicit outbound map
+        # has been saved, so nothing reads two answers to one question.
+        config.pop("service_code_map", None)
+    for key, value in (("share_pii", data.share_pii),
+                       ("import_new_records", data.import_new_records)):
+        if value is not None:
+            config[key] = bool(value)
     integration.config = config
     integration.mapping_approved_at = datetime.now(timezone.utc)
     integration.mapping_approved_by = current_user.username[:100]
@@ -1233,6 +1289,53 @@ async def get_sync_logs(
     ]
 
 
+@router.get("/{integration_id}/sync-problems")
+async def get_sync_problems(
+    integration_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    """Requests whose last sync to this vendor failed, and recent warnings.
+
+    The backlog lists work still owed; this lists the per-request errors and the
+    "sent, but something was left off" warnings (a missing layer column, a value
+    outside a coded domain), which otherwise lived only in the Activity drawer.
+    """
+    await _get_integration(db, integration_id)
+    links = (await db.execute(
+        select(IntegrationLink, ServiceRequest.service_request_id)
+        .join(ServiceRequest, IntegrationLink.service_request_id == ServiceRequest.id)
+        .where(IntegrationLink.integration_id == integration_id,
+               IntegrationLink.sync_error.isnot(None))
+        .order_by(IntegrationLink.id.desc())
+        .limit(50)
+    )).all()
+    warnings = (await db.execute(
+        select(IntegrationSyncLog)
+        .where(IntegrationSyncLog.integration_id == integration_id,
+               IntegrationSyncLog.status == "warning")
+        .order_by(IntegrationSyncLog.created_at.desc())
+        .limit(10)
+    )).scalars().all()
+    return {
+        "link_errors": [
+            {
+                "request_id": public_id,
+                "external_id": link.external_id,
+                "pending": str(link.external_id or "").startswith("token:"),
+                "error": link.sync_error,
+                "last_pushed_at": link.last_pushed_at.isoformat() if link.last_pushed_at else None,
+            }
+            for link, public_id in links
+        ],
+        "warnings": [
+            {"id": w.id, "operation": w.operation, "detail": w.detail,
+             "created_at": w.created_at.isoformat() if w.created_at else None}
+            for w in warnings
+        ],
+    }
+
+
 @router.get("/requests/{service_request_id}/links")
 async def get_request_links(
     service_request_id: str,
@@ -1371,23 +1474,48 @@ async def integration_webhook(
             select(ServiceRequest).where(ServiceRequest.id == link.service_request_id)
         )).scalar_one_or_none()
         comments_added = 0
+        status_change = None
         if sr:
-            if payload.status and payload.status != sr.status:
-                old_status = sr.status
-                sr.status = payload.status
-                sr.updated_datetime = datetime.now(timezone.utc)
-                if payload.status == "closed":
-                    sr.closed_datetime = datetime.now(timezone.utc)
-                db.add(RequestAuditLog(
-                    service_request_id=sr.id,
-                    action="status_change",
-                    old_value=old_status,
-                    new_value=payload.status,
-                    actor_type="integration",
-                    actor_name=integration.display_name,
-                ))
+            if payload.status:
+                # The same rule as a pull: a sender that repeats the full record
+                # on every event must not undo a status staff set after it.
+                from app.integrations.mapping import clip_external_status, decide_inbound_status
+                previous_raw = link.external_status
+                try:
+                    from app.integrations.registry import build_connector
+                    map_in = build_connector(integration.platform, integration.config or {}, {}).map_status_in
+                except Exception:
+                    map_in = (lambda raw: raw)
+                new_status = decide_inbound_status(
+                    previous_raw=previous_raw, current_raw=payload.status,
+                    inbound_status=payload.status, local_status=sr.status, map_in=map_in,
+                )
+                link.external_status = clip_external_status(payload.status)
+                link.last_pulled_at = datetime.now(timezone.utc)
+                if new_status:
+                    old_status = sr.status
+                    sr.status = new_status
+                    sr.updated_datetime = datetime.now(timezone.utc)
+                    if new_status == "closed":
+                        sr.closed_datetime = datetime.now(timezone.utc)
+                        if not sr.closed_substatus:
+                            sr.closed_substatus = "resolved"
+                    db.add(RequestAuditLog(
+                        service_request_id=sr.id,
+                        action="status_change",
+                        old_value=old_status,
+                        new_value=new_status,
+                        actor_type="integration",
+                        actor_name=integration.display_name,
+                    ))
+                    status_change = (sr.id, old_status, sr.completion_message)
             comments_added = await _import_webhook_comments(sr.id)
             await db.commit()
+            if status_change:
+                # The resident hears about a vendor's change exactly as they
+                # would about a staff member's -- after the commit, enqueued.
+                from app.tasks.integrations import notify_external_status_change
+                notify_external_status_change(*status_change, actor=integration.display_name)
         return {
             "message": "updated",
             "service_request_id": sr.service_request_id if sr else None,

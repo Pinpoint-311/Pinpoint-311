@@ -36,6 +36,12 @@ import {
 import {
     StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert,
 } from './capabilityUI';
+// Per-connection mapping and the failed-sync backlog. The endpoints behind
+// these existed with no screen at all, so a town could connect a system and
+// never be asked which of its categories was which on the other side.
+import {
+    MappingPanel, FailedSyncsPanel, type MappedIntegration, type MappedPlatform,
+} from './IntegrationMapping';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -96,6 +102,10 @@ export default function GovtechIntegrations() {
     const [muting, setMuting] = useState<string | null>(null);
     const [logs, setLogs] = useState<Record<string, IntegrationSyncLog[]>>({});
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
+    // Which of a card's two working panels is open: Mapping or Failed syncs.
+    const [panelOpen, setPanelOpen] = useState<Record<string, 'mapping' | 'failed' | undefined>>({});
+    const togglePanel = (platform: string, panel: 'mapping' | 'failed') =>
+        setPanelOpen(prev => ({ ...prev, [platform]: prev[platform] === panel ? undefined : panel }));
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
@@ -1074,6 +1084,22 @@ export default function GovtechIntegrations() {
                                             aria-controls={`conn-logs-${platform.platform}`}>
                                             Activity
                                         </Action>
+                                        <Action size="sm" onClick={() => togglePanel(platform.platform, 'mapping')} chevron
+                                            expanded={panelOpen[platform.platform] === 'mapping'}
+                                            aria-controls={`conn-mapping-${platform.platform}`}>
+                                            Mapping
+                                        </Action>
+                                        {(() => {
+                                            const owed = (existing as MappedIntegration).backlog_open || 0;
+                                            return (
+                                                <Action size="sm" onClick={() => togglePanel(platform.platform, 'failed')} chevron
+                                                    expanded={panelOpen[platform.platform] === 'failed'}
+                                                    aria-controls={`conn-failed-${platform.platform}`}
+                                                    className={owed ? 'border-amber-400/40 text-amber-100' : ''}>
+                                                    {owed ? `Failed syncs (${owed})` : 'Failed syncs'}
+                                                </Action>
+                                            );
+                                        })()}
                                         {/* Not a <label> any more. A label whose
                                             content is a button labels nothing --
                                             clicking the word "On" did not reach
@@ -1130,6 +1156,28 @@ export default function GovtechIntegrations() {
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+                            )}
+
+                            {existing && panelOpen[platform.platform] === 'mapping' && (
+                                <div id={`conn-mapping-${platform.platform}`}>
+                                    <MappingPanel
+                                        integration={existing as MappedIntegration}
+                                        platform={platform as MappedPlatform}
+                                        onSaved={(updated) => setConfigs(prev => prev.map(c =>
+                                            c.id === updated.id ? { ...c, ...updated } : c))}
+                                    />
+                                </div>
+                            )}
+
+                            {existing && panelOpen[platform.platform] === 'failed' && (
+                                <div id={`conn-failed-${platform.platform}`}>
+                                    <FailedSyncsPanel
+                                        integration={existing as MappedIntegration}
+                                        platformName={platform.name}
+                                        enabled={existing.enabled}
+                                        onChanged={load}
+                                    />
                                 </div>
                             )}
                             </div>
@@ -1267,9 +1315,16 @@ export default function GovtechIntegrations() {
                                                 <AlertCircle className="w-4 h-4 shrink-0" /> {wizard.name} sign-in isn't set up on this system
                                             </p>
                                             <p className="text-amber-100/70 text-xs mt-1">
-                                                Whoever runs this Pinpoint installation needs to register its {wizard.name} app
-                                                first. Until then, use the username and password option below.
+                                                Whoever runs this Pinpoint installation needs to register an app at
+                                                developer.accela.com and save its Client ID and Secret here
+                                                (ACCELA_CLIENT_ID and ACCELA_CLIENT_SECRET). Until then, use the
+                                                username and password option below.
                                             </p>
+                                            {oauthStatus.redirect_uri && (
+                                                <p className="text-amber-100/70 text-xs mt-2 break-all">
+                                                    Redirect URI to register: <code className="text-amber-50">{oauthStatus.redirect_uri}</code>
+                                                </p>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
