@@ -31,7 +31,7 @@ import {
     X,
     AlertTriangle,
 } from 'lucide-react';
-import { CollapsibleSection } from '../components/ui';
+import { CollapsibleSection, Chip, RoleChip } from '../components/ui';
 import { CapabilityTile, StatusPill, Action } from '../components/capabilityUI';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -425,7 +425,8 @@ export const ResearchLab: React.FC = () => {
                         </Action>
                         <div className="hidden sm:flex items-center gap-2 text-sm text-white/60">
                             <Database className="w-4 h-4" aria-hidden="true" />
-                            <span>{user?.username} ({user?.role})</span>
+                            <span>{user?.username}</span>
+                            <RoleChip role={user?.role} />
                         </div>
                     </div>
                 </div>
@@ -553,8 +554,8 @@ export const ResearchLab: React.FC = () => {
                                                                                 {field.name}
                                                                             </code>
                                                                         </td>
-                                                                        <td className="py-2 pr-4 text-white/70 font-mono text-xs">
-                                                                            {field.type}
+                                                                        <td className="py-2 pr-4">
+                                                                            <Chip mono>{field.type}</Chip>
                                                                         </td>
                                                                         <td className="py-2 text-white/60">
                                                                             {field.description}

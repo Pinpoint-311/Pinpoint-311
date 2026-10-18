@@ -12,6 +12,8 @@
  * attributes reaching for window globals or an SDK's own close button.
  */
 
+import { humanize } from '../utils/humanize';
+
 export interface ElementSpec {
     /** Inline CSS. An attribute value, never parsed as markup. */
     style?: string;
@@ -80,7 +82,7 @@ export function propertyRows(
     return entries.map(([key, value]) => el('div', {
         style: styles.row,
         children: [
-            el('span', { style: styles.key, text: options.humanizeKeys === false ? key : key.replace(/_/g, ' ') }),
+            el('span', { style: styles.key, text: options.humanizeKeys === false ? key : humanize(key) }),
             el('span', { style: styles.value, text: formatValue(value) }),
         ],
     }));

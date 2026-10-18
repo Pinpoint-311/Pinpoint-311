@@ -8,6 +8,8 @@ import {
     type BacklogItem, type IntegrationLookups, type LookupItem, type MappingSave, type SyncProblems,
 } from '../services/integrationsApi';
 import { Action, ResultNote, Switch } from './capabilityUI';
+import { Chip } from './ui';
+import { humanize } from '../utils/humanize';
 
 /** The extra fields the connections list sends that the shared type omits. */
 export type MappedIntegration = IntegrationConfig & {
@@ -498,7 +500,17 @@ const OPERATION_LABEL: Record<string, string> = {
     push_status: 'Status update',
     push_comment: 'Comment',
     push_priority: 'Priority update',
+    // Integration log operations (GovtechIntegrations' activity drawer).
+    oauth: 'Sign-in',
+    lookups: 'Lookup lists',
+    webhook: 'Inbound update',
+    webhook_token_rotated: 'Inbound address rotated',
+    test: 'Connection test',
 };
+
+/** "Status update" for `push_status`; any other operation humanized. */
+export const operationLabel = (op?: string | null): string =>
+    (op && OPERATION_LABEL[op]) || humanize(op);
 
 /**
  * Work that has not reached the vendor yet, with Retry and Discard, plus the
@@ -590,9 +602,9 @@ export function FailedSyncsPanel({ integration, platformName, enabled, onChanged
                             <li key={item.id} className="py-2.5 first:pt-0 last:pb-0">
                                 <div className="flex flex-wrap items-start justify-between gap-2">
                                     <div className="min-w-0">
-                                        <p className="text-white/85 text-sm">
-                                            {OPERATION_LABEL[item.operation] || item.operation}
-                                            {item.request_id && <span className="text-white/50"> · {item.request_id}</span>}
+                                        <p className="text-white/85 text-sm flex flex-wrap items-center gap-2">
+                                            <Chip tone="warning">{operationLabel(item.operation)}</Chip>
+                                            {item.request_id && <span className="text-white/60 font-mono text-xs">{item.request_id}</span>}
                                         </p>
                                         {item.last_error && (
                                             <p className="text-amber-200/80 text-xs mt-0.5 break-words">{item.last_error}</p>

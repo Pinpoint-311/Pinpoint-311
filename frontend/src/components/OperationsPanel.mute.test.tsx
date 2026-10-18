@@ -172,7 +172,7 @@ describe('muting a proactive health check', () => {
         await mount();
 
         expect(row()).not.toBeNull();
-        expect(row()!.textContent).toContain('warning');
+        expect(row()!.textContent).toContain('Warning');
         expect(row()!.textContent).toContain('Disk is 84% full.');
         expect(row()!.textContent).toContain('It is still not passing.');
     });
@@ -260,7 +260,7 @@ describe('muting an infrastructure probe', () => {
         connectorRows = [probe({ alerts_muted_until: '2026-08-19T00:00:00Z' })];
         await mount();
 
-        expect(probeRow()!.textContent).toContain('down');
+        expect(probeRow()!.textContent).toContain('Down');
         expect(probeRow()!.textContent).toContain('It is still not working.');
         expect(probeButton()?.textContent).toContain('Unmute');
     });

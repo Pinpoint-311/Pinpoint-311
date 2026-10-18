@@ -8,7 +8,7 @@ import {
     ShieldCheck, LogIn, KeyRound,
 } from 'lucide-react';
 
-import { Button, Modal, CollapsibleSection } from './ui';
+import { Button, Modal, CollapsibleSection, Chip } from './ui';
 import SecretField from './SecretField';
 import { useDialog } from './DialogProvider';
 import { useOptionalAnnounce } from './liveAnnounce';
@@ -40,7 +40,7 @@ import {
 // these existed with no screen at all, so a town could connect a system and
 // never be asked which of its categories was which on the other side.
 import {
-    MappingPanel, FailedSyncsPanel, type MappedIntegration, type MappedPlatform,
+    MappingPanel, FailedSyncsPanel, operationLabel, type MappedIntegration, type MappedPlatform,
 } from './IntegrationMapping';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
@@ -564,7 +564,7 @@ export default function GovtechIntegrations() {
         const confirmed = await dialog.confirm({
             title: `Disconnect ${name}?`,
             message: 'Reports already sent will stay in both systems, but nothing new will '
-                + 'sync. The credentials are removed from your Secret Manager too, so '
+                + 'sync. The credentials are removed from your secret store too, so '
                 + 'reconnecting means entering them again.',
             variant: 'danger',
             confirmText: 'Disconnect',
@@ -941,13 +941,13 @@ export default function GovtechIntegrations() {
                                        deployment is relying on the claim. */
                                     <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-amber-300/80">
                                         <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                        Some credentials are in your Secret Manager and some are stored
+                                        Some credentials are in your secret store and some are stored
                                         encrypted in this app's database. Re-save them to move the rest.
                                     </p>
                                 ) : (
                                     <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
                                         <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                        Credentials stored in your Secret Manager — not in this app's database.
+                                        Credentials stored in your secret store — not in this app's database.
                                     </p>
                                 )
                             )}
@@ -1151,7 +1151,10 @@ export default function GovtechIntegrations() {
                                                 ? <CheckCircle className="w-3.5 h-3.5 text-green-400 mt-0.5 shrink-0" />
                                                 : <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />}
                                             <div className="min-w-0">
-                                                <p className="text-white/70 text-xs">{entry.detail || entry.operation}</p>
+                                                <p className="text-white/70 text-xs flex flex-wrap items-center gap-1.5">
+                                                    <Chip tone={entry.status === 'success' ? 'success' : 'warning'}>{operationLabel(entry.operation)}</Chip>
+                                                    {entry.detail && <span className="break-words">{entry.detail}</span>}
+                                                </p>
                                                 <p className="text-white/60 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
                                             </div>
                                         </div>

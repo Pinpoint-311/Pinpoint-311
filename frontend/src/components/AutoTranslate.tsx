@@ -148,9 +148,11 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
         return () => observer.disconnect();
     }, [language, isTranslating]);
 
-    // Dynamic banner message translation
-    const [bannerMessage, setBannerMessage] = useState('Translated by Google Translate. Translations may not be 100% accurate.');
-    const BANNER_BASE_TEXT = 'Translated by Google Translate. Translations may not be 100% accurate.';
+    // Dynamic banner message translation. Provider-neutral on purpose: the
+    // town picks its translation provider (Google, Azure, AWS) in the Admin
+    // Console, and this banner named Google whichever one was doing the work.
+    const [bannerMessage, setBannerMessage] = useState('Automatically translated. Translations may not be 100% accurate.');
+    const BANNER_BASE_TEXT = 'Automatically translated. Translations may not be 100% accurate.';
 
     // Load cache on mount
     useEffect(() => {
@@ -503,21 +505,21 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
     useEffect(() => {
         // Pre-translated messages for common languages (instant display)
         const preTranslatedMessages: Record<string, string> = {
-            es: 'Traducido por Google Translate. Las traducciones pueden no ser 100% precisas.',
-            zh: '由 Google 翻译翻译。翻译可能不是 100% 准确。',
-            hi: 'Google Translate द्वारा अनुवादित। अनुवाद 100% सटीक नहीं हो सकते।',
-            gu: 'Google Translate દ્વારા અનુવાદિત. અનુવાદો 100% ચોક્કસ ન હોઈ શકે.',
-            ko: 'Google 번역으로 번역되었습니다. 번역이 100% 정확하지 않을 수 있습니다.',
-            sq: 'Përkthyer nga Google Translate. Përkthimet mund të mos jenë 100% të sakta.',
-            ar: 'مترجم بواسطة Google Translate. قد لا تكون الترجمات دقيقة 100%.',
-            pt: 'Traduzido pelo Google Tradutor. As traduções podem não ser 100% precisas.',
-            fr: 'Traduit par Google Translate. Les traductions peuvent ne pas être 100% exactes.',
-            de: 'Übersetzt von Google Translate. Übersetzungen sind möglicherweise nicht 100% genau.',
-            it: 'Tradotto da Google Translate. Le traduzioni potrebbero non essere accurate al 100%.',
-            ja: 'Google 翻訳で翻訳されました。翻訳は100%正確ではない場合があります。',
-            ru: 'Переведено Google Translate. Переводы могут быть не на 100% точными.',
-            vi: 'Được dịch bởi Google Dịch. Bản dịch có thể không chính xác 100%.',
-            tl: 'Isinalin ng Google Translate. Ang mga pagsasalin ay maaaring hindi 100% tumpak.',
+            es: 'Traducción automática. Las traducciones pueden no ser 100% precisas.',
+            zh: '机器翻译。翻译可能不是 100% 准确。',
+            hi: 'स्वचालित अनुवाद। अनुवाद 100% सटीक नहीं हो सकते।',
+            gu: 'સ્વચાલિત અનુવાદ. અનુવાદો 100% ચોક્કસ ન હોઈ શકે.',
+            ko: '자동 번역되었습니다. 번역이 100% 정확하지 않을 수 있습니다.',
+            sq: 'Përkthim automatik. Përkthimet mund të mos jenë 100% të sakta.',
+            ar: 'ترجمة آلية. قد لا تكون الترجمات دقيقة 100%.',
+            pt: 'Tradução automática. As traduções podem não ser 100% precisas.',
+            fr: 'Traduction automatique. Les traductions peuvent ne pas être 100% exactes.',
+            de: 'Automatisch übersetzt. Übersetzungen sind möglicherweise nicht 100% genau.',
+            it: 'Traduzione automatica. Le traduzioni potrebbero non essere accurate al 100%.',
+            ja: '自動翻訳です。翻訳は100%正確ではない場合があります。',
+            ru: 'Автоматический перевод. Переводы могут быть не на 100% точными.',
+            vi: 'Bản dịch tự động. Bản dịch có thể không chính xác 100%.',
+            tl: 'Awtomatikong isinalin. Ang mga pagsasalin ay maaaring hindi 100% tumpak.',
         };
 
         if (language === 'en') {
@@ -615,8 +617,8 @@ export function AutoTranslate({ children }: AutoTranslateProps) {
               * The old version set `paddingTop: 40px` on this element and hard-coded
               * a 40px spacer. The padding was inert — `display: contents` removes
               * the box the padding would apply to — and the 40px was only ever right
-              * for a single line of English. "Traducido por Google Translate. Es
-              * posible que las traducciones no sean 100% precisas." wraps to two
+              * for a single line of English. A translated banner ("Traducción automática.
+              * Las traducciones pueden no ser 100% precisas.") wraps to two
               * lines well before 320px and three at the narrowest supported width,
               * so the fixed banner sat on top of the page header: content obscured
               * with no way to reach it, which is 1.4.10 Reflow.

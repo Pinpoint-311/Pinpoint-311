@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Crosshair, Loader2, AlertTriangle } from 'lucide-react';
 import { MapLayer } from '../services/api';
+import { humanize } from '../utils/humanize';
 import {
     AddressSuggestion,
     AutocompleteHandle,
@@ -340,7 +341,7 @@ export default function LocationPicker({
                                     onClick: (_e, marker) => {
                                         const assetName = props.name || layer.name;
                                         const assetType = props.asset_type
-                                            ? String(props.asset_type).replace(/_/g, ' ')
+                                            ? humanize(String(props.asset_type))
                                             : layer.layer_type || 'asset';
 
                                         const selectAsset = () => {
@@ -387,8 +388,8 @@ export default function LocationPicker({
                                                         style: 'display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #e2e8f0;',
                                                         children: [
                                                             el('span', {
-                                                                style: 'color: #64748b; font-size: 12px; text-transform: capitalize;',
-                                                                text: key.replace(/_/g, ' '),
+                                                                style: 'color: #64748b; font-size: 12px;',
+                                                                text: humanize(key),
                                                             }),
                                                             el('span', {
                                                                 style: 'font-size: 12px; color: #334155; font-weight: 500; text-align: right;',

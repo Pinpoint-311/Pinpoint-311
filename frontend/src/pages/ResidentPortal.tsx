@@ -1032,7 +1032,7 @@ export default function ResidentPortal() {
                             >
                                 {/* Hero Section. Padded above so the heading isn't crowded by
                                     the banner and navigation. */}
-                                <div className="text-center space-y-6 pt-8 sm:pt-12 md:pt-16">
+                                <div className="text-center space-y-6 pt-4 sm:pt-6 md:pt-8">
                                     <motion.h1
                                         ref={stepHeadingRef.categories}
                                         tabIndex={-1}

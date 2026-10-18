@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, extract
 from sqlalchemy.orm import selectinload
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime, date, timedelta
 import csv
 import io
@@ -1318,7 +1318,11 @@ async def export_csv(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
-    privacy_mode: str = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
+    # Literal, not str: any value other than these two used to be accepted, and
+    # the GeoJSON export fuzzed only on an exact match for "fuzzed" -- so
+    # ?privacy_mode=x handed a researcher exact (home) coordinates while the
+    # admin check, which only looked for "exact", never fired.
+    privacy_mode: Literal["fuzzed", "exact"] = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
 ):
@@ -1406,7 +1410,8 @@ async def export_geojson(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
-    privacy_mode: str = Query("fuzzed"),
+    # See export_csv: Literal so an unknown mode is a 422, never exact output.
+    privacy_mode: Literal["fuzzed", "exact"] = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
 ):
@@ -1464,8 +1469,9 @@ async def export_geojson(
 
     features = []
     for req in requests:
-        # Privacy-aware location for the geometry.
-        if privacy_mode == "fuzzed":
+        # Privacy-aware location for the geometry. Fail closed: anything that is
+        # not explicitly (admin-checked) "exact" gets fuzzed.
+        if privacy_mode != "exact":
             lat, long = fuzz_location(req.lat, req.long)
         else:
             lat, long = req.lat, req.long

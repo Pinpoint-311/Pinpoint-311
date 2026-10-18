@@ -55,7 +55,8 @@ import {
     MapPinOff,
     UserSearch,
 } from 'lucide-react';
-import { Button, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
+import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge } from '../components/ui';
+import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
@@ -70,6 +71,9 @@ import RoadListInput from '../components/RoadListInput';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
+import SignInProviderNote from '../components/SignInProviderNote';
+import { useSignInProvider } from '../hooks/useSignInProvider';
+import BackupRestore from '../components/BackupRestore';
 import VersionSwitcher from '../components/VersionSwitcher';
 import StayInformedHost from '../components/StayInformed';
 import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
@@ -689,6 +693,8 @@ export default function AdminConsole() {
     // Users state
     const [users, setUsers] = useState<User[]>([]);
     const [showUserModal, setShowUserModal] = useState(false);
+    // Who staff sign in with, by the name the town knows it by.
+    const signIn = useSignInProvider();
     const [newUser, setNewUser] = useState({
         username: '',
         email: '',
@@ -929,10 +935,10 @@ export default function AdminConsole() {
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
-    // SSO users don't have passwords - authentication handled by Auth0
+    // SSO users don't have passwords - authentication is the identity provider's job
 
 
-    // SSO users don't have passwords - authentication handled by Auth0
+    // SSO users don't have passwords - authentication is the identity provider's job
 
     // Document Retention state
     /* There is no list of states any more. It populated a picker that looked up
@@ -1556,7 +1562,7 @@ export default function AdminConsole() {
         navigate('/login');
     };
 
-    // Note: Password reset functionality removed - using Auth0 SSO
+    // Note: Password reset functionality removed - sign-in goes through the town's identity provider
 
     // Tabs are now rendered using SidebarGroup/SidebarItem components in the sidebar
 
@@ -1564,8 +1570,12 @@ export default function AdminConsole() {
         // Fixed to the viewport, like the staff dashboard: only the content pane
         // (contentRef) scrolls. With min-h-screen the pane never overflowed, so a
         // tall section -- opening Audit Logs -- scrolled the whole window and
-        // the sidebar and header moved with it.
-        <div className="h-screen flex overflow-hidden">
+        // the sidebar and header moved with it. `relative` (here and on the
+        // pane) matters as much: an absolutely positioned descendant with no
+        // positioned ancestor -- every sr-only label in the audit table -- is
+        // laid out against the page, not clipped by overflow, and stretched
+        // the document until the whole frame scrolled away.
+        <div className="relative h-screen flex overflow-hidden">
             {/* The one voluntary outbound call this application makes. Gated on
               * a configured deployment rather than on sign-in: `township_name`
               * only leaves its placeholder once somebody has been through
@@ -1800,7 +1810,7 @@ export default function AdminConsole() {
                 </header>
 
                 {/* Content */}
-                <div ref={contentRef} className="flex-1 p-4 md:p-6 overflow-auto">
+                <div ref={contentRef} className="relative flex-1 p-4 md:p-6 overflow-auto overscroll-contain">
                     <div className="max-w-4xl mx-auto">
                         {/* Save message */}
                         <AnimatePresence>
@@ -1854,7 +1864,10 @@ export default function AdminConsole() {
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                     <div>
                                         <h1 className="text-xl sm:text-2xl font-bold text-white">User Management</h1>
-                                        <p className="text-sm text-white/50 mt-1">Manage staff and administrator accounts</p>
+                                        <p className="text-sm text-white/50 mt-1">
+                                            Manage staff and administrator accounts
+                                            {signIn.name ? <> · Staff sign in with <span className="text-white/70">{signIn.name}</span></> : null}
+                                        </p>
                                     </div>
                                     <Button
                                         leftIcon={<Plus className="w-4 h-4" />}
@@ -1941,17 +1954,7 @@ export default function AdminConsole() {
                                                                 <p className="text-xs text-white/40">@{u.username}</p>
                                                             </div>
                                                         </div>
-                                                        {u.role === 'admin' ? (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30">
-                                                                <Shield className="w-3 h-3" />
-                                                                Admin
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30">
-                                                                <UserIcon className="w-3 h-3" />
-                                                                Staff
-                                                            </span>
-                                                        )}
+                                                        <RoleChip role={u.role} size="sm" />
                                                     </div>
                                                     <p className="text-xs text-white/50 truncate">{u.email}</p>
                                                     <div className="flex items-center justify-between">
@@ -2012,17 +2015,7 @@ export default function AdminConsole() {
 
                                                     {/* Role Badge */}
                                                     <div className="col-span-2 flex justify-center">
-                                                        {u.role === 'admin' ? (
-                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
-                                                                <Shield className="w-3 h-3" />
-                                                                Admin
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
-                                                                <UserIcon className="w-3 h-3" />
-                                                                Staff
-                                                            </span>
-                                                        )}
+                                                        <RoleChip role={u.role} size="sm" />
                                                     </div>
 
                                                     {/* Departments */}
@@ -2516,7 +2509,7 @@ export default function AdminConsole() {
                                                                 <div className="min-w-0">
                                                                     <p className="text-sm text-white font-medium truncate">{result.display_name}</p>
                                                                     <p className="text-xs text-white/30 mt-0.5">
-                                                                        ID {result.osm_id} &middot; {result.type}
+                                                                        ID {result.osm_id} &middot; {humanize(result.type)}
                                                                     </p>
                                                                 </div>
                                                             </div>
@@ -2674,14 +2667,10 @@ export default function AdminConsole() {
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-sm font-semibold text-white">{layer.name}</span>
                                                                         {layer.layer_type && (
-                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-white/[0.06] text-white/40 border border-white/[0.06]">
-                                                                                {layer.layer_type}
-                                                                            </span>
+                                                                            <Chip tone="neutral" value={layer.layer_type} />
                                                                         )}
                                                                         {!layer.is_active && (
-                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-red-500/10 text-red-400/60 border border-red-500/10">
-                                                                                Disabled
-                                                                            </span>
+                                                                            <Chip tone="danger">Disabled</Chip>
                                                                         )}
                                                                     </div>
                                                                     {layer.description && (
@@ -2834,7 +2823,7 @@ export default function AdminConsole() {
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
-                                                <div className="text-2xl font-bold text-white capitalize">{activeRetention.mode}</div>
+                                                <div className="text-2xl font-bold text-white">{humanize(activeRetention.mode)}</div>
                                                 <div className="text-white/40 text-sm">{activeRetention.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
                                             </div>
                                         </div>
@@ -3663,12 +3652,12 @@ export default function AdminConsole() {
                                                                         {new Date(backup.created_at).toLocaleString()} · {(backup.size_bytes / 1024 / 1024).toFixed(2)} MB
                                                                     </div>
                                                                 </div>
-                                                                <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
-                                                                    backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
-                                                                        'bg-white/10 text-white/60'
-                                                                    }`}>
-                                                                    {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
-                                                                </span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <Chip tone={backup.age_days === 0 ? 'success' : backup.age_days < 7 ? 'info' : 'neutral'}>
+                                                                        {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
+                                                                    </Chip>
+                                                                    <BackupRestore name={backup.name} createdAt={backup.created_at} />
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -3855,13 +3844,9 @@ export default function AdminConsole() {
                         required
                     />
 
-                    {/* SSO Info */}
-                    <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-200">
-                        <p className="font-medium flex items-center gap-1.5"><Shield className="w-4 h-4" aria-hidden="true" />SSO Authentication</p>
-                        <p className="text-blue-200/70 mt-1">
-                            Users log in via Auth0 SSO using their email address. No password is required.
-                        </p>
-                    </div>
+                    {/* How this person will sign in -- names the town's
+                        configured identity provider, not a fixed vendor. */}
+                    <SignInProviderNote />
 
                     <Select
                         label="Role"
@@ -4024,12 +4009,7 @@ export default function AdminConsole() {
                                             <span className="font-mono text-amber-400 font-semibold">
                                                 {req.service_request_id}
                                             </span>
-                                            <span className={`text-xs px-2 py-1 rounded capitalize ${req.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                req.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
-                                                    'bg-gray-500/20 text-gray-400'
-                                                }`}>
-                                                {req.status.replace('_', ' ')}
-                                            </span>
+                                            <StatusBadge status={req.status} size="xs" />
                                         </div>
                                         <div className="text-white font-medium">{req.service_name}</div>
                                         {req.description && (
@@ -5339,7 +5319,7 @@ export default function AdminConsole() {
                 </form>
             </Modal>
 
-            {/* Password management handled by Auth0 SSO */}
+            {/* Password management is handled by the town's identity provider */}
         </div>
     );
 }

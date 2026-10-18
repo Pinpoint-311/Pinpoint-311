@@ -226,9 +226,11 @@ class ServiceReorderRequest(BaseModel):
 class ServiceRequestCreate(BaseModel):
     service_code: str
     description: str = Field(..., min_length=10)
-    address: Optional[str] = None
-    lat: Optional[float] = None
-    long: Optional[float] = None
+    # Bounded to the column (String(500)): longer used to reach the INSERT and
+    # come back as a 500 rather than a 422 the client can act on.
+    address: Optional[str] = Field(None, max_length=500)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    long: Optional[float] = Field(None, ge=-180, le=180)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: EmailStr

@@ -4,6 +4,7 @@ import { X, Bell, MessageSquare, UserPlus, AlertCircle, Clock, ChevronRight, Bui
 import { ServiceRequest } from '../types';
 import { readIdsFromStorage } from './activityBell';
 import { useAnnounce } from '../context/AccessibilityContext';
+import { humanize } from '../utils/humanize';
 
 /* The focusable children of the panel, in tab order — the same idea as
  * ui/Modal.tsx's helper. A disabled control still matches the bare selector but
@@ -191,7 +192,7 @@ export default function ActivityFeed({
                     id: `upd-${key}-${updatedTime}`,
                     type: 'status_change',
                     title: `Updated: ${request.service_name}`,
-                    description: `Status: ${String(request.status).replace(/_/g, ' ')}${mine ? ' · assigned to you' : ''}`,
+                    description: `Status: ${humanize(String(request.status))}${mine ? ' · assigned to you' : ''}`,
                     timestamp: new Date(request.updated_datetime as string),
                     request,
                     isNew: !readItems.has(`upd-${key}-${updatedTime}`)

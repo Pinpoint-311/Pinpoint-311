@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { languageLabel } from '../utils/languages';
 import { sourceLabel } from '../utils/requestSource';
+import { humanize } from '../utils/humanize';
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 import { MapProviderConfig, mapSnapshot } from '../maps';
@@ -197,7 +198,7 @@ export default function PrintWorkOrder({
         const safetyFlagsHtml = ai?.safety_flags?.length ? `
             <div class="ai-tags safety-tags">
                 <strong>Safety Flags:</strong>
-                ${ai.safety_flags.map((flag: string) => `<span class="tag tag-danger">${flag}</span>`).join('')}
+                ${ai.safety_flags.map((flag: string) => `<span class="tag tag-danger">${humanize(flag)}</span>`).join('')}
             </div>
         ` : '';
 
@@ -208,7 +209,7 @@ export default function PrintWorkOrder({
                 ${ai?.classification || request.ai_classification ? `
                     <div class="ai-tags">
                         <strong>Classification:</strong>
-                        <span class="tag tag-purple">${ai?.classification || request.ai_classification}</span>
+                        <span class="tag tag-purple">${humanize(ai?.classification || request.ai_classification)}</span>
                     </div>
                 ` : ''}
                 ${ai?.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}
@@ -278,8 +279,8 @@ export default function PrintWorkOrder({
                     ${auditLog.map(entry => `
                         <tr>
                             <td>${formatDate(entry.created_at)}</td>
-                            <td>${entry.action.replace('_', ' ')}</td>
-                            <td>${entry.actor_name || entry.actor_type}</td>
+                            <td>${humanize(entry.action)}</td>
+                            <td>${entry.actor_name || humanize(entry.actor_type)}</td>
                             <td>${entry.new_value || ''}</td>
                         </tr>
                     `).join('')}

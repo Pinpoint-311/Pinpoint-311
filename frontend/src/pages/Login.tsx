@@ -48,7 +48,7 @@ export default function Login() {
         checkAuth();
     }, []);
 
-    // Handle callback with token or error from Auth0
+    // Handle callback with token or error from the identity provider
     useEffect(() => {
         const token = searchParams.get('token');
         const urlError = searchParams.get('error');
@@ -76,7 +76,7 @@ export default function Login() {
         setIsLoading(true);
 
         try {
-            // Get Auth0 login URL from backend
+            // Get the identity provider login URL from backend
             const redirectUri = `${window.location.origin}/login`;
             const response = await fetch(`/api/auth/login?redirect_uri=${encodeURIComponent(redirectUri)}`);
 
@@ -87,7 +87,7 @@ export default function Login() {
 
             const data = await response.json();
 
-            // Redirect to Auth0
+            // Redirect to the identity provider
             window.location.href = data.auth_url;
         } catch (err) {
             setError((err as Error).message || "Sign-in didn't start. Try again.");

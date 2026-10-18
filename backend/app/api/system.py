@@ -3596,6 +3596,11 @@ async def set_town_timezone(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
+    """Set the town's IANA timezone (admin only).
+
+    Body: `{"timezone": "America/New_York"}`. Drives how dates are shown and
+    how day/week boundaries are computed in statistics and exports.
+    """
     from app.services.town_time import is_valid_timezone, offset_label
 
     name = str(payload.get("timezone", "")).strip()
@@ -3986,9 +3991,14 @@ async def export_for_public_records(
 @router.get("/statistics", response_model=StatisticsResponse)
 async def get_statistics(
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_staff)
+    current_user: User = Depends(get_current_staff)
 ):
-    """Get system statistics (staff only)"""
+    """Request counts by status and category, plus the ten newest requests.
+
+    Staff or admin. The counts are town-wide aggregates; `recent_requests`
+    is department-scoped for staff (admins see all) and never includes
+    soft-deleted reports.
+    """
     # Total counts by status
     total = await db.execute(select(func.count(ServiceRequest.id)))
     total_count = total.scalar() or 0
@@ -4015,9 +4025,15 @@ async def get_statistics(
     )
     requests_by_category = {row[0]: row[1] for row in category_result.all()}
     
-    # Recent requests
+    # Recent requests. These are individual reports (description, address,
+    # coordinates), not aggregates, so they follow the same department scope
+    # as the request list: unscoped, any staffer saw the newest reports of
+    # every department here, deleted and unlisted ones included.
+    from app.api.scoping import department_scope_filters
     recent_result = await db.execute(
         select(ServiceRequest)
+        .where(ServiceRequest.deleted_at.is_(None),
+               *await department_scope_filters(db, current_user))
         .order_by(ServiceRequest.requested_datetime.desc())
         .limit(10)
     )
@@ -6020,7 +6036,10 @@ async def restore_backup_endpoint(
     
     result = await restore_backup(backup_name)
     if result["status"] == "error":
-        raise HTTPException(status_code=500, detail="Restore failed")
+        # The service's messages are fixed sentences it writes itself ("Could
+        # not snapshot the current database first, so nothing was restored"),
+        # never exception text -- and they are what the admin needs to act on.
+        raise HTTPException(status_code=500, detail=f"Restore failed: {result.get('message') or 'see the server log'}")
     
     return result
 

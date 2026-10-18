@@ -53,7 +53,7 @@ describe('ResidentHistoryCard', () => {
         expect(api.getResidentHistory).toHaveBeenCalledWith('SR-2001');
         expect(host.textContent).toContain('2 found');
         expect(host.textContent).toContain('SR-1042');
-        expect(host.textContent).toContain('In progress');
+        expect(host.textContent).toContain('In Progress');
         expect(host.textContent).toContain('Matched by email');
         expect(host.textContent).toContain('Viewing is logged');
 

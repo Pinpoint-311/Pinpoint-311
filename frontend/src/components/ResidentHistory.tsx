@@ -4,6 +4,8 @@ import { History, Lock, Loader2, ChevronRight, ChevronDown, UserSearch } from 'l
 
 import { api } from '../services/api';
 import type { ResidentHistoryItem } from '../types';
+import { StatusBadge } from './ui';
+import { humanize } from '../utils/humanize';
 
 /**
  * The opt-in "Resident history" module, staff side.
@@ -18,11 +20,8 @@ import type { ResidentHistoryItem } from '../types';
  * their lookups are recorded before they make one.
  */
 
-const STATUS_STYLES: Record<string, { label: string; cls: string }> = {
-    open: { label: 'Open', cls: 'bg-amber-500/15 text-amber-300 border-amber-500/25' },
-    in_progress: { label: 'In progress', cls: 'bg-sky-500/15 text-sky-300 border-sky-500/25' },
-    closed: { label: 'Closed', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25' },
-};
+/** The words a status chip says, for the row's accessible name. */
+const STATUS_WORDS: Record<string, string> = { open: 'Open', in_progress: 'In Progress', closed: 'Closed' };
 
 function formatDate(value: string | null): string {
     if (!value) return '';
@@ -38,7 +37,7 @@ function ReportRows({ reports, onOpen }: { reports: ResidentHistoryItem[]; onOpe
     return (
         <ul className="divide-y divide-white/[0.06]">
             {reports.map((r, i) => {
-                const status = STATUS_STYLES[r.status || ''] || { label: r.status || 'Unknown', cls: 'bg-white/5 text-white/60 border-white/10' };
+                const statusLabel = r.status ? (STATUS_WORDS[r.status] ?? humanize(r.status)) : 'Unknown';
                 return (
                     <motion.li
                         key={r.service_request_id}
@@ -50,11 +49,11 @@ function ReportRows({ reports, onOpen }: { reports: ResidentHistoryItem[]; onOpe
                             type="button"
                             onClick={() => onOpen(r.service_request_id)}
                             className="group w-full grid grid-cols-[minmax(0,auto)_minmax(0,1fr)_auto_auto] items-center gap-3 px-1 py-2.5 text-left rounded-lg hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 transition-colors"
-                            aria-label={`Open ${r.service_request_id}, ${r.service_name || 'report'}, ${status.label}`}
+                            aria-label={`Open ${r.service_request_id}, ${r.service_name || 'report'}, ${statusLabel}`}
                         >
                             <span className="font-mono text-xs text-primary-300 truncate">{r.service_request_id}</span>
                             <span className="text-sm text-white/85 truncate">{r.service_name || 'Report'}</span>
-                            <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full border ${status.cls}`}>{status.label}</span>
+                            <StatusBadge status={r.status || 'unknown'} size="xs" />
                             <span className="flex items-center gap-1 text-xs text-white/45 tabular-nums">
                                 {formatDate(r.requested_datetime)}
                                 <ChevronRight className="w-3.5 h-3.5 text-white/25 group-hover:text-white/60 transition-colors" aria-hidden="true" />

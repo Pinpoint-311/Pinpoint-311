@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { MapPin } from 'lucide-react';
 import { MapLayer } from '../services/api';
+import { humanize } from '../utils/humanize';
 import {
     GeoJsonLayerHandle,
     MapRenderer,
@@ -373,7 +374,7 @@ export default function RequestDetailMap({
                             {Object.entries(matchedAsset.properties || {})
                                 .filter(([k]) => k !== 'id' && k !== 'name')
                                 .slice(0, 5)
-                                .map(([k, v]) => <li key={k}>{`${k}: ${String(v)}`}</li>)}
+                                .map(([k, v]) => <li key={k}>{`${humanize(k)}: ${String(v)}`}</li>)}
                         </ul>
                     </>
                 )}

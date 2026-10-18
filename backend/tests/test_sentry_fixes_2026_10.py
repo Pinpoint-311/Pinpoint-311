@@ -147,3 +147,48 @@ def test_translation_cache_reads_the_first_match():
     for fn in (translation.get_cached_translation, translation.save_translation_to_cache):
         src = inspect.getsource(fn)
         assert "result.scalar_one_or_none()" not in src and "result.scalars().first()" in src
+
+
+# ---- health checks follow the configured provider ------------------------------
+
+def _secrets(monkeypatch, values):
+    sm = pytest.importorskip("app.services.secret_manager")
+
+    async def fake_get(key):
+        return values.get(key)
+
+    monkeypatch.setattr(sm, "get_secret", fake_get)
+    switches = pytest.importorskip("app.services.capability_switches")
+
+    async def on(_cap):
+        return True
+
+    monkeypatch.setattr(switches, "enabled", on)
+
+
+def test_ai_health_names_the_selected_provider_not_google(monkeypatch):
+    health = pytest.importorskip("app.api.health")
+    registry = pytest.importorskip("app.services.ai.registry")
+    _secrets(monkeypatch, {"AI_PROVIDER": "azure"})
+
+    async def no_provider(db=None):
+        return None
+
+    monkeypatch.setattr(registry, "get_ai_provider", no_provider)
+    out = asyncio.run(health.check_vertex_ai(None))
+    assert out["provider"] == "azure" and out["status"] == "not_configured"
+    assert "GCP" not in out["message"] and "Vertex" not in out["message"]
+
+
+def test_translation_health_does_not_read_the_maps_key(monkeypatch):
+    health = pytest.importorskip("app.api.health")
+    tp = pytest.importorskip("app.services.translation_providers")
+    _secrets(monkeypatch, {"TRANSLATION_PROVIDER": "aws", "GOOGLE_MAPS_API_KEY": "maps-key"})
+
+    async def none():
+        return None
+
+    monkeypatch.setattr(tp, "get_translation_provider", none)
+    out = asyncio.run(health.check_translation_api(None))
+    assert out["provider"] == "aws" and out["status"] == "not_configured"
+    assert "Maps" not in out["message"]

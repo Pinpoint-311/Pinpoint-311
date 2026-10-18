@@ -583,15 +583,19 @@ app.include_router(deploy_templates.router, prefix="/api/deploy-templates", tags
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-@app.get("/api/health")
+@app.get("/api/health", tags=["Health Check"])
 async def health_check():
-    """Health check endpoint"""
+    """Liveness probe (public). Always `{"status": "healthy"}` while the process serves.
+
+    For dependency checks use the admin-only `GET /api/health/`; for a cheap
+    public readiness check use `GET /api/health/quick`.
+    """
     return {"status": "healthy", "version": "1.0.0"}
 
 
-@app.get("/")
+@app.get("/", tags=["Health Check"])
 async def root():
-    """Root endpoint - redirect info"""
+    """API name and pointers to the health check (public)."""
     return {
         "message": "Township 311 API",
         "docs": "/api/docs",
@@ -599,7 +603,7 @@ async def root():
     }
 
 
-@app.get("/api/sentry-debug")
+@app.get("/api/sentry-debug", tags=["System"])
 async def sentry_debug():
     """Test endpoint to verify Sentry integration. Only available in debug mode."""
     from app.core.config import get_settings
@@ -636,9 +640,13 @@ class ClientError(BaseModel):
     timestamp: Optional[str] = None
     userAgent: Optional[str] = None
 
-@app.post("/api/system/client-errors", status_code=204)
+@app.post("/api/system/client-errors", status_code=204, tags=["System"])
 async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db)):
-    """Log frontend errors for monitoring."""
+    """Record a browser-side error report (public; default rate limit).
+
+    Stored deduplicated and capped (app/services/client_errors) for admins to
+    read at `GET /api/system/client-errors`.
+    """
     # The shared sanitizer rather than a local one: it strips the full control
     # range, not just \r\n, and it is the barrier the rest of the codebase uses.
     from app.core.sanitize import sanitize_for_log
@@ -682,3 +690,41 @@ async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db
         user_agent=error.userAgent,
     )
     return Response(status_code=204)
+
+
+# Label every operation in the schema with who may call it, derived from the
+# route's own dependencies (app/core/route_access) so the documented rule is
+# the enforced one. Schema generation only -- no request is affected, and the
+# schema itself is served only when debug is on (see _docs_enabled above).
+from fastapi.openapi.utils import get_openapi
+from fastapi.routing import APIRoute
+from app.core.route_access import access_note, route_access
+
+
+def _openapi_with_access():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        description=(
+            app.description
+            + "\n\nEvery operation states who may call it (`x-pinpoint-access`). "
+            "Tokens: see docs/API.md."
+        ),
+        routes=app.routes,
+    )
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.include_in_schema:
+            continue
+        for method in route.methods:
+            operation = schema.get("paths", {}).get(route.path_format, {}).get(method.lower())
+            if operation is None:
+                continue
+            note = access_note(route)
+            operation["x-pinpoint-access"] = route_access(route)
+            operation["description"] = f"**Access:** {note}\n\n" + operation.get("description", "")
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_with_access

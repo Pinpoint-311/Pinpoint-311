@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from typing import List
 
@@ -185,6 +185,25 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     update_data = user_data.model_dump(exclude_unset=True)
+
+    # Never leave the town without an active admin. Once an identity provider
+    # is configured the bootstrap route is closed, so demoting or deactivating
+    # the last admin -- yourself included -- locks everyone out of the admin
+    # console with no way back short of editing the database.
+    new_role = update_data.get("role")
+    demoting = new_role is not None and getattr(new_role, "value", new_role) != "admin"
+    deactivating = update_data.get("is_active") is False
+    if user.role == "admin" and user.is_active and (demoting or deactivating):
+        other_admins = await db.execute(
+            select(func.count(User.id)).where(
+                User.role == "admin", User.is_active == True, User.id != user.id  # noqa: E712
+            )
+        )
+        if not other_admins.scalar():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote or deactivate the last active admin",
+            )
 
     # Departments are a many-to-many relationship, not a column. The loop below
     # used to setattr "department_ids" straight onto the ORM object, which binds

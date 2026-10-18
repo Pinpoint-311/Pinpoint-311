@@ -57,7 +57,8 @@ import {
     Eye,
 } from 'lucide-react';
 import { CommentCard, CommentEmptyState } from '../components/commentUI';
-import { Button, Card, Modal, Textarea, StatusBadge, Badge } from '../components/ui';
+import { Button, Card, Modal, Textarea, StatusBadge, Badge, Chip, RoleChip } from '../components/ui';
+import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
@@ -1157,7 +1158,7 @@ export default function StaffDashboard() {
     };
 
     return (
-        <div className="h-screen flex overflow-hidden">
+        <div className="relative h-screen flex overflow-hidden">
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (
@@ -1320,7 +1321,7 @@ export default function StaffDashboard() {
                                 </div>
                                 <div className="min-w-0 flex-1 overflow-hidden text-left">
                                     <p className="font-medium text-white text-sm truncate">{user?.full_name || user?.username}</p>
-                                    <p className="text-xs text-white/50 capitalize">{user?.role}</p>
+                                    <div className="mt-0.5"><RoleChip role={user?.role} /></div>
                                     {user?.departments && user.departments.length > 0 && (
                                         <p className="text-xs text-primary-400 truncate mt-0.5">{user.departments.map(d => d.name).join(', ')}</p>
                                     )}
@@ -1721,7 +1722,7 @@ export default function StaffDashboard() {
                                 <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
                                     <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
-                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">Trend: {humanize(advancedStats?.predictive_insights?.trend_direction || 'stable')}</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-emerald-200 uppercase tracking-wider">Avg Resolution</div>
@@ -3139,7 +3140,7 @@ export default function StaffDashboard() {
                                                     <div className="grid grid-cols-2 gap-2 text-sm">
                                                         {Object.entries(selectedRequest.custom_fields).map(([key, value]) => (
                                                             <div key={key} className="flex flex-col">
-                                                                <span className="text-white/40 text-xs capitalize">{key.replace(/_/g, ' ')}</span>
+                                                                <span className="text-white/40 text-xs">{humanize(key)}</span>
                                                                 <span className="text-white/80">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
                                                             </div>
                                                         ))}
@@ -3518,7 +3519,12 @@ export default function StaffDashboard() {
                                                                             <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
                                                                             <div>
                                                                                 <p className="text-xs font-bold text-red-400 uppercase tracking-tight">Content Warning</p>
-                                                                                <p className="text-xs text-red-300/80">AI detected: {ai.content_flags.join(', ').replace(/_/g, ' ')}</p>
+                                                                                <p className="text-xs text-red-300/80 mb-1.5">AI detected:</p>
+                                                                                <div className="flex flex-wrap gap-1.5">
+                                                                                    {ai.content_flags.map((flag: string) => (
+                                                                                        <Chip key={flag} tone="danger" value={flag} />
+                                                                                    ))}
+                                                                                </div>
                                                                             </div>
                                                                         </div>
                                                                     )}
@@ -3542,13 +3548,13 @@ export default function StaffDashboard() {
                                                                             <div className="grid grid-cols-1 gap-2">
                                                                                 <div className="flex justify-between items-center text-xs">
                                                                                     <span className="text-white/40">Physical Scale</span>
-                                                                                    <span className="text-white/80 font-medium">{ai.photo_assessment.physical_scale}</span>
+                                                                                    <span className="text-white/80 font-medium">{humanize(ai.photo_assessment.physical_scale)}</span>
                                                                                 </div>
                                                                                 <div className="flex justify-between items-center text-xs">
                                                                                     <span className="text-white/40">Blocking Severity</span>
-                                                                                    <span className={`font-bold ${ai.photo_assessment.blocking_severity === 'full_block' ? 'text-red-400' :
-                                                                                        ai.photo_assessment.blocking_severity === 'partial' ? 'text-amber-400' : 'text-green-400'
-                                                                                        }`}>{ai.photo_assessment.blocking_severity?.replace('_', ' ').toUpperCase()}</span>
+                                                                                    <Chip tone={ai.photo_assessment.blocking_severity === 'full_block' ? 'danger' :
+                                                                                        ai.photo_assessment.blocking_severity === 'partial' ? 'warning' : 'success'
+                                                                                        } value={ai.photo_assessment.blocking_severity} />
                                                                                 </div>
                                                                             </div>
                                                                         </div>
@@ -3560,10 +3566,10 @@ export default function StaffDashboard() {
                                                                             {ai.quantitative_metrics.estimated_severity && ai.quantitative_metrics.estimated_severity !== 'unknown' && (
                                                                                 <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
                                                                                     <p className="text-[11px] uppercase tracking-wider text-white/70 mb-0.5">Severity</p>
-                                                                                    <p className={`text-xs font-bold ${ai.quantitative_metrics.estimated_severity === 'critical' ? 'text-red-400' :
-                                                                                        ai.quantitative_metrics.estimated_severity === 'high' ? 'text-amber-400' :
-                                                                                            ai.quantitative_metrics.estimated_severity === 'medium' ? 'text-blue-400' : 'text-green-400'
-                                                                                        }`}>{ai.quantitative_metrics.estimated_severity.toUpperCase()}</p>
+                                                                                    <Chip tone={ai.quantitative_metrics.estimated_severity === 'critical' ? 'danger' :
+                                                                                        ai.quantitative_metrics.estimated_severity === 'high' ? 'warning' :
+                                                                                            ai.quantitative_metrics.estimated_severity === 'medium' ? 'info' : 'success'
+                                                                                        } value={ai.quantitative_metrics.estimated_severity} />
                                                                                 </div>
                                                                             )}
                                                                             {ai.quantitative_metrics.systemic_failure_probability !== undefined && (
@@ -3676,9 +3682,7 @@ export default function StaffDashboard() {
                                                                     {ai?.safety_flags && Array.isArray(ai.safety_flags) && ai.safety_flags.length > 0 && (
                                                                         <div className="flex flex-wrap gap-1.5 mb-4">
                                                                             {ai.safety_flags.map((flag: string, i: number) => (
-                                                                                <span key={i} className="inline-flex items-center px-2 py-1 rounded bg-red-500/10 text-red-400 text-[10px] font-bold ring-1 ring-red-500/20">
-                                                                                    {flag.replace(/_/g, ' ').toUpperCase()}
-                                                                                </span>
+                                                                                <Chip key={i} tone="danger" icon={AlertTriangle} value={flag} />
                                                                             ))}
                                                                         </div>
                                                                     )}
@@ -3874,7 +3878,7 @@ export default function StaffDashboard() {
                                                                 } else if (newStatus === 'open') {
                                                                     statusText = oldStatus === 'closed' ? 'Reopened' : oldStatus === 'in_progress' ? 'Reverted to Open' : 'Status set to Open';
                                                                 } else {
-                                                                    statusText = `Status: ${oldStatus} → ${newStatus}`;
+                                                                    statusText = `Status: ${humanize(oldStatus)} → ${humanize(newStatus)}`;
                                                                 }
 
                                                                 actionConfig = {
@@ -3929,7 +3933,7 @@ export default function StaffDashboard() {
                                                                     text: `Priority set to ${entry.new_value}${entry.old_value ? ` (was ${entry.old_value})` : ''}`
                                                                 };
                                                             } else {
-                                                                actionConfig = { color: 'bg-gray-500', text: entry.action };
+                                                                actionConfig = { color: 'bg-gray-500', text: humanize(entry.action) };
                                                             }
 
                                                             const isLast = idx === auditLog.length - 1;
@@ -3946,9 +3950,9 @@ export default function StaffDashboard() {
                                                                                 {actionConfig.icon && <actionConfig.icon className="w-3.5 h-3.5 text-white/60 shrink-0" aria-hidden="true" />}
                                                                                 {actionConfig.text}
                                                                             </span>
-                                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                                                                            <Chip tone={entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'accent' : 'info'}>
                                                                                 {entry.actor_type === 'staff' || entry.actor_type === 'admin' ? entry.actor_name || 'Staff' : 'Resident'}
-                                                                            </span>
+                                                                            </Chip>
                                                                         </div>
                                                                         <div className="text-white/40 text-xs mt-0.5">
                                                                             {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'No timestamp'}

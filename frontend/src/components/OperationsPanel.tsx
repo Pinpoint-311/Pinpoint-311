@@ -11,6 +11,7 @@ import type { ConnectorHealth } from '../types';
 import { ALERTING_STATUSES, hasAlert } from './capabilityUI';
 import { useDialog } from './DialogProvider';
 import { useAnnounce } from '../context/AccessibilityContext';
+import { humanize } from '../utils/humanize';
 
 /* Status words a person can read.
  *
@@ -40,7 +41,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const statusLabel = (status: string): string =>
-    STATUS_LABELS[status] ?? String(status).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+    STATUS_LABELS[status] ?? humanize(String(status));
 
 /* Same list the provider cards gate their mute button on, so "is this
  * alerting?" cannot mean two different things in two places. */
@@ -492,7 +493,7 @@ export default function OperationsPanel() {
                                                 : 'bg-slate-800/50 border-slate-700/50'}`}
                                         >
                                             <span className={`px-2 py-0.5 mt-0.5 text-xs rounded-full border shrink-0 ${getStatusBadge(c.status === 'critical' ? 'error' : 'fallback')}`}>
-                                                {c.status}
+                                                {statusLabel(c.status)}
                                             </span>
                                             <div className={`min-w-0 flex-1 ${isMuted ? 'opacity-60' : ''}`}>
                                                 <p className="text-white text-sm font-medium">
@@ -553,11 +554,11 @@ export default function OperationsPanel() {
                                         : 'bg-slate-800/50 border-slate-700/50'}`}
                                 >
                                     <span className={`px-2 py-0.5 mt-0.5 text-xs rounded-full border shrink-0 ${getStatusBadge(hasAlert(c.status) ? 'error' : 'unknown')}`}>
-                                        {c.status}
+                                        {statusLabel(c.status)}
                                     </span>
                                     <div className={`min-w-0 flex-1 ${isMuted ? 'opacity-60' : ''}`}>
-                                        <p className="text-white text-sm font-medium capitalize">
-                                            {label}: <span className="font-normal text-gray-300">{c.summary}</span>
+                                        <p className="text-white text-sm font-medium">
+                                            {humanize(label)}: <span className="font-normal text-gray-300">{c.summary}</span>
                                         </p>
                                         {isMuted && (
                                             <p className="text-xs mt-1.5 text-amber-200/85">
@@ -594,7 +595,7 @@ export default function OperationsPanel() {
                             return (
                                 <div key={name} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-white font-medium capitalize">{name}</span>
+                                        <span className="text-white font-medium">{humanize(name)}</span>
                                         <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(svc.status)}`}>
                                             {statusLabel(svc.status)}
                                         </span>
@@ -702,8 +703,8 @@ export default function OperationsPanel() {
                             if (!tips) return null;
                             return (
                                 <div key={serviceName} className="bg-slate-800/50 rounded-lg p-3">
-                                    <h4 className="font-medium text-white text-sm capitalize mb-2">
-                                        {serviceName}: {tips.issue}
+                                    <h4 className="font-medium text-white text-sm mb-2">
+                                        {humanize(serviceName)}: {tips.issue}
                                     </h4>
                                     <ol className="list-decimal list-inside text-gray-300 text-xs space-y-1">
                                         {tips.steps.map((step, i) => (
@@ -786,7 +787,7 @@ export default function OperationsPanel() {
                             <div className="flex items-start gap-3">
                                 {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" aria-hidden="true" /> : <XCircle className="w-5 h-5 text-red-400 mt-0.5" aria-hidden="true" />}
                                 <div className="flex-1 min-w-0">
-                                    <span className="font-medium text-white">{lastAction.action}: {statusLabel(lastAction.status)}</span>
+                                    <span className="font-medium text-white">{humanize(lastAction.action)}: {statusLabel(lastAction.status)}</span>
                                     <span className="text-gray-300 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
                                     {(() => {
                                         const d = (lastAction.details || {}) as Record<string, any>;

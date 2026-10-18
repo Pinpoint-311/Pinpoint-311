@@ -80,7 +80,7 @@ async def check_database(db: AsyncSession) -> Dict[str, Any]:
 
 
 async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
-    """Test Auth0 SSO configuration"""
+    """The configured staff sign-in provider (Auth0, Entra, Okta or OIDC)."""
     from app.services.auth0_service import Auth0Service
     
     try:
@@ -91,7 +91,7 @@ async def check_auth0(db: AsyncSession) -> Dict[str, Any]:
         logging.getLogger(__name__).error(f"Auth0 health check failed: {e}")
         return {
             "status": "error",
-            "message": "Auth0 check failed"
+            "message": "Sign-in provider check failed"
         }
 
 
@@ -274,8 +274,8 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
                 ),
             }
 
-        label = {"azure": "Azure Key Vault", "aws": "AWS Secrets Manager"}.get(
-            provider, "Google Secret Manager")
+        label = {"azure": "Azure Key Vault", "aws": "AWS Secrets Manager",
+                 "google": "Google Secret Manager"}.get(provider, "The external secret store")
 
         if store_reachable():
             details: Dict[str, Any] = {"status": "healthy", "store": provider,
@@ -306,69 +306,67 @@ async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:
 
 
 async def check_vertex_ai(db: AsyncSession) -> Dict[str, Any]:
-    """Test Vertex AI (Gemini)"""
+    """The configured AI provider, whichever it is.
+
+    Still keyed "vertex_ai" in the results for the dashboard, but it used to
+    check Google whatever the town had chosen -- a town on Azure OpenAI or
+    Bedrock was told "GCP project not configured" while AI worked, and a
+    Vertex town whose key had gone was told "configured". This asks the same
+    registry triage and the chat assistants use.
+    """
     try:
-        project = os.getenv("GOOGLE_VERTEX_PROJECT") or await get_config_value(db, "GOOGLE_CLOUD_PROJECT")
-        location = os.getenv("GOOGLE_VERTEX_LOCATION", "us-central1")
-        
-        if not project:
-            return {
-                "status": "not_configured",
-                "message": "GCP project not configured (see Admin Console → Setup & Integration)",
-                "project": None,
-                "location": location
-            }
-        
-        # Try a simple test call
-        
-        # Don't actually call the API to save costs, just check if it's importable
-        return {
-            "status": "configured",
-            "message": "Vertex AI configured (not tested to save API costs)",
-            "project": project,
-            "location": location,
-            "model": "gemini-3.1-flash-lite"
-        }
-        
+        from app.services import capability_switches
+        from app.services.ai.registry import AI_CATALOG, AI_PROVIDER_KEY, get_ai_provider
+        from app.services.secret_manager import get_secret
+
+        selected = ((await get_secret(AI_PROVIDER_KEY)) or "vertex").strip().lower()
+        name = AI_CATALOG.get(selected, {}).get("name", selected)
+        if not await capability_switches.enabled("ai"):
+            return {"status": "disabled", "provider": selected, "provider_name": name,
+                    "message": "AI is switched off, as configured."}
+        provider = await get_ai_provider(db)
+        if not provider:
+            return {"status": "not_configured", "provider": selected, "provider_name": name,
+                    "message": f"{name} is selected but its credentials are incomplete (Admin Console → Setup & Integrations)."}
+        # No live call: it costs money on every health refresh. The AI card's
+        # Save & Test makes the real call.
+        return {"status": "configured", "provider": selected, "provider_name": name,
+                "model": provider.model,
+                "message": f"{name} configured (not called here, to avoid the cost; use Save & Test)."}
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f"Vertex AI health check failed: {e}")
-        return {
-            "status": "error",
-            "message": "Vertex AI check failed",
-            "project": os.getenv("GOOGLE_VERTEX_PROJECT")
-        }
+        logging.getLogger(__name__).error(f"AI health check failed: {e}")
+        return {"status": "error", "message": "AI provider check failed"}
 
 
 async def check_translation_api(db: AsyncSession) -> Dict[str, Any]:
-    """Test Google Translation API"""
+    """The configured translation provider.
+
+    It used to check GOOGLE_MAPS_API_KEY -- a maps credential -- so a town
+    translating with Azure or AWS was reported unconfigured, and one with only
+    a maps key was reported able to translate.
+    """
     try:
+        from app.services import capability_switches
         from app.services.secret_manager import get_secret
-        
-        # Check if API key is configured
-        api_key = await get_secret("GOOGLE_MAPS_API_KEY")
-        
-        if not api_key:
-            return {
-                "status": "not_configured",
-                "message": "Google Maps API key not configured (used for translation)",
-                "has_key": False
-            }
-        
-        # Don't actually call the API to save costs
-        return {
-            "status": "configured",
-            "message": "Translation API configured (not tested to save API costs)",
-            "has_key": True
-        }
-        
+        from app.services.translation_providers import (
+            TRANSLATION_CATALOG, TRANSLATION_PROVIDER_KEY, get_translation_provider,
+        )
+
+        selected = ((await get_secret(TRANSLATION_PROVIDER_KEY)) or "google").strip().lower()
+        name = TRANSLATION_CATALOG.get(selected, {}).get("name", selected)
+        if selected in ("none", "off", "disabled") or not await capability_switches.enabled("translation"):
+            return {"status": "disabled", "provider": selected,
+                    "message": "Translation is switched off, as configured."}
+        if not await get_translation_provider():
+            return {"status": "not_configured", "provider": selected, "provider_name": name,
+                    "message": f"{name} is selected but its credentials are incomplete (Admin Console → Setup & Integrations)."}
+        return {"status": "configured", "provider": selected, "provider_name": name,
+                "message": f"{name} configured (not called here, to avoid the cost; use Save & Test)."}
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f"Translation API health check failed: {e}")
-        return {
-            "status": "error",
-            "message": "Translation API check failed"
-        }
+        logging.getLogger(__name__).error(f"Translation health check failed: {e}")
+        return {"status": "error", "message": "Translation check failed"}
 
 
 async def check_gcp_auth(db: AsyncSession) -> Dict[str, Any]:

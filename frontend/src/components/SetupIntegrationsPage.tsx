@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 import { Card, Button, Badge, CollapsibleSection } from './ui';
+import { humanize, humanizeTitle } from '../utils/humanize';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
 import type { Capability, ProviderStatusMap } from '../services/api';
@@ -1130,7 +1131,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     // The values are saved either way; say which
                                     // half did not land rather than implying both.
                                     setSaveMessage({
-                                        text: `Saved the values, but could not switch ${capability} to ${provider}. `
+                                        text: `Saved the values, but could not switch ${humanize(capability)} to ${humanizeTitle(provider)}. `
                                             + `Choose it on that card and press Save & Test.`,
                                         failed: true,
                                     });

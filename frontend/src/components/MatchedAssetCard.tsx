@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { ClipboardCheck, History, Link2 } from 'lucide-react';
+import { Chip, StatusBadge } from './ui';
+import { humanize, isEnumLike } from '../utils/humanize';
 
 /**
  * The asset a report is tied to, on the staff incident view.
@@ -38,12 +40,7 @@ const HIDDEN_KEYS = new Set([
 
 /** "install_year" / "installYear" / "INSTALL YEAR" -> "Install year". */
 export function humanizeKey(key: string): string {
-    const words = key
-        .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-        .replace(/[_\-.]+/g, ' ')
-        .trim()
-        .toLowerCase();
-    return words.charAt(0).toUpperCase() + words.slice(1);
+    return humanize(key);
 }
 
 function formatValue(value: unknown): string {
@@ -62,21 +59,19 @@ export function assetAttributes(properties: Record<string, unknown> | undefined)
         .map(([key, value]) => ({ key, label: humanizeKey(key), value: formatValue(value) }));
 }
 
+/** A layer's `storm_drain` type reads "Storm drain"; a typed-in "Hydrant" stays as written. */
+const assetType = (asset: MatchedAsset): string | undefined =>
+    isEnumLike(asset.asset_type) ? humanize(asset.asset_type) : asset.asset_type;
+
 /** The asset's display name: a `name` property if the file has one, else its ID. */
 export function assetTitle(asset: MatchedAsset): string {
     const name = asset.properties?.name ?? asset.properties?.Name ?? asset.properties?.NAME;
     if (name !== undefined && name !== null && String(name).trim()) return String(name);
     if (asset.asset_id !== undefined && asset.asset_id !== null && String(asset.asset_id).trim()) {
-        return `${asset.asset_type || asset.layer_name || 'Asset'} ${asset.asset_id}`;
+        return `${assetType(asset) || asset.layer_name || 'Asset'} ${asset.asset_id}`;
     }
-    return asset.asset_type || asset.layer_name || 'Asset';
+    return assetType(asset) || asset.layer_name || 'Asset';
 }
-
-const STATUS_STYLE: Record<string, { label: string; cls: string }> = {
-    open: { label: 'Open', cls: 'bg-red-500/15 text-red-300 border-red-400/30' },
-    in_progress: { label: 'In progress', cls: 'bg-amber-500/15 text-amber-300 border-amber-400/30' },
-    closed: { label: 'Closed', cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-400/30' },
-};
 
 const fmtDate = (iso: string | null) =>
     iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
@@ -118,12 +113,8 @@ export default function MatchedAssetCard({ asset, layerColor, reports, loading, 
                 </div>
             </div>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
-                <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-300">
-                    Selected on the map when reported
-                </span>
-                <span className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-0.5 text-[11px] text-sky-300">
-                    <ClipboardCheck className="h-3 w-3" aria-hidden="true" /> Included on the work order
-                </span>
+                <Chip tone="success">Selected on the map when reported</Chip>
+                <Chip tone="info" icon={ClipboardCheck}>Included on the work order</Chip>
             </div>
 
             {/* Attributes: every field the layer's GeoJSON carries */}
@@ -154,7 +145,6 @@ export default function MatchedAssetCard({ asset, layerColor, reports, loading, 
                         </p>
                         <ol className="divide-y divide-white/5 rounded-lg border border-white/10">
                             {shown.map(r => {
-                                const st = STATUS_STYLE[r.status] || { label: r.status.replace(/_/g, ' '), cls: 'bg-white/10 text-white/70 border-white/20' };
                                 return (
                                     <li key={r.service_request_id}>
                                         <button
@@ -162,7 +152,7 @@ export default function MatchedAssetCard({ asset, layerColor, reports, loading, 
                                             className="w-full px-3 py-2 text-left transition-colors hover:bg-white/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-amber-300"
                                         >
                                             <div className="flex items-center gap-2">
-                                                <span className={`shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] ${st.cls}`}>{st.label}</span>
+                                                <span className="shrink-0"><StatusBadge status={r.status} size="xs" /></span>
                                                 <span className="min-w-0 flex-1 truncate text-[13px] text-white/90">{r.service_name}</span>
                                                 <span className="shrink-0 text-[11px] text-white/45">{fmtDate(r.requested_datetime)}</span>
                                             </div>

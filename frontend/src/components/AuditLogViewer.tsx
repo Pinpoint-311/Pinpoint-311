@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useCallback, useId } from 'react';
 import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
-import { AccordionSection } from './ui';
+import { AccordionSection, Chip } from './ui';
+import { humanize, humanizeTitle } from '../utils/humanize';
 import { useOptionalAnnounce } from './liveAnnounce';
 
 interface AuditLog {
@@ -39,11 +40,11 @@ const listOf = (v: unknown): string => Array.isArray(v) ? v.join(', ') : String(
  * missing the expected keys) falls through to a readable key: value list
  * rather than raw JSON or a dash. */
 const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
-    login_success: d => d.mfa_type ? `Signed in (MFA: ${d.mfa_type})` : 'Signed in',
+    login_success: d => d.mfa_type ? `Signed in (MFA: ${humanize(d.mfa_type)})` : 'Signed in',
     logout: () => 'Signed out',
     session_expired: () => 'Session expired',
     role_changed: d => (d.old_role && d.new_role)
-        ? `Role changed from ${d.old_role} to ${d.new_role}${d.changed_by ? ` by ${d.changed_by}` : ''}`
+        ? `Role changed from ${humanize(d.old_role)} to ${humanize(d.new_role)}${d.changed_by ? ` by ${d.changed_by}` : ''}`
         : null,
     // The backstop middleware already writes its own sentence.
     admin_change: d => typeof d.action === 'string' && d.action
@@ -54,10 +55,10 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
         : null,
     connector_alerts_unmuted: d => d.connector ? `Unmuted alert emails for ${d.connector}` : null,
     'setup.complete': () => 'Marked the setup guide as complete',
-    'secret_store.choose': d => d.store ? `Chose ${d.store} as the secret store` : null,
+    'secret_store.choose': d => d.store ? `Chose ${humanize(d.store)} as the secret store` : null,
     provider_saved: d => {
         if (!d.capability || !d.provider) return null;
-        let s = `Selected ${d.provider} as the ${d.capability} provider`;
+        let s = `Selected ${humanizeTitle(d.provider)} as the ${humanize(d.capability)} provider`;
         if (d.model) s += ` (model ${d.model})`;
         if (Array.isArray(d.settings_updated) && d.settings_updated.length) {
             s += `; updated ${listOf(d.settings_updated)}`;
@@ -78,15 +79,15 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
         return parts.length ? parts.join('; ') : null;
     },
     user_created: d => d.target_username
-        ? `Created account ${d.target_username}${d.role ? ` with role ${d.role}` : ''}`
+        ? `Created account ${d.target_username}${d.role ? ` with role ${humanize(d.role)}` : ''}`
         : null,
     user_updated: d => d.target_username
         ? `Updated account ${d.target_username}`
-            + (d.role ? ` — role set to ${d.role}` : '')
+            + (d.role ? ` — role set to ${humanize(d.role)}` : '')
             + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : '')
         : null,
     user_deleted: d => d.target_username
-        ? `Deleted account ${d.target_username}${d.role ? ` (${d.role})` : ''}`
+        ? `Deleted account ${d.target_username}${d.role ? ` (${humanize(d.role)})` : ''}`
         : null,
     user_password_reset: d => d.target_username ? `Reset the password for ${d.target_username}` : null,
     department_created: d => d.name ? `Created department "${d.name}"` : null,
@@ -133,7 +134,7 @@ const detailEntries = (details: unknown): Array<[string, string]> => {
     return Object.entries(details as Details)
         .filter(([, v]) => v !== null && v !== undefined && v !== '')
         .map(([k, v]) => [
-            k.replace(/_/g, ' '),
+            humanize(k),
             Array.isArray(v) ? v.join(', ')
                 : typeof v === 'object' ? JSON.stringify(v)
                 : String(v),
@@ -306,11 +307,11 @@ export default function AuditLogViewer() {
     };
 
     const getEventIcon = (eventType: string, success: boolean) => {
-        if (!success) return <XCircle className="w-4 h-4 text-red-400" />;
-        if (eventType.includes('login')) return <CheckCircle className="w-4 h-4 text-emerald-400" />;
-        if (eventType.includes('logout')) return <User className="w-4 h-4 text-blue-400" />;
-        if (eventType.includes('emergency')) return <Sparkles className="w-4 h-4 text-indigo-400" />;
-        return <Shield className="w-4 h-4 text-slate-400" />;
+        if (!success) return XCircle;
+        if (eventType.includes('login')) return CheckCircle;
+        if (eventType.includes('logout')) return User;
+        if (eventType.includes('emergency')) return Sparkles;
+        return Shield;
     };
 
     const getEventLabel = (eventType: string) => {
@@ -338,7 +339,7 @@ export default function AuditLogViewer() {
             'provider_saved': 'Provider Saved',
             'secret_saved': 'Credential Saved',
         };
-        return labels[eventType] || eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return labels[eventType] || humanizeTitle(eventType);
     };
 
     const formatTimestamp = (timestamp: string) => {
@@ -546,10 +547,13 @@ export default function AuditLogViewer() {
                                                     >
                                                         <td className="px-6 py-4">
                                                             <div className="flex items-center gap-3">
-                                                                {getEventIcon(log.event_type, log.success)}
-                                                                <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
+                                                                <Chip
+                                                                    size="sm"
+                                                                    tone={log.success ? (log.event_type.includes('emergency') ? 'accent' : 'success') : 'danger'}
+                                                                    icon={getEventIcon(log.event_type, log.success)}
+                                                                >
                                                                     {getEventLabel(log.event_type)}
-                                                                </span>
+                                                                </Chip>
                                                                 {/* Success and failure were carried by icon shape and
                                                                     colour alone (WCAG 1.4.1) -- identical text otherwise. */}
                                                                 <span className="sr-only">{log.success ? 'Succeeded' : 'Failed'}</span>
@@ -607,7 +611,7 @@ export default function AuditLogViewer() {
                                                                 <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
                                                                     {entries.map(([k, v]) => (
                                                                         <div key={k} className="flex gap-2">
-                                                                            <dt className="text-white/50 capitalize shrink-0">{k}:</dt>
+                                                                            <dt className="text-white/50 shrink-0">{k}:</dt>
                                                                             <dd className="text-white/80 break-all">{v}</dd>
                                                                         </div>
                                                                     ))}

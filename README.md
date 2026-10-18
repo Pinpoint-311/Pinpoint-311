@@ -1,1112 +1,647 @@
-# Pinpoint 311 — Municipal Service Request Platform
+# Pinpoint 311
 
 <p align="center">
   <img src="frontend/public/pinpoint311_logo_light.png" alt="Pinpoint 311" height="60">
 </p>
 <p align="center">
   <a href="https://pinpoint311.org"><img src="https://img.shields.io/badge/Website-pinpoint311.org-6366f1.svg" alt="Website"></a>
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://hcb.hackclub.com/pinpoint-311"><img src="https://img.shields.io/badge/Fiscal%20Sponsor-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club"></a>
-  <img src="https://img.shields.io/badge/React-18-61DAFB.svg" alt="React 18">
-  <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
-  <img src="https://img.shields.io/badge/PostgreSQL-15-336791.svg" alt="PostgreSQL 15">
-  <img src="https://img.shields.io/badge/AI-pluggable-8E24AA.svg" alt="Pluggable AI providers">
-  <img src="https://img.shields.io/badge/Geo-PostGIS-336791.svg" alt="PostGIS">
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml/badge.svg" alt="Build status"></a>
+  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility audit"></a>
 </p>
 
-<p align="center">
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/build-publish.yml/badge.svg" alt="Build Status"></a>
-  <a href="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml"><img src="https://github.com/Pinpoint-311/Pinpoint-311/actions/workflows/accessibility.yml/badge.svg" alt="Accessibility"></a>
-</p>
+Pinpoint 311 is open-source, self-hosted 311 software for small and mid-size
+municipalities. Residents report non-emergency problems (a pothole, a broken
+streetlight, a missed trash pickup) from a phone or computer without creating an
+account. Staff triage, route, and close those reports from one dashboard.
+Administrators configure the whole system from a browser.
 
-## Introduction
+The town runs it on its own server and owns the database. It is MIT-licensed and
+has no per-seat or per-request fees. Cloud services such as AI, translation, and
+text messaging are optional; each one is switched on and configured in the Admin
+Console, and the platform keeps working when any of them is off or unreachable.
 
-Most towns can't justify a five-figure annual contract for a modern 311 system — so they're stuck with paper forms, a clunky web form, or nothing at all. Pinpoint 311 is the alternative: complete, self-hosted 311 software that a small or mid-size municipality can actually run, own, and afford.
+This README has two audiences:
 
-Residents report an issue in about a minute — no account, in their own language, with a photo and a map pin. Staff triage, route, and resolve everything from one dashboard, with optional AI assistance. Admins configure the whole system from the browser. And because it's self-hosted and MIT-licensed, the town owns its data outright — no vendor lock-in, no per-request bill.
+- **Town IT staff deploying it**: read [Quick start](#quick-start), [Configuration](#configuration), [Security model](#security-model), and [Operations](#operations).
+- **Developers contributing**: read [Architecture](#architecture) and [Development and tests](#development-and-tests).
 
-Every advanced capability — AI assistance, translation, encryption, notifications, content moderation — is optional and works with the cloud your town already uses. Turn on what you need; everything else stays out of the way, and the platform keeps running without it.
+## Contents
 
-This is enterprise-grade civic software for the towns that got left behind.
-
----
-
-## Table of Contents
-
-- [Why Pinpoint?](#why-pinpoint)
-- [Who It's For](#who-its-for)
-- [Core Features Overview](#core-features-overview)
-- [Resident Portal Features](#resident-portal-features)
-- [Staff Dashboard Features](#staff-dashboard-features)
-- [Admin Console Features](#admin-console-features)
-- [Non-Emergency Disclaimer](#non-emergency-disclaimer)
-- [Research Suite](#research-suite-university-lab-integration)
-- [Technical Architecture](#technical-architecture)
-- [Deployment & Setup](#deployment--setup)
-- [Centralized Hosting](#centralized-hosting-managed-mode)
-- [Security & Governance](#security--governance)
-- [Sustainability & Continuity](#sustainability--continuity)
-- [License](#license)
-- [Fiscal Sponsorship](#fiscal-sponsorship)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Security model](#security-model)
+- [Operations](#operations)
+- [Integrations with town systems](#integrations-with-town-systems)
+- [API](#api)
+- [Development and tests](#development-and-tests)
+- [Centralized hosting (optional)](#centralized-hosting-optional)
+- [Accessibility](#accessibility)
+- [Reporting security vulnerabilities](#reporting-security-vulnerabilities)
+- [Further documentation](#further-documentation)
+- [License and fiscal sponsorship](#license-and-fiscal-sponsorship)
 
 ---
 
-## Why Pinpoint?
+## Features
 
-Small towns deserve the same tools big cities pay a fortune for. Here's what changes when you switch from a paper form or a basic web form to Pinpoint 311:
+### Resident portal (`/`)
 
-| | The old way | With Pinpoint 311 |
-| :--- | :--- | :--- |
-| Cost | Free but limited, or a yearly hosted contract | Free and open source, self-hosted |
-| Your data | Locked in a vendor's cloud | Owned by the town, on your infrastructure |
-| Reporting | Type an address into a form | GPS pin, map, photos, and asset selection |
-| Language | English only | 100+ languages, including notifications |
-| Triage | Sort every ticket by hand | Rules-based routing, plus optional AI summaries, priority suggestions, and photo analysis |
-| Tracking | Email, if anything | Live status by magic link, SMS, and email |
-| Privacy | Little to none | Field-level PII encryption and redaction |
-| Research | Not available | 60+ privacy-preserved data fields, included |
-| Branding | Generic | Full white-label — your name, colors, and logo |
+- Report without an account. Pick a category, drop a map pin or type an address, describe the problem, and attach up to three photos.
+- Track a report through a private link, with email and text updates if the resident gives an email address or phone number.
+- Public map and list of community reports, with personal details removed. Residents can mark their own report as unlisted when the Unlisted Reports module is on.
+- The interface, categories, and resident-submitted text can be shown in more than 100 languages through the configured translation provider.
+- A one-time non-emergency notice and a persistent "call 911 for emergencies" banner. Each acknowledgment is recorded.
+- Editable Privacy Policy, Terms of Service, and Accessibility Statement pages (`/privacy`, `/terms`, `/accessibility`).
 
-The town owns the deployment and the data outright: no per-seat pricing, no per-request billing, and no vendor lock-in.
+### Photo and content safety
+
+- Photos are screened before submission. Faces and license plates are blurred and EXIF metadata (including GPS) is stripped before a photo is stored. Detection runs on Google Cloud Vision, AWS Rekognition, Azure AI, or an offline local detector (OpenCV and Tesseract). Photos the detector is unsure about are held for staff review instead of being published. Detection is a mitigation, not a guarantee.
+- Descriptions and public comments are screened for abusive content. Explicit content is blocked; other flagged content goes through and is marked for staff.
+
+### Staff dashboard (`/staff`)
+
+- One queue with list, map, and detail views, filters by status, priority, department, category, and date, and department scoping: non-admin staff see reports routed to their departments, reports assigned to them, and unrouted reports that still need triage.
+- Internal notes and public comments, status changes, assignment, and closing as resolved (optionally with a completion photo), no action needed, or transferred to a third party.
+- **Priority is one number from 1 to 10.** When AI is on, it suggests a priority; staff can accept or change it, and every change is recorded in the audit log.
+- **Triage panel.** Nearby similar reports, proximity to schools, hospitals, and other critical sites, current weather, and asset history are computed from your own data without AI. When AI is on, it adds a plain-language summary, a suggested priority, and safety flags. AI never routes, assigns, or closes a report.
+- **Manual intake.** Staff can log a report taken by phone, email, in person, or another channel. It runs through the same routing, notifications, triage, and connector pushes as a resident submission, and the channel is recorded. Blank optional fields are left blank; no placeholder contact details are invented.
+- **Resident history (optional module).** Shows staff a resident's other reports and lets them search by full email address or full name. Matching uses keyed fingerprints, so the encrypted contact fields are never decrypted to search. Results are limited to reports the staff member could already open and show only ID, category, status, and date. Every lookup is audited; if the audit record cannot be written, no results are returned.
+- **Analytics Advisor.** A chat assistant that answers questions about the town's aggregated request data. It runs on the configured AI provider and is given aggregated data only, not resident contact details.
+- Printable work orders with a QR code, map, and dispatch notes.
+- A held-photo review queue for photos withheld by screening.
+
+### Admin Console (`/admin`)
+
+The console is organized into three groups, plus a **Version Control** panel in the sidebar:
+
+| Group | Sections | What is configured there |
+| --- | --- | --- |
+| Branding & Setup | Branding, Setup & Integration | Town name, colors, logo, legal pages; secret store, AI, translation, email, text messaging, PII encryption, photo redaction, staff sign-in, maps, backups, crash reporting, and connections to town systems |
+| Organization | Users, Departments, Service Categories | Staff accounts and roles; departments and routing emails; categories, routing rules, custom questions, icons, location mode, public visibility |
+| System & Compliance | System Settings, System Health, Compliance | Feature modules, maps, municipal boundary, map layers, public archival; health checks and alert muting; records retention, legal holds, recoverable deletions, database backups |
+
+Per-category settings:
+
+- **Routing.** Handled by the municipality (routed to a department), third-party only (residents are shown the outside agency's contact details instead of a form), or road-based (routed by which jurisdiction maintains the road at the pin).
+- **Location mode.** *Required* (a pin or address is needed to submit), *Optional* (the map is shown and can be skipped; the default), or *Not collected* (no map on the form, and any location sent anyway is discarded). The same rule applies to the resident form, staff manual intake, and inbound connectors.
+- **Hide from public view.** Keeps every report in the category off the public map and list. Staff still see them.
+- **Icons.** One shared set of about 110 municipal icons, grouped by topic (streets, trash and recycling, water and weather, parks, animals, code and permits, taxes and records, community and safety). The picker is searchable and suggests an icon from the category name. The same set is used on the resident form, the staff screens, and the console.
+- **Custom questions.** Extra fields per category, for example "Is the dog aggressive?".
+
+Feature modules, switched in System Settings: Research Portal, Unlisted Reports, Platform Feedback (one anonymous ease-of-use question), and Resident History.
+
+### Research Lab (`/research`)
+
+For staff and outside researchers with the `researcher` role, when the Research Portal module is on. It provides aggregate analytics and CSV and GeoJSON exports with a data dictionary. Exports exclude free-text descriptions and contact details, snap coordinates to a grid, and record every access. A Data Assistant chat runs on the same AI provider as triage.
+
+### Records and retention
+
+- Retention is set by the town's clerk in days. If it is not set, nothing is purged.
+- When records expire, the town chooses between anonymizing them (removing resident details while keeping operational counts) or deleting them.
+- Legal holds exempt individual records from retention.
+- Soft-deleted reports can be restored by an administrator.
 
 ---
 
-## Who It's For
+## Architecture
 
-One platform, four purpose-built experiences.
-
-<table>
-<tr>
-<td width="25%" valign="top">
-
-### 🏠 For Residents
-Report an issue in about a minute.
-
-- No account, ever
-- 100+ languages
-- Photo + map pin
-- Track by magic link
-
-<a href="#resident-portal-features">Resident features →</a>
-
-</td>
-<td width="25%" valign="top">
-
-### 🧰 For Staff
-Everything in one place.
-
-- One dashboard for the queue
-- AI summaries & priority (optional)
-- Routing & internal notes
-- Analytics assistant
-
-<a href="#staff-dashboard-features">Staff features →</a>
-
-</td>
-<td width="25%" valign="top">
-
-### ⚙️ For Admins
-Run it from the browser.
-
-- Services & routing rules
-- Full white-label branding
-- Providers & integrations
-- Users, roles & backups
-
-<a href="#admin-console-features">Admin features →</a>
-
-</td>
-<td width="25%" valign="top">
-
-### 🔬 For Researchers
-Study your town's data.
-
-- 60+ analysis fields
-- Privacy-preserved
-- CSV & GeoJSON export
-- Census integration
-
-<a href="#research-suite-university-lab-integration">Research suite →</a>
-
-</td>
-</tr>
-</table>
-
-<details>
-<summary><b>System Architecture</b> (click to expand)</summary>
-
-```mermaid
-graph TB
-    subgraph "Frontend"
-        RP[Resident Portal]
-        SP[Staff Dashboard]
-        AC[Admin Console]
-        RL[Research Lab]
-    end
-
-    subgraph "Backend Services"
-        API[FastAPI Server]
-        WK[Celery Worker + Beat]
-        RD[(Redis Cache)]
-    end
-
-    subgraph "Data Layer"
-        PG[(PostgreSQL + PostGIS)]
-    end
-
-    subgraph "Infrastructure"
-        CD[Caddy HTTPS]
-    end
-
-    subgraph "Pluggable Providers - bring your own cloud"
-        AI[AI summaries & vision]
-        TR[Translation]
-        SEC[Secrets + PII encryption]
-        MSG[Email + SMS]
-        MOD[Content moderation]
-    end
-
-    subgraph "Integrations"
-        GM[Maps]
-        IDP[Staff sign-in / SSO]
-        GT[Town-system connectors]
-    end
-
-    RP --> CD
-    SP --> CD
-    AC --> CD
-    RL --> CD
-    CD --> API
-    CD --> |static| RP
-
-    API --> PG
-    API --> RD
-    API --> WK
-
-    WK --> AI
-    WK --> TR
-    WK --> MSG
-
-    API --> SEC
-    API --> MOD
-    API --> GM
-    API --> IDP
-    WK --> GT
+```
+                    Internet
+                       |
+                 :80 / :443 (only published public ports)
+                       |
+                 +-----------+
+                 |   Caddy   |  TLS, security headers, CSP, request size limit, access log
+                 +-----------+
+                  /api/*   \  everything else
+                    |       \
+      127.0.0.1:8000|        \127.0.0.1:5173
+             +-----------+   +--------------+
+             |  backend  |   |   frontend   |  nginx serving the built React app
+             |  FastAPI  |   +--------------+
+             +-----------+
+               |      |
+               |      |  enqueue
+   127.0.0.1:5432     v
+   +-----------+   +-------+  127.0.0.1:6379   +-------------------+
+   | Postgres  |<--| Redis |<------------------|  worker           |
+   | + PostGIS |   +-------+                   |  Celery + Beat    |
+   +-----------+       ^                       +-------------------+
+         ^             |                          |
+         +-------------+--------------------------+
+                                                  |
+                         optional outbound calls  v
+       AI, translation, email, SMS, KMS, secret store, maps, town-system connectors
 ```
 
-</details>
+| Service | Image or build | Role |
+| --- | --- | --- |
+| `db` | `ghcr.io/baosystems/postgis:15-3.3` | PostgreSQL 15 with PostGIS |
+| `redis` | `redis:7-alpine` | Celery queue and caches. Runs with `noeviction` and append-only persistence so queued work survives restarts. |
+| `backend` | `./backend` (Python 3.11, FastAPI) | REST API, Open311 endpoints, schema migrations on start |
+| `worker` | `./backend` | Celery worker with Beat: AI triage, notifications, connector sync, health scans, backups, retention |
+| `frontend` | `./frontend` (React 18, TypeScript, Vite, Tailwind; served by nginx) | Resident portal, staff dashboard, Admin Console, Research Lab |
+| `caddy` | `caddy:2-alpine` | Reverse proxy and automatic HTTPS |
 
-<details>
-<summary><b>Request Lifecycle</b> (click to expand)</summary>
+Code layout:
 
-```mermaid
-flowchart LR
-    A[Resident submits] --> B{Within boundary?}
-    B -->|No| C[Rejected]
-    B -->|Yes| M{Content check}
-    M -->|Explicit| C2[Blocked]
-    M -->|OK| D[Created]
-
-    D --> E[AI analysis, if enabled]
-    E --> F[Confirmation email]
-
-    F --> G[Staff reviews]
-    G --> H{Action?}
-
-    H -->|Assign| I[In Progress]
-    H -->|Resolve| J[Resolved]
-    H -->|Transfer| K[Third party]
-
-    I --> J
-    J --> L[Closure email]
-```
-
-</details>
-
-<details>
-<summary><b>Security Stack</b> (click to expand)</summary>
-
-```mermaid
-graph LR
-    subgraph "Identity"
-        IDP[Auth0 / Entra / Okta / OIDC]
-        MFA[MFA / Passkeys]
-    end
-
-    subgraph "Secrets and Encryption"
-        SEC[Secret Manager / Key Vault / Secrets Manager]
-        KMS[Envelope KMS for PII]
-    end
-
-    subgraph "Infrastructure"
-        CD[Caddy HTTPS]
-        AL[Hash-chained audit log]
-    end
-
-    IDP --> MFA
-    SEC --> KMS
-    CD --> AL
-```
-
-</details>
-
-## Core Features Overview
-
-### 🎨 Built for people, not paperwork
-- Responsive web app for desktop and mobile browsers.
-- 100+ language support via the configured translation provider, with caching. Coverage includes UI strings, service categories, status labels, filters, priority levels, and resident-submitted content. Confirmation emails and SMS are sent in the resident's selected language.
-- No-login submission for residents, with email magic-link tracking.
-
-### 🤖 Optional intelligence & safety
-- **Photo redaction & EXIF stripping**: Destructively blurs human faces and license plates at intake before storage, stripping GPS and camera EXIF metadata. Providers include Google Cloud Vision, AWS Rekognition, Azure AI, or an offline local detector (OpenCV Haar cascades). Photos with uncertain detections enter a held staff review queue rather than leaking unredacted images.
-- **PII redaction**: Names, phone numbers, and email addresses are masked from public request logs and exports.
-- **Photo categorization**: When AI is enabled, vision models categorize uploaded photos (for example, distinguishing a pothole from water damage).
-- **Multilingual analysis**: Non-English descriptions are translated to English before analysis so staff can read every submission.
-- **Priority scoring (human-in-the-loop)**: The AI suggests a 1–10 urgency score, but it is never applied automatically. Staff explicitly accept or override it, and the decision is recorded in the audit log.
-
-### 🗺️ Location-aware & pluggable maps
-- **Pluggable map providers**: Choose Google Maps, Esri / ArcGIS Online & Enterprise, Azure Maps, or Apple MapKit JS with decoupled browser and server keys.
-- **Corridor & boundary checking**: PostGIS spatial buffering checks road corridors and municipal boundaries before submission.
-- **Asset selection**: When map layers are configured, residents can select the specific asset (streetlight, hydrant, park zone) a report relates to.
-- **Clustering**: In-app client-side clustering groups markers cleanly across all map providers; backend hotspot detection uses PostGIS `ST_ClusterDBSCAN`.
-
-### ☁️ Runs on your terms
-- **Bring your own cloud**: Pick one cloud environment and it configures AI, translation, secret storage, PII encryption, email, and text messaging together — or set each one independently. Provider settings live in the Admin Console; no config files to edit.
-- **Host-provided credentials**: In managed fleet setups, hosts can push shared credentials (maps, translation, AI) directly to instances while preserving town-specific overrides.
-- **Secrets stay in your vault**: When an external secret store is configured, credentials are written there and the database keeps only a reference — the raw key never sits in the app's database.
-- **Self-updating model list**: The AI model picker refreshes available models directly from your provider, so a retired model never silently breaks triage.
-- **Nothing is mandatory**: Every advanced provider is optional. If one is unconfigured or unreachable, that feature is skipped with a warning in the Admin Console and the rest of the platform keeps running.
-
-### 🛡️ Safe by default
-- **Content moderation on every public submission**: Descriptions and comments are screened as they come in — explicit or abusive content is blocked at submission, while ordinary (even frustrated) reports go through and are flagged for staff.
-- **Unlisted & private reports**: Residents can opt to submit reports without publishing them to the public map or feed.
-- **Tamper-evident audit log**: Every action is recorded in a hash-chained log, anchored daily so history can't be quietly rewritten.
-- **Configurable records retention**: Automated retention and purging based on municipal policy (`retention_days`), with a separate administrative `legal_hold` mechanism to prevent deletion of contested records.
-
-### 🔌 Connects to what your town already runs (in active development)
-Two-way connectors let requests, status, comments, and photos flow between Pinpoint and the systems a town already uses.
-- Purpose-built connectors for permitting and municipal systems that publish an open or documented API, plus standard Open311 GeoReport v2 endpoints.
-- A configurable connector for any other vendor that exposes a REST API — you provide the endpoint and key. It is verified with a built-in connection check and a test report before go-live.
-- Bounded alert muting allows administrators to silence repetitive outage emails during known maintenance windows without obscuring health dashboards.
+| Path | Contents |
+| --- | --- |
+| `backend/app/main.py` | App assembly, middleware, router registration |
+| `backend/app/api/` | Route modules (auth, open311, services, system, setup, integrations, research, resident_history, health, and others) |
+| `backend/app/services/` | Business logic, provider adapters, `ai/` (Vertex, Azure OpenAI, Bedrock) |
+| `backend/app/integrations/` | Connector framework and connectors (Accela, ArcGIS, Open311, Tyler, generic REST) |
+| `backend/app/tasks/` and `backend/app/core/celery_app.py` | Background tasks and the Beat schedule |
+| `backend/app/db/migrate.py`, `backend/alembic/` | Startup migrator and Alembic revisions |
+| `backend/tests/` | Pytest suite |
+| `frontend/src/pages/`, `frontend/src/components/` | React pages and components, with Vitest tests alongside |
+| `deploy/templates/` | Azure ARM and AWS CloudFormation templates for the cloud resources a town needs |
 
 ---
 
-## Resident Portal Features
+## Quick start
 
-The Resident Portal is the public-facing submission and tracking interface.
+### Requirements
 
-### 1. Service Discovery
-- **Visual Grid**: Services are displayed with clear, consistent iconography (Lucide React) for instant recognition.
-- **Service Categories**: Browsable catalog of all available township services.
+- A Linux host with Docker Engine and the Docker Compose plugin.
+- 2 vCPUs and 4 GB of RAM is a reasonable starting point. The compose file sets memory limits of 2 GB each on `db`, `backend`, and `worker`, so a small host relies on those limits not all being reached at once.
+- A DNS name pointing at the host if you want automatic HTTPS. Ports 80 and 443 must be reachable from the internet for certificate issuance.
 
-### 2. Intelligent Location Picker
-- **Interactive Map**: Pluggable map support (Google Maps, Esri / ArcGIS Online & Enterprise, Azure Maps, Apple MapKit JS) with drag-to-set pin functionality.
-- **Address Autocomplete & Custom Locators**: Type-ahead address lookup via Google Places or town-specific ArcGIS World Geocoding locators.
-- **Jurisdiction Boundaries & Road Corridors**: System-level polygons (GeoJSON) and PostGIS road corridor buffering (`/api/roads/corridor-check`) validate valid service areas.
-- **Asset Selection**: When map layers are configured, residents can click on infrastructure assets displayed on the map (e.g., park zones, hydrants) and attach the asset ID directly to their report.
-
-### 3. Advanced Routing Logic
-- **Road-Based Routing**: Configurable rules for state/county roads.
-    - *Example*: Potholes on state highways can be automatically directed to external state agencies with custom contact info.
-- **Third-Party Hand-off**: Services managed by partner utilities show specific instructions and contact details instead of an intake form.
-
-### 4. Submission & Tracking
-- **Pre-Submit Photo Screening & Redaction**: Uploads up to 3 photos with client-side compression and immediate pre-submission screening (`POST /api/open311/v2/photos/screen`). Human faces and license plates are destructively blurred before permanent storage, and EXIF GPS tags are stripped.
-- **Unlisted Submissions**: Residents can submit issues privately without displaying them on the public map or feed (`is_public = False`).
-- **Anonymous Feedback**: Optional 5-point sentiment feedback survey displayed upon ticket confirmation, without collecting PII or tracking resident identity.
-- **Magic Link Tracking**: Users receive a unique tracking link (e.g., `/#track/req-123`) to view live status updates without creating an account.
-- **Status Timeline**: Clear visualization of the request journey from "Received" → "In Progress" → "Resolved" → "Closed".
-- **Public Request Map**: Interactive map allowing residents to view open and resolved community requests, with privacy protection and public archival for older records. Features filtering by:
-    - **Department** (Police, Public Works, etc.)
-    - **Status** (Open, Closed, In Progress)
-    - **Date Range**
-    - **Service Type**
-
----
-
-## Staff Dashboard Features
-
-The Staff Dashboard is the operational interface for reviewing and resolving requests, protected by JWT authentication.
-
-### 1. Unified Workspace
-- **Live Feed**: Auto-refreshes every 30s; identifying "NEW" requests with badging.
-- **Split-Pane View**: Independent scrolling for the request list and details panel.
-- **Interactive Map**: Features "Satellite View" for precise location verification. Includes comprehensive filters for:
-    - **Priority Level** (Critical, High, Normal)
-    - **Department & Assigned Staff**
-    - **Status & Date Range**
-    - **Service Category**
-
-### 2. Collaboration Tools
-- **Internal Comments**: Private staff-only notes for coordination.
-- **External Updates**: Public comments visible to residents via the tracker.
-- **Staff Preferences**: Each staff member can toggle their own SMS/Email notifications.
-- **Audit log**: Tamper-evident, hash-chained history of every action (status change, assignment, comment). The chain is anchored daily so tampering can be detected.
-
-### 3. Request Management
-- **Smart Assignment**: Auto-route to specific departments or keep in a general queue.
-- **Completion Types**: Close requests as **Resolved** (with photo proof), **No Action Needed** (invalid), or **Transferred** (third-party).
-- **Priority Override**: Staff set or change a request's priority at any time; nothing sets it automatically.
-- **Printable Work Orders**: One-click generation of physical work orders for field crews with embedded QR tracking codes, map overview, address, and dispatch notes.
-- **Held Photo Review**: Staff can review and approve or discard photos held during automated screening (`media_pending_review`) directly from the detail pane before publishing.
-- **Administrative Legal Hold**: Explicit `legal_hold` toggle to exempt specific contested records from automated retention schedules.
-- **Asset History**: When viewing a request attached to a physical asset (e.g., Hydrant #404), automatically shows all past history for that specific asset.
-- **Status Workflow**:
-    - **Open**: New request.
-    - **In Progress**: Staff acknowledged and working.
-    - **Resolved**: Work complete.
-    - **Closed**: Final state (includes optional "Completion Photo" proof).
-
-### 4. Triage Panel
-This panel is decision *support*, not automation. Routing and assignment are handled by the rules you configure (see Advanced Routing and Smart Assignment), not by AI. Most of the panel — history, proximity, weather, similar reports — is pulled deterministically from your own data and works whether or not AI is enabled. When AI is enabled, it synthesizes that same data into a plain-language summary and a suggested priority; it does not route, assign, close, or decide anything on its own, and its suggestions only take effect when a staff member accepts them.
-
-- **Safety flags**: highlights potential liabilities (for example, a downed power line) from the AI assessment.
-- **Proximity analysis**: checks whether the issue is near critical infrastructure (schools, hospitals, fire stations) via PostGIS, with a Nominatim (OpenStreetMap) fallback for unmapped areas. Computed without AI.
-- **Sentiment**: estimates the tone of the description (neutral, frustrated, urgent) when AI is on.
-- **Weather context**: fetches current weather for the location to help assess hazards. Computed without AI.
-- **Pluggable AI**: the summary and photo assessment run on whichever AI provider you configure. The model list refreshes live from the provider, and if a model is retired the picker flags it. If AI is off or unreachable, requests still submit and the panel shows the computed context above.
-- **Similar request detection**: surfaces nearby requests within ~50m and a recent time window for staff awareness. Requests are never flagged as duplicates or deleted automatically; any action is left to staff.
-- **Human-in-the-loop priority**: the AI produces a priority score, but it is **never written to the request's priority**. It is kept as a suggestion in the analysis data and shown with an "Accept AI Priority" action; the request's priority only changes when a staff member accepts it, and that acceptance is recorded in the audit log.
-- **PostGIS Geospatial Analytics**:
-    - **Hotspot Analysis**: Automatically clusters requests to identify problem areas (e.g., "Pothole Clusters" on specific roads).
-    - **User Bias Detection**: Flags suspicious activity using spatial statistics (e.g., single user spamming requests in a 10m radius).
-    - **Jurisdiction Verification**: Real-time point-in-polygon checks against township boundaries.
-
-### 5. Analytics Assistant
-A conversational interface, running on the configured AI provider, that lets staff ask questions about their data in natural language. It cross-references system data with the Research Suite's aggregated metrics.
-
-- **Natural-language queries**: ask questions such as "What's our average triage time?" or "Are there gaps in our response times by area?" and get answers with specific numbers.
-- **Research-Grade Context**: The AI has access to aggregated metrics from the Research Suite:
-
-| Data Category | Metrics Available |
-|---|---|
-| **Social Equity** | Social Vulnerability Index (SVI), income quintile distribution, housing tenure, population density |
-| **Resident Sentiment** | Average sentiment score, frustration rate, repeat report rate, prior report references |
-| **Bureaucratic Friction** | Average triage time, reassignment count, off-hours submission rate, escalation rate |
-| **Infrastructure** | Category breakdown (roads/pavement, lighting, stormwater, etc.) |
-
-- **Cross-Referencing**: Connects patterns across categories—e.g., correlating response times with social vulnerability, or sentiment with seasonal trends.
-- **Formatted Responses**: Outputs structured markdown with section headers, bold metrics, comparison tables, and "Key Takeaway" summaries.
-- **Conversation Memory**: Maintains multi-turn context so staff can drill into follow-up questions.
-- **Privacy-First**: Never exposes resident PII—all data is aggregated and sanitized before reaching the AI.
-- **Clear Conversation**: One-click reset to start fresh analysis sessions.
-
-### 6. Manual Intake (Call-Takers & Walk-Ins)
-Not every resident submits online. Staff can log a request on someone's behalf — a phone call, a walk-in, or a forwarded email — from the dashboard.
-
-- **Same pipeline**: manually-logged requests run through the exact same routing, notifications, and triage as resident submissions, so nothing is second-class.
-- **No fake data**: optional fields left blank (for example, a caller who didn't leave an email) simply skip the steps that need them — a placeholder address is never invented, and no confirmation is sent to an address that doesn't exist.
-- **Channel captured**: the intake channel (phone, walk-in, email) is recorded for reporting.
-
----
-
-## Admin Console Features
-
-Configuration for the municipality's deployment, without editing code.
-
-- **Custom Icons**: Select from a library of 100+ icons.
-- **Routing Rules**: Assign services to specific departments (e.g., "Potholes" → "DPW").
-- **SLA Definitions**: Set expected response times (e.g., "24 hours" for urgent issues).
-
-### 1. Service Configuration
-- **Granular Routing**: Configure each service category (e.g., "Pothole") to:
-    - **Township Handled**: Route to internal Public Works department.
-    - **Third-Party Handoff**: Direct residents to external agencies (e.g., "This road is state-maintained, please call DOT at...").
-    - **Road-Based Logic**: Automatically split jurisdiction based on specific street names (e.g., "Main St" goes to County, "Elm St" stays local).
-- **Custom Questions**: specific follow-up questions (e.g., "Is the dog aggressive?") for each service category to gather precise details.
-
-### 2. System Management
-- **Interactive Version Switching**: Update or roll back releases directly from the Admin Console via the `VersionSwitcher`. Verifies GitHub Actions security check status, runs database migration safety checks, takes pre-migration database dumps, and allows rollbacks.
-- **Custom Map Layers**: Upload **GeoJSON** files to visualize township assets (Parks, Storm Drains, Zoning Districts) directly on the staff map.
-- **Pluggable Mapping & Locators**: Choose Google Maps, Esri / ArcGIS Online & Enterprise, Azure Maps, or Apple MapKit JS with separate browser and server geocoding keys.
-- **Domain Configuration**: Automatic HTTPS provisioning via Caddy (Let's Encrypt) for custom domains.
-- **Service Providers**: Select and configure AI, translation, mapping, photo redaction, and identity providers from the Admin Console. Choose an all-in-one cloud environment (Google Cloud, AWS, Azure) or mix-and-match. Credentials are written to your external secret store (Google Secret Manager, AWS Secrets Manager, Azure Key Vault) when configured, keeping the application database clean of raw keys.
-- **Host-Provided Credentials**: For centralized hosting fleets, credentials pushed from an orchestrator are marked as host-managed. Town admins can override any key locally.
-- **Feature Modules**: Selectively toggle modular components (`Research Portal`, `Unlisted Reports`, and `Platform Feedback`). Advanced capabilities like AI analysis, translation, and notifications are managed directly under Setup & Integrations.
-- **Operations & Alert Muting**: Temporarily silence repeating notification emails for known connector outages or health checks without obscuring the live status in the health dashboard.
-- **Client Error Telemetry**: Automatic capture and reporting of browser-side frontend runtime errors to help administrators identify resident-facing issues.
-- **Database Maintenance**: Tools to run database backups, seed default demonstration data, or flush test records.
-
-### 3. Legal Documents & Compliance
-Fully customizable legal pages with sensible defaults based on municipal 311 best practices:
-
-- **Privacy Policy**: Customizable Markdown content explaining data collection, usage, and retention. Default covers:
-  - What information is collected (email required, optional phone)
-  - How data is used (service request processing and communication)
-  - Data sharing with relevant departments and third parties
-  - Resident rights (access, correction, deletion)
-  
-- **Terms of Service**: Customizable Markdown with prominent non-emergency disclaimer. Default emphasizes:
-  - Non-emergency use only (911 for emergencies)
-  - Acceptable use policy
-  - Response time expectations
-  - Liability limitations
-  
-- **Accessibility Statement**: Customizable Markdown for the town's accessibility commitments. Default includes:
-  - A WCAG 2.1 Level AA goal
-  - A Section 508 reference
-  - Alternative submission methods (phone, email, in-person)
-  - Contact information for accessibility concerns
-
-All legal pages are editable via **Admin Console → Branding → Legal Documents**.
-
----
-
-## Non-Emergency Disclaimer
-
-Residents are informed that 311 is for non-emergency municipal services only.
-
-### One-time acknowledgment modal
-- Users must acknowledge before accessing the portal.
-- Persisted in `localStorage`, so it shows once per browser.
-
-### Persistent warning banner
-- A banner at the top of the resident portal reads: "Non-Emergency Only — For police, fire, or medical emergencies, call 911."
-
-### Legal Audit Logging
-Every acknowledgment is logged to the `disclaimer_acknowledgments` table:
-
-| Field | Description |
-|-------|-------------|
-| `session_id` | Unique browser session identifier |
-| `ip_address` | Client IP (supports IPv4/IPv6, handles proxies) |
-| `user_agent` | Browser/device information |
-| `acknowledged_at` | Timestamp with timezone |
-| `disclaimer_version` | Version string for tracking policy updates |
-
-This creates a complete paper trail for legal protection if any user claims they weren't aware of the non-emergency nature of the service.
-
----
-
-## Research Suite (University Lab Integration)
-
-A privacy-preserving analytics layer that serves two audiences at once.
-
-**For the town's own staff and leadership**, it turns day-to-day requests into a planning tool — the goal is to move from reactive repair (fixing what breaks after residents report it) toward proactive maintenance. Hotspot clustering surfaces the streets and assets that generate repeat reports, so a department can schedule work before the next failure; trends by category, season, and area inform budgets and staffing; and asset-linked history shows which infrastructure is nearing the end of its life.
-
-**For external researchers** (university labs, policy groups), it exports 59 privacy-preserved fields for study of municipal operations, infrastructure, equity, and civic engagement.
-
-The same sanitized dataset backs both, and it also feeds the Staff Dashboard's analytics assistant. Exports 59 fields computed from the underlying data.
-
-### Access Control
-- **Researcher Role**: Dedicated user role with read-only access to sanitized data
-- **Admin Toggle**: Enable/disable via Admin Console → Modules → Research Portal
-- **Audit Logging**: All data access is logged for governance compliance
-
-### Data Exports
-Two export formats optimized for different research toolchains:
-
-| Format | Use Case | Tools |
-|--------|----------|-------|
-| **CSV** | Statistical analysis | Python (pandas), R, SPSS, Excel |
-| **GeoJSON** | Spatial analysis | QGIS, ArcGIS, GeoPandas, Mapbox |
-
-### Privacy Preservation
-All exports are designed to protect resident privacy while enabling meaningful research:
-
-- **PII Protection**: Resident descriptions and free-text summaries are strictly excluded from research exports to prevent inadvertent PII exposure; `description_word_count` is provided instead for text length analysis.
-- **Address Anonymization**: House numbers and precise street names are withheld or aggregated into neighborhood block descriptors.
-- **Location Fuzzing**: Coordinates snapped to ~100ft grid (default) or exact (admin only).
-- **Zone IDs**: Anonymous geographic zones (~0.5 mile cells) for clustering without revealing exact locations.
-
----
-
-### Research Packs (5 Specialized Domains)
-
-#### Social Equity Pack (Sociologists)
-Census data integration for equity research.
-
-| Field | Type | Description | Source |
-|-------|------|-------------|--------|
-| `census_tract_geoid` | string | 11-digit FIPS code for Census joins | US Census Geocoder API |
-| `social_vulnerability_index` | float (0-1) | CDC SVI (0=lowest, 1=highest) | Derived from GEOID |
-| `housing_tenure_renter_pct` | float (0-1) | Renter percentage in zone | Derived from GEOID |
-| `income_quintile` | int (1-5) | Anonymized income quintile | Zone-based proxy |
-| `population_density` | string | low/medium/high category | Zone-based proxy |
-
-**Suggested Analyses**: Census ACS demographic correlation, SVI vs response time regression, renter vs owner reporting rates
-
----
-
-#### 🔵 Environmental Context Pack (Urban Planners)
-Real historical weather data and infrastructure lifecycle analysis.
-
-| Field | Type | Description | Source |
-|-------|------|-------------|--------|
-| `weather_precip_24h_mm` | float | Precipitation 24h before report | Open-Meteo Archive API |
-| `weather_temp_max_c` | float | Max temperature on report day | Open-Meteo Archive API |
-| `weather_temp_min_c` | float | Min temperature on report day | Open-Meteo Archive API |
-| `weather_code` | int | WMO weather code (61=rain, 71=snow) | Open-Meteo Archive API |
-| `nearby_asset_age_years` | float | Age of matched infrastructure | Asset properties |
-| `matched_asset_attributes` | JSON | Full asset properties (pressure_psi, acres, bulb type) | GeoJSON layer |
-| `season` | string | winter/spring/summer/fall | Calculated |
-
-**Suggested Analyses**: Freeze-thaw pothole correlation, asset survival analysis, precipitation-drainage linkage
-
----
-
-#### 🩷 Sentiment & Trust Pack (Political Scientists)
-NLP-derived indicators of civic trust and satisfaction.
-
-| Field | Type | Description | Source |
-|-------|------|-------------|--------|
-| `sentiment_score` | float (-1 to +1) | VADER sentiment score (-1=negative, +1=positive) | VADER Rule-Based NLP |
-| `is_repeat_report` | boolean | Text indicates prior report of same issue | Rule detection |
-| `prior_report_mentioned` | boolean | References ticket/case number | Rule detection |
-| `frustration_expressed` | boolean | Trust erosion indicators present | Rule detection |
-
-**Suggested Analyses**: Sentiment vs income quintile, repeat report resolution rates, trust erosion over time
-
----
-
-#### 🟠 Bureaucratic Friction Pack (Public Administration)
-Quantified measures of administrative efficiency and government responsiveness.
-
-| Field | Type | Description | Source |
-|-------|------|-------------|--------|
-| `time_to_triage_hours` | float | Hours from submission to first "In Progress" | Audit logs |
-| `reassignment_count` | int | Times request bounced between departments | Audit logs |
-| `off_hours_submission` | boolean | Submitted before 6am or after 10pm | Timestamp |
-| `escalation_occurred` | boolean | Priority manually increased by staff | Audit logs |
-| `total_hours_to_resolve` | float | Total clock hours to closure | Calculated |
-| `business_hours_to_resolve` | float | Business hours only (Mon-Fri 8am-5pm) | Calculated |
-| `days_to_first_update` | float | Days until first staff action | Calculated |
-| `status_change_count` | int | Number of status changes | Audit logs |
-
-**Suggested Analyses**: Triage time vs resolution outcome, department routing efficiency, off-hours urgent patterns
-
----
-
-#### 🟢 Moderation & AI/ML Pack (Data Scientists)
-Moderation flags and human-AI alignment metrics.
-
-| Field | Type | Description | Source |
-|-------|------|-------------|--------|
-| `moderation_flagged` | boolean | Submission flagged for staff review | Content moderation engine |
-| `moderation_flag_reason` | string | Reason for flag (profanity, urgent) | Content moderation engine |
-| `ai_priority_score` | float (1-10) | AI-suggested priority | AI provider |
-| `ai_analyzed` | boolean | Whether AI processed this request | System |
-| `ai_vs_manual_priority_diff` | float | manual_priority - ai_priority | Calculated |
-
-**Suggested Analyses**: AI-human priority alignment, flagging accuracy, triage agreement studies
-
----
-
-### Real-Time Data Sources
-All research fields are computed on-the-fly using real APIs:
-
-| Source | Fields | Notes |
-|--------|--------|-------|
-| **US Census Bureau Geocoder** | census_tract_geoid | Free, no API key required |
-| **Open-Meteo Archive API** | weather_* fields | Free historical weather data |
-| **VADER NLP Engine** | sentiment_score, trust indicators | Rule-based sentiment analysis |
-| **Audit Logs** | bureaucratic friction fields | Real system data |
-| **AI Provider** | ai_* fields | If AI analysis is enabled |
-
-### API Endpoints
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api/research/status` | Check if Research Suite is enabled |
-| `GET /api/research/analytics` | Aggregate statistics and distributions |
-| `GET /api/research/export/csv` | Download sanitized CSV with 59 research fields |
-| `GET /api/research/export/geojson` | Download GeoJSON for GIS analysis |
-| `GET /api/research/export/data-dictionary` | Complete field documentation for academic papers |
-| `GET /api/research/code-snippets` | Python & R code examples |
-
----
-
-## Technical Architecture
-
-### Communication Engine
-- **Branding Engine**: Automatically injects township logo, colors, and font settings into every email.
-- **Text alerts**: sends status updates with request details (category, address) and a magic link for tracking.
-- **Provider-agnostic**: works with common text-messaging services or a generic HTTP gateway; configured in the browser.
-- **Completion Proof**: "Review & Close" workflow attaches the final resolution photo to the closing email sent to the resident.
-
-### Standards Compliance
-- **Open311 v2**: Compatible with the Open311 GeoReport v2 standard (JSON).
-- **Interactive API Docs**: Available at `/api/docs` (Swagger UI) and `/api/redoc` (ReDoc).
-- **Audit Trails**: Every action (submission, comment, status change) is logged for accountability.
-
-#### Public Endpoints (No Authentication Required)
-
-| Method | Endpoint | Description | Rate Limit |
-|--------|----------|-------------|------------|
-| `GET` | `/api/open311/v2/services.json` | List available service categories | Global |
-| `POST` | `/api/open311/v2/requests.json` | Submit a new service request | **10/min per IP** |
-| `GET` | `/api/open311/v2/public/requests` | List all requests (PII stripped, cached via Redis) | Global |
-| `GET` | `/api/open311/v2/public/requests/{id}` | Get request detail (PII stripped) | Global |
-| `GET` | `/api/open311/v2/public/requests/{id}/comments` | Get public comments on a request | Global |
-| `POST` | `/api/open311/v2/public/requests/{id}/comments` | Add a public comment (anonymous) | **5/min per IP** |
-| `GET` | `/api/open311/v2/public/requests/{id}/audit-log` | Status change history (staff names redacted) | Global |
-
-#### Authenticated Endpoints (Staff/Admin Only)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/open311/v2/requests.json` | List all requests with full PII |
-| `GET` | `/api/open311/v2/requests/{id}.json` | Get full request detail with PII |
-| `PUT` | `/api/open311/v2/requests/{id}/status` | Update status, assignment, or priority |
-| `POST` | `/api/open311/v2/requests/manual` | Create request from phone/walk-in intake |
-| `DELETE` | `/api/open311/v2/requests/{id}` | Soft-delete a request (requires justification) |
-| `POST` | `/api/open311/v2/requests/{id}/restore` | Restore a soft-deleted request |
-| `POST` | `/api/open311/v2/requests/{id}/accept-ai-priority` | Accept AI-suggested priority score |
-| `GET` | `/api/open311/v2/requests/{id}/audit-log` | Full audit log with staff names |
-| `GET` | `/api/open311/v2/requests/asset/{id}/related` | Find all requests linked to an asset |
-
-#### API Security Notes
-
-- **Public endpoints never expose**: staff usernames, resident PII (email, phone, name), or internal department IDs
-- **Staff audit log entries** in public views show "Staff" instead of individual usernames
-- **Administrative legal hold** (`legal_hold` column) can only be toggled by admin-role users; content moderation flags remain separate (`flagged`)
-- **Global rate limit**: 500 requests/minute per IP across all endpoints (via SlowAPI)
-- **Authentication**: Staff endpoints require a valid JWT bearer token from the configured identity provider
-
-### Tech Stack
-| Component | Technology | Description |
-|-----------|------------|-------------|
-| **Frontend** | React 18 + TypeScript | Performant, type-safe UI built with Vite |
-| **Styling** | Tailwind CSS + Framer Motion | Fluid animations and glassmorphism themes |
-| **Backend** | FastAPI (Python 3.11) | High-performance async REST API |
-| **Database** | PostgreSQL 16 + PostGIS | Relational data with advanced spatial queries |
-| **Migrations** | Alembic | Version-controlled database schema changes |
-| **Caching** | Redis | High-speed caching for public request feeds (60s TTL) |
-| **AI & Vision** | Pluggable providers (browser-configured) | Multimodal models for image categorization, text triage, and local Haar cascades |
-| **Queue** | Celery + Redis | Background processing for emails, health scans, and reports |
-| **Reverse Proxy** | Caddy | Automatic HTTPS and SSL termination |
-
-### 💾 Resource Footprint
-
-The whole stack remains lightweight while running background workers, GIS spatial indexing, and automated image redaction. Approximate idle memory per container from production metrics:
-
-| Service | Live idle memory |
-|---------|-----------------|
-| Worker (Celery) | ~185 MB |
-| Backend (FastAPI) | ~150 MB |
-| PostgreSQL 16 (db) | ~120 MB |
-| Caddy (HTTPS) | ~32 MB |
-| Redis | ~5 MB |
-| Frontend (Nginx) | ~3 MB |
-| **Total (idle)** | **~490 MB** |
-
-What moves these numbers:
-- **Image redaction & OCR** loads OpenCV Haar cascades and Tesseract models when local redaction is enabled, consuming memory primarily during active photo processing passes.
-- **Content moderation & GIS** runs wordlist evaluation and PostGIS spatial buffering during intake.
-- **Cloud providers** offload vision and inference tasks to external APIs, keeping local memory overhead bounded. Importing the AWS SDK adds roughly 30–60 MB when active.
-- **Traffic** raises CPU and memory above these idle baselines.
-
-**Deployment sizing:** Runs smoothly on an entry-level virtual machine (1–2 vCPUs, 2 GB RAM). Allocate 4 GB RAM for high-volume municipal deployments or heavy concurrent OpenCV photo processing workloads.
-
-### 🗄️ Database Migrations (Alembic)
-
-Pinpoint 311 uses **Alembic** for database schema versioning:
+### 1. Get the code and create `.env`
 
 ```bash
-# Inside the backend container
-cd /app
-
-# Create a new migration after model changes
-alembic revision --autogenerate -m "Add new column to requests"
-
-# Apply pending migrations
-alembic upgrade head
-
-# View current migration state
-alembic current
-```
-
-**Configuration Notes:**
-- PostGIS/Tiger geocoder tables are **excluded** from autogenerate to prevent false positives
-- Migrations are stored in `backend/alembic/versions/`
-- Use `alembic stamp head` to mark an existing database as up-to-date without running migrations
-
-### 🔒 Security Standards
-
-#### Security Layers
-Each layer works with the provider your town chooses; where nothing external is configured, the platform falls back to encrypted database storage.
-
-| Layer | Purpose | Options |
-|-------|---------|---------|
-| **Identity** | Staff SSO with MFA and passkeys | Auth0 by default; Microsoft Entra ID, Okta, or generic OIDC |
-| **Secret storage** | API keys and connection credentials | Your cloud's secret store, with an encrypted database fallback |
-| **PII encryption** | Resident PII at rest | Envelope encryption with your cloud's key service, or a local key |
-| **Auto-update** | Optional container updates | Self-hosted, off by default |
-
-#### Staff authentication
-Staff sign in through your identity provider (Auth0 by default). Passwords are never stored by Pinpoint — authentication is delegated to the provider, which supports MFA, passkeys/WebAuthn, and social login.
-
-#### Secrets and PII
-Two tiers of protection:
-
-| Secret type | Storage | Encryption |
-|-------------|---------|------------|
-| API keys and integration credentials | External secret store when configured; the database keeps only a reference | Provider-managed keys |
-| Resident PII (email, phone, name) | Encrypted in the database | Envelope encryption; the data key is wrapped by your cloud's key service |
-| Local development / no external vault | Encrypted database | Fernet (AES-128-CBC) |
-
-When an external secret store is configured, integration and provider credentials are written there and the application database holds only a reference — the raw secret does not live in the app database. A small set of bootstrap keys needed to *reach* the secret store remain in the encrypted local table.
-
-#### Cloud authentication
-Cloud provider access uses credentials you enter during setup, encrypted at rest with `SECRET_KEY` in the `system_secrets` table and decrypted only at call time.
-4. Decrypted at runtime when calling the configured cloud services
-
-#### API & Infrastructure Security
-- **Rate Limiting**: 500 requests/minute per IP (slowapi)
-- **Security Headers**: X-Frame-Options, CSP, nosniff, XSS protection
-- **RBAC**: Staff, Researcher, Admin roles with JWT authentication
-- **Input Validation**: Pydantic schemas and parameterized queries via the SQLAlchemy ORM
-- **Audit Logging**: Tamper-evident, hash-chained trail of request lifecycle events
-
-For full security details, see [COMPLIANCE.md](./COMPLIANCE.md).
-
-#### AI Provider Security
-Data-residency, encryption, retention, and certification guarantees for AI depend on the provider you configure, not on Pinpoint. What Pinpoint controls:
-
-| Feature | What Pinpoint does |
-|---------|--------------------|
-| Data sent to the model | Only the request text and up to three photos; resident PII is redacted from the analysis output |
-| Transport | Requests go directly to your configured provider over TLS |
-| Human-in-the-loop | AI suggestions (priority, category) require explicit staff approval before they take effect |
-| Optional | AI can be turned off entirely; the platform runs without it |
-
-Verify your chosen provider's data-handling terms (region, retention, whether inputs are used for training) against your jurisdiction's requirements.
-
-### 📋 Document Retention Engine
-
-Automated record retention tailored to the municipality's public records schedules:
-- **Clerk-Configured Policy**: Rather than relying on rigid or fictitious state-wide tables, retention periods are set directly by the municipal clerk via `retention_days` (or inherited through state-managed centralized hosting).
-- **Safe Inaction**: If retention is unconfigured, the system safely purges nothing.
-- **Configurable Disposal**: Choose between anonymizing closed requests (scrubbing resident PII and AI summaries while preserving operational counts) or full record deletion.
-- **Automatic Enforcement**: Daily scheduled tasks evaluate eligible records and enforce retention policies.
-
-#### Legal Holds
-Records can be placed on **legal hold** via the dedicated `legal_hold` column to prevent automatic archival or purging:
-- **Administrative Control**: Designated administrators or staff can toggle legal holds from the request detail view.
-- **Independent Moderation**: Legal holds are distinct from content moderation flags (`flagged`), ensuring that flagged public comments do not inadvertently freeze data retention forever.
-- **Audit Trail**: All hold and release actions are logged with timestamp and acting user in the tamper-evident audit history.
-
-#### Features that support compliance work
-
-These features are designed to *support* the requirements below. They are not a certification, an audit, or a guarantee of compliance — meeting any given standard is the deploying jurisdiction's responsibility, and depends on how the system is configured and operated.
-
-| Requirement | Supporting feature |
-|-------------|--------------------|
-| **Public records (OPRA / FOIA and equivalents)** | Export any request's full audit trail on demand; per-state retention schedules |
-| **PII protection** | Field-level PII encryption at rest and TLS in transit |
-| **Audit integrity** | Tamper-evident, hash-chained audit logs with a daily anchor |
-| **Data minimization** | Optional PII anonymization for closed records; configurable retention |
-| **Records administration** | Designated admin role for retention-policy management |
-
-
-### ♿ Accessibility
-
-Built toward **WCAG 2.1 Level AA**: keyboard navigation, a 4.5:1 contrast target, and aria-labels on interactive elements. This describes the design target, not an independent accessibility audit or certification. See [COMPLIANCE.md](./COMPLIANCE.md) for details.
-
----
-
-## Deployment & Setup
-
-### CI/CD Pipeline
-
-Security scanning runs through the **GitLab Ultimate** application-security suite; builds and operational checks run as pipeline jobs. Findings flow into the GitLab Security Dashboard and are surfaced inline on merge requests.
-
-**Security scanning (GitLab Ultimate)**
-
-| Scanner | Type | Purpose |
-|---------|------|---------|
-| **Advanced SAST** | Static | Cross-file, taint-aware analysis of application code |
-| **IaC Scanning** | Static | Misconfiguration checks on Docker/Compose definitions |
-| **Secret Detection** | Static | Catches credentials committed to history |
-| **Dependency Scanning** | Composition | Vulnerable-dependency checks + CycloneDX SBOM |
-| **Container Scanning** | Composition | Vulnerability scan of built images |
-| **DAST** | Dynamic | Runtime scan of the running application |
-| **API / Coverage Fuzzing** | Dynamic | Fault injection against the API and targeted code paths |
-
-**Build & operations**
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| **Build & Publish** | Push to main | Multi-arch Docker images |
-| **Accessibility** | Push to main | Pa11y accessibility audits |
-| **Uptime Monitor** | Every 15 min | Health checks with auto-restart |
-| **Load Test** | Manual dispatch | K6 performance benchmarking |
-
-### Self-Healing Infrastructure
-
-The system automatically recovers from common failures without developer intervention:
-
-| Layer | Protection | Config Required |
-|-------|------------|-----------------|
-| **Docker healthchecks** | Backend, Worker, Frontend auto-restart if unresponsive | None |
-| **Container restart** | Containers restart after a crash (`unless-stopped`) | None |
-| **SSH Auto-Restart** | Force restart via SSH when uptime check fails | Optional* |
-
-*To enable SSH auto-restart, add `PROD_HOST` and `PROD_SSH_KEY` secrets to your GitHub repository.
-
-### Resource Isolation
-
-Prevents the 311 system from affecting other server systems:
-
-| Service | CPU | Memory | Log Limit |
-|---------|-----|--------|-----------|
-| Database | 1 core | 1GB | 150MB |
-| Backend | 1 core | 1GB | 150MB |
-| Worker | 0.5 core | 512MB | 60MB |
-| Frontend | 1 core | 512MB | 30MB |
-| Redis | 0.25 core | 256MB | 30MB |
-| Caddy | 0.25 core | 128MB | 60MB |
-
-**Safety features:** `no-new-privileges` on all containers, Redis memory eviction, process limits on database.
-
-### Docker Images
-
-Pre-built images available on GitHub Container Registry:
-```bash
-ghcr.io/pinpoint-311/pinpoint-311-backend:latest
-ghcr.io/pinpoint-311/pinpoint-311-frontend:latest
-```
-
-Supports both `linux/amd64` and `linux/arm64` architectures.
-
-### Production Deployment (Recommended)
-
-```bash
-# Pull prebuilt images and deploy
-docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-```
-
-### Development Deployment
-
-```bash
-# Build locally (slower, for development only)
-docker compose up --build -d
-```
-
-### Prerequisites
-- Docker & Docker Compose
-- A Google Maps API key — Maps is the one required external service. AI, translation, secret storage, notifications, and moderation are all optional and configured later in the browser.
-
-### Quick Start (Using Prebuilt Images)
-```bash
-# 1. Clone the repository
 git clone https://github.com/Pinpoint-311/Pinpoint-311.git
 cd Pinpoint-311
-
-# 2. Configure Environment
 cp .env.example .env
-# Edit .env and set your secrets (DB_PASSWORD, SECRET_KEY, etc.)
+```
 
-# 3. Pull prebuilt images and launch (recommended - fastest)
+Edit `.env` and set at least these values:
+
+| Variable | Required | Notes |
+| --- | --- | --- |
+| `DB_PASSWORD` | yes | Compose refuses to start without it. |
+| `SECRET_KEY` | yes | At least 32 random characters. Generate with `openssl rand -hex 32`. The backend refuses to boot with a known default or a short key. It signs staff sessions and derives the local encryption key, so do not change it casually after launch. |
+| `INITIAL_ADMIN_PASSWORD` | yes | Used once, to get into the Admin Console before staff sign-in is configured. Compose refuses to start without it, and the default `admin123` is rejected. |
+| `DOMAIN` | for HTTPS | The public hostname, for example `311.example.gov`. Defaults to `localhost`. |
+| `TENANT_CADDY_PATH` | recommended | A host directory for Caddy site snippets written when an administrator sets a custom domain, for example `./caddy-tenants`. Set it explicitly; the compose default points at a path used by the project's own hosting. |
+
+Everything else in `.env.example` is optional. See [Configuration](#configuration).
+
+### 2. Review the Caddyfile
+
+The shipped `Caddyfile` serves `{$DOMAIN}` and also contains site blocks for the
+project's own demo hosts. Before going live:
+
+- Delete every site block after the `{$DOMAIN:localhost}` block except the `import /etc/caddy/tenants/*.caddy` line.
+- The `{$DOMAIN:localhost}` block includes `import noindex`, which tells search engines not to index the site. Remove that line if you want the portal to appear in search results.
+
+### 3. Start the stack
+
+Build from source (this is how the project's own servers run):
+
+```bash
+docker compose up -d --build
+```
+
+Or use the prebuilt multi-architecture images from GitHub Container Registry
+(`ghcr.io/pinpoint-311/pinpoint-311-backend` and `-frontend`, `linux/amd64` and
+`linux/arm64`):
+
+```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# OR build locally (slower, for development/modifications)
-# docker compose up --build -d
 ```
 
-### Access Points (Production via Caddy)
-- **Resident Portal**: `http://localhost/`
-- **Staff Dashboard**: `http://localhost/staff`
-- **Admin Console**: `http://localhost/admin`
-- **Research Lab**: `http://localhost/research` *(requires researcher role)*
-- **API Documentation**: Available in development mode (`DEBUG=true`) at `http://localhost:8000/api/docs` and `/api/redoc` (disabled by default in production)
+On first start the backend entrypoint creates the schema and seeds an initial
+admin user. Check progress with:
 
-> [!TIP]
-> In development without Caddy, the frontend runs at `http://localhost:5173` and the API at `http://localhost:8000`.
-
-### Initial Setup & Authentication
-
-Pinpoint 311 uses **Auth0 SSO** or **Microsoft Entra ID** for staff authentication.
-
-#### Step 1: Configure Environment
 ```bash
-cp .env.example .env
-# Edit .env and supply required credentials:
-#   - DB_PASSWORD: Set a secure database password
-#   - SECRET_KEY: Generate with `openssl rand -base64 32`
-#   - INITIAL_ADMIN_PASSWORD: Set a strong bootstrap password (required for container startup)
-#   - DOMAIN: Your production domain (e.g., 311.yourtown.gov)
+docker compose ps
+docker compose logs -f backend
 ```
 
-#### Step 2: Start Services
+### 4. Sign in for the first time
+
+Until a staff identity provider is configured, the login page shows an
+**Enter Admin Console** button. It opens `/api/auth/bootstrap/auto`, which asks
+for `INITIAL_ADMIN_PASSWORD` and signs you in as the initial admin. From a
+terminal, the equivalent is:
+
 ```bash
-docker compose up -d
+curl -X POST https://311.example.gov/api/auth/bootstrap -F "password=YOUR_INITIAL_ADMIN_PASSWORD"
 ```
 
-#### Step 3: Get Bootstrap Access
-Before staff SSO is configured, authorize using your `INITIAL_ADMIN_PASSWORD`:
+The response contains a one-time `login_url` that expires after an hour.
+Repeated wrong passwords from one address are locked out. Bootstrap access stops
+working as soon as any identity provider (Auth0, Microsoft Entra ID, Okta, or
+generic OIDC) is configured.
 
-**Via Web Browser (Recommended):**
-Visit `http://localhost/login` and click **"First time setup? Use initial admin password"** (or browse directly to `http://localhost/api/auth/bootstrap/auto`).
+### 5. Finish setup in the Admin Console
 
-**Via Terminal:**
+Open **Admin Console > Setup & Integration**. The page lists what is configured
+and what is outstanding. In order:
+
+1. **Choose a secret store.** The page will not accept credentials until you choose where they are kept: the encrypted database, Google Secret Manager, Azure Key Vault, or AWS Secrets Manager. This is asked first so that no credential lands in a database backup before you decide.
+2. **Configure staff sign-in** (Auth0, Microsoft Entra ID, Okta, or generic OIDC). Bootstrap access is disabled once this is saved.
+3. **Configure a map provider** (Google Maps, Esri ArcGIS, Azure Maps, or Apple Maps) then set the municipal boundary under **System Settings** (search for the municipality to fetch its boundary polygon).
+4. **Switch on and configure optional services**: AI, translation, email, text messaging, PII encryption with a cloud KMS, photo redaction, automatic backups, and crash reporting. Each card has a **Save & Test** button where a live check exists.
+5. **Add users, departments, and service categories** under Organization.
+
+---
+
+## Configuration
+
+Settings live in one of two places.
+
+### Environment (`.env`, read by Docker Compose)
+
+These are deployment-level values that must exist before the app can start or
+that are shared by every town using the same build.
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `DB_USER`, `DB_PASSWORD`, `DB_NAME` | db, backend, worker | Database credentials. Defaults: `township`, none, `township_db`. |
+| `SECRET_KEY` | backend, worker | Session signing and local key derivation. Required. |
+| `INITIAL_ADMIN_USER`, `INITIAL_ADMIN_EMAIL`, `INITIAL_ADMIN_PASSWORD` | backend | First-run admin account and bootstrap password. |
+| `DOMAIN` | backend, caddy | Public hostname. |
+| `ADMIN_EMAIL` | caddy | Passed to the Caddy container. The shipped Caddyfile does not reference it. |
+| `RATE_LIMIT_DEFAULT` | backend | Per-client default rate limit. Default `500/minute`. |
+| `GOOGLE_MAPS_API_KEY`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_VERTEX_PROJECT`, `GOOGLE_VERTEX_LOCATION` | backend, worker | Optional Google defaults. The same settings can be entered in the console. |
+| `ACCELA_CLIENT_ID`, `ACCELA_CLIENT_SECRET`, `ACCELA_REDIRECT_URI` | backend, worker | Optional Accela developer-app credentials for OAuth sign-in. Without them the Accela wizard asks for an agency username and password. See [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md). |
+| `CONTACT_FORM_URL`, `CONTACT_FORM_EMBED` | backend | Optional deployment-registration form offered in the console. See the comments in `.env.example`. |
+| `DB_PORT`, `REDIS_PORT`, `BACKEND_PORT`, `FRONTEND_PORT` | compose | Host ports. All four are bound to `127.0.0.1`. |
+| `HTTP_PORT`, `HTTPS_PORT` | caddy | Public ports. Defaults 80 and 443. |
+| `TENANT_CADDY_PATH` | backend, caddy | Directory for custom-domain site snippets. |
+
+The backend also honors a few variables that the default compose file does not
+pass through. To use them, add them to the `environment:` of the `backend` and
+`worker` services in a `docker-compose.override.yml`:
+
+| Variable | Purpose |
+| --- | --- |
+| `DEBUG=true` | Serves interactive API docs at `/api/docs` and `/api/redoc` and disables the strict `SECRET_KEY` check. Development only. |
+| `SENTRY_DSN` | Crash-reporting DSN. Overrides the DSN saved in the console. |
+| `SECRETS_PROVIDER` | Forces the secret store (`database`, `google`, `azure`, `aws`) instead of the console choice. |
+| `KMS_PROVIDER` | Forces the PII key manager instead of the console choice. |
+| `REQUIRE_KMS` | When true, the app refuses to write resident PII unless a cloud KMS wraps the key, instead of falling back to the local key. |
+
+### Admin Console (stored in the database or the chosen secret store)
+
+Everything a town administrator configures is entered in the browser:
+branding, users, departments, categories, routing, retention, feature modules,
+and every provider credential. Credentials are written to the chosen secret
+store. With an external store (Google, Azure, AWS) the database keeps only a
+reference, and a scheduled task moves any credential saved before the store was
+chosen into it.
+
+Optional services and their providers:
+
+| Capability | Providers |
+| --- | --- |
+| Secret storage | Encrypted database, Google Secret Manager, Azure Key Vault, AWS Secrets Manager |
+| PII encryption key | Google Cloud KMS, Azure Key Vault, AWS KMS, or an application key derived from `SECRET_KEY` |
+| AI (triage, Analytics Advisor, Data Assistant) | Google Vertex AI, Azure OpenAI, AWS Bedrock. Vertex is the default. The model list is refreshed from the provider. |
+| Translation | Google Cloud Translation, Azure AI Translator, Amazon Translate |
+| Email | SMTP, Amazon SES, Azure Communication Services |
+| Text messages | Twilio, Amazon SNS, Azure Communication Services, a generic HTTP gateway, or off |
+| Photo redaction | Google Cloud Vision, AWS Rekognition, Azure AI, local (offline) |
+| Content moderation | Google, Azure, or AWS moderation services, defaulting to the AI provider's cloud. A local profanity check always runs. |
+| Staff sign-in | Auth0, Microsoft Entra ID, Okta, generic OIDC |
+| Maps and geocoding | Google Maps, Esri ArcGIS (Online or Enterprise), Azure Maps, Apple Maps |
+| Backups | Any S3-compatible object store (AWS S3, Backblaze B2, Oracle Object Storage, and others) |
+| Crash reporting | Sentry |
+
+The selected AI provider is used everywhere AI appears: request triage, photo
+assessment, the staff Analytics Advisor, and the Research Lab's Data Assistant.
+
+`deploy/templates/` contains an Azure ARM template and an AWS CloudFormation
+template that create the cloud resources a town needs (see
+[deploy/templates/README.md](deploy/templates/README.md)). Google has a guided
+manual path on the setup page instead.
+
+---
+
+## Security model
+
+### Network exposure
+
+- Caddy is the only service published on public interfaces (ports 80 and 443).
+- `db`, `redis`, `backend`, and `frontend` publish their ports on `127.0.0.1` only. Redis has no password and must stay that way. Docker's own iptables rules bypass host firewalls such as `ufw`, which is why the bindings are loopback rather than relying on a firewall.
+- Caddy's admin API listens on port 2019 inside the compose network so the backend can reload it after a domain change. It is not published to the host.
+- Caddy rejects request bodies over 13 MB, and the backend has a matching limit of its own.
+
+### Docker socket
+
+The `backend` service mounts `/var/run/docker.sock` so the in-console version
+switcher can rebuild and restart containers. Access to the Docker socket is
+equivalent to root on the host. Only administrators can reach the version
+switcher. If you do not want in-app upgrades, remove that mount in an override
+file and upgrade from the command line.
+
+### Headers and CSP
+
+- Caddy sets HSTS, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, and a Content-Security-Policy that allows only the map, font, and identity hosts the app uses.
+- The backend sets its own headers on API responses. JSON responses get `default-src 'none'`, API responses are `Cache-Control: no-store`, and `Permissions-Policy` allows only geolocation.
+- Caddy writes a JSON access log to the `caddy_data` volume and keeps it for 30 days.
+
+### Authentication and roles
+
+- Staff sign in through the configured identity provider, which handles MFA and passkeys. Pinpoint stores no staff passwords.
+- Three roles: `staff` (works reports, scoped by department), `admin` (full access, including the Admin Console), and `researcher` (read-only access to anonymized research data).
+- Rate limiting is per client address, using a forwarded address that only the trusted proxy can set. Report submission, comments, and bootstrap attempts have tighter limits.
+
+### Encryption at rest
+
+- **Resident PII** (name, email, phone) uses envelope encryption. Each value is encrypted with AES-256-GCM under a data key, and the data key is wrapped by Google Cloud KMS, Azure Key Vault, AWS KMS, or, when no cloud KMS is configured, a key derived from `SECRET_KEY`. A scheduled task re-wraps data keys when the key manager changes. If the cloud key is destroyed, encrypted PII cannot be recovered from any backup; see the "Losing the encryption key" section of [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md).
+- **Credentials** are stored in the chosen secret store. In the database store they are encrypted with a key derived from `SECRET_KEY`.
+- **Backups** are encrypted with GPG (AES-256) using a passphrase you set before they leave the server.
+- Resident IP addresses recorded for abuse handling are purged on a schedule.
+
+### Audit logging
+
+- Every change to a service request is written to a hash-chained audit log, and the chain head is recorded daily in a separate append-only table and the application log, so a rewritten history does not pass silently.
+- Every authenticated request that changes something is recorded with who, what, and when, even on endpoints that do not write their own audit entry.
+- Resident-history lookups, research data access, and legal-hold changes are audited.
+
+More detail: [COMPLIANCE.md](COMPLIANCE.md), [docs/SECURITY_PLAN.md](docs/SECURITY_PLAN.md), and [docs/PRIVACY_ASSESSMENT.md](docs/PRIVACY_ASSESSMENT.md).
+
+---
+
+## Operations
+
+### Upgrades
+
+Nothing updates itself. There are two ways to upgrade:
+
+1. **Admin Console sidebar > Version Control.** Lists releases and recent commits, takes a database dump, checks out the chosen version, rebuilds and restarts the containers, health-checks the result, and rolls back on failure. It needs the stack to run from a git checkout and the Docker socket mount described above. It is disabled in managed mode. Use it only when this is the sole Pinpoint stack on the server using that checkout: it checks out code in the shared folder and restarts containers through the host's Docker socket, so on a server running several stacks from one checkout it would change all of them.
+2. **Command line.** Take a backup first, then:
+
+   ```bash
+   git pull
+   docker compose up -d --build
+   ```
+
+   or, with prebuilt images (`docker compose pull` fetches them):
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+   ```
+
+The `backend` and `worker` containers mount `./backend` from the checkout, and
+the compose file runs uvicorn without `--reload`. After changing backend code,
+restart them with `docker compose restart backend worker`. The frontend is a
+built image, so frontend changes need `--build`.
+
+### Database migrations
+
+The backend and worker entrypoint (`backend/scripts/entrypoint.sh`) runs
+`python -m app.db.migrate` before starting. Under a Postgres advisory lock it:
+
+1. Takes a `pg_dump` into the `migration_backups` volume. The newest three dumps are kept. They are unencrypted copies of the database and stay on the host.
+2. Applies pending Alembic revisions that are additive.
+3. Adds missing columns and widens text columns to match the models.
+
+A migration that would drop or rewrite data is not applied automatically. The
+container stops and prints the command an operator has to run. The exit codes
+are distinct: `1` database unreachable, `2` destructive migration needs a human,
+`3` the pre-migration dump failed so nothing was applied.
+
+To inspect the schema state:
+
 ```bash
-curl -X POST http://localhost/api/auth/bootstrap \
-  -F "password=YOUR_INITIAL_ADMIN_PASSWORD"
+docker compose exec backend alembic current
+docker compose exec backend alembic heads
 ```
-Click the returned single-use magic link to log in directly to the Admin Console.
 
-#### Step 4: Configure Staff SSO via Setup & Integration
-In Admin Console → Setup & Integration:
-1. Enter your Auth0 or Microsoft Entra ID credentials
-2. The system encrypts and vaults credentials securely
-3. Once SSO is active, initial bootstrap access is superseded
+### Backups and restore
 
-#### Step 5: (Optional) Move secrets into an external vault
-For stronger secret storage, configure your cloud's secret store in the Setup & Integration page. Credentials are then written to the vault and the database keeps only a reference.
+Configure **Automatic backups** on the Setup & Integration page: an
+S3-compatible endpoint (a bare host such as Backblaze B2's
+`s3.<region>.backblazeb2.com` is accepted), bucket, access key, secret key,
+optional region, and an encryption passphrase. **Save & Test** writes, reads
+back, and deletes a test object in the bucket and checks that the passphrase can
+encrypt and decrypt.
 
-#### Step 6: (Optional) Enable 45° Map Tilt & Rotation
-For an immersive bird's eye map experience with 3D buildings, configure a **Google Maps Map ID**:
+- The worker takes a backup daily at 02:00 UTC: `pg_dump -Fc`, encrypted with GPG AES-256, uploaded as `db_backup_YYYYMMDD_HHMMSS.sql.gpg`.
+- Old backups are removed weekly according to the records-retention setting. If retention is not configured, every backup is kept.
+- Compliance > Database Backups lists backups and can create, delete, or restore one. Restore requires an explicit confirmation and overwrites the current database. It is disabled in managed mode.
+- The backup contains the database only. Files staff upload through the console live in the `uploads_data` Docker volume and are not included; back that volume up separately.
+- Keep the encryption passphrase somewhere other than the server. A backup cannot be restored without it.
+- If PII is encrypted with a cloud KMS, a restore also needs that key to still exist.
 
-1. Go to [Google Cloud Console → Maps → Map Management](https://console.cloud.google.com/google/maps-apis/studio/maps)
-2. Click **Create Map ID**
-3. Select **Map type: Vector** and give it a name (e.g., "Pinpoint 311")
-4. Copy the generated Map ID
-5. In Admin Console → Secrets, add the key `GOOGLE_MAPS_MAP_ID` with the Map ID value
+Restore and disaster-recovery procedures are in [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md).
 
-> [!TIP]
-> Map ID enables the WebGL renderer with 45° tilt, compass rotation, and 3D buildings at no extra cost — same Dynamic Maps pricing ($7/1,000 loads, $200/month free credit).
+### Health and monitoring
 
-### Security Storage
+- `GET /api/health/quick` needs no authentication and returns status, version, git SHA, and database revision. Use it for external uptime monitoring.
+- `GET /api/health/` (admin only) checks the database, identity provider, KMS, secret store, AI, translation, and credential expiry.
+- The worker runs a proactive health scan every 15 minutes (disk, memory, connections, backup age, a live KMS wrap, and more) and emails administrators about problems. Known outages can be muted for a bounded period under System Health without hiding them from the dashboard.
+- Connections to town systems are checked daily, and failed syncs are retried.
+- Compose health checks restart unresponsive `backend`, `worker`, and `frontend` containers, and every service uses `restart: unless-stopped`.
 
-| Secret | Default Storage | Enterprise Storage |
-|--------|-----------------|-------------------|
-| DB Password | `.env` file | `.env` file |
-| JWT Secret Key | `.env` file | `.env` file |
-| Identity provider credentials | Database (Fernet encrypted) | External secret store |
-| Integration & provider keys | Database (Fernet encrypted) | External secret store (reference only in DB) |
+### Crash reporting
 
-> [!NOTE]
-> Bootstrap access is automatically disabled once Auth0 is configured. All future logins use SSO.
+Paste a Sentry DSN on the **Crash reporting** card of the Setup & Integration
+page. The API reads the saved DSN at startup and the worker when each worker
+process starts, so restart both after saving:
 
----
-
-## Centralized Hosting (Managed Mode)
-
-**Self-hosting is the default, and it is complete on its own.** A single town runs its own instance, owns its data, and needs nothing else in this section. Everything above describes that standalone deployment.
-
-Centralized hosting is a **separate, optional** feature for a different situation: a state, county, or agency that wants to stand up and run instances for *many* towns at once — including towns that could never manage their own server. It changes nothing about how a self-hosted deployment works, and no self-hosted town depends on it. The orchestrator that drives it lives in its own repository, **[Pinpoint-311/centralizedhosting](https://github.com/Pinpoint-311/centralizedhosting)**; this repository only contains the optional, flag-gated hooks that let an instance *be* driven by one.
-
-When used, the model is:
-
-**Every town stays fully isolated.** One instance equals one jurisdiction, each with its own database, storage, encryption key, and secrets — the same isolation a self-hosted town has. There are no shared tables and no cross-town data; one town's resident data never mixes with another's.
-
-**A separate control plane provisions and monitors the fleet.** Instead of logging into many servers by hand, the operator uses the orchestrator to provision new town instances and inject only platform-managed settings (infrastructure, backups, domain); roll out new versions safely, gated on the version and database-revision stamp each instance reports on its health endpoint; suspend and resume instances; and aggregate health, uptime, and cost metadata across the fleet.
-
-**The control plane never touches resident data.** Its job is infrastructure, platform secrets, version rollout, and aggregate metadata — nothing more. Everything a town's staff and residents do stays inside that town's own instance.
-
-**It is opt-in and a no-op when off.** With `MANAGED_MODE` off (the default), the app behaves exactly as the standalone single-tenant deployment described throughout this README. With it on, flag-gated hooks let the control plane own infrastructure settings while the town keeps control of its own services and content; platform-owned settings appear as "Managed by your state" and are locked in the Admin Console. The app-side hooks (provisioning and telemetry APIs behind a token, managed settings, health/version stamping, and lifecycle controls) live here; the orchestrator itself is maintained in its own repository.
-
----
-
-## Security & Governance
-
-Pinpoint 311 is designed for municipal government use, handling sensitive resident data. We take security, privacy, and supply-chain integrity seriously.
-
-### 🔒 Reporting Vulnerabilities
-
-**DO NOT** file a public issue for security vulnerabilities. Publicly disclosing a vulnerability puts live deployments at risk.
-
-We use GitHub's **Private Vulnerability Reporting** to handle disclosures securely:
-
-1. Go to the [**Security** tab](https://github.com/Pinpoint-311/Pinpoint-311/security) in this repository.
-2. Click on **"Report a vulnerability"** to open a private advisory.
-3. Describe the vulnerability. This opens a private communication channel visible *only* to the project maintainers.
-
-We aim to acknowledge all reports within 48 hours.
-
-### 🏗️ Zero-Trust Governance Model
-
-To maintain the integrity required for government software:
-
-| Access Type | Policy |
-|-------------|--------|
-| **Read Access** | Code is open-source and auditable by anyone |
-| **Write Access** | Merge rights restricted to Core Maintainers only |
-| **Review Process** | All PRs undergo mandatory security review before merging |
-| **Dependencies** | All dependencies pinned to specific versions to prevent supply-chain attacks |
-
-### Supported Versions
-
-| Version | Supported | Notes |
-| :--- | :---: | :--- |
-| **Latest Stable** | | Current production release |
-| **Main branch** | Development only | Unstable builds |
-| **< 1.0.0** | Unsupported | Legacy versions |
-
-### 🛑 Out of Scope
-
-The following are generally considered out of scope for security reports:
-- Attacks requiring physical access to the user's device
-- Social engineering attacks against staff
-- Clickjacking on pages with no sensitive actions
-- Reports from automated scanners without validated proof of concept
-
----
-
-## Sustainability & Continuity
-
-**Can this system stand on its own if Pinpoint 311 disappears tomorrow?**
-
-Yes. Every deployment is self-hosted on your own infrastructure.
-
-| Aspect | Details |
-|--------|---------|
-| **Code ownership** | Full source code runs on your server |
-| **Data ownership** | The PostgreSQL database is yours to control |
-| **License** | MIT — fork, modify, and redistribute freely |
-| **Dependencies** | Open-source, with public documentation |
-| **Phone-home** | The application makes no automatic calls back to Pinpoint 311 servers. The single exception is a voluntary registration form in the admin console, which sends only what an administrator types and only when they press Submit — see COMPLIANCE.md |
-| **Recovery** | Container auto-restart and health checks |
-| **Updates** | Manual and deliberate — you decide when, see below |
-
-**Updating**
-
-Nothing updates itself unattended. There is no agent watching a registry, and no way for anybody outside your organization to change what is running on your server.
-
-Updates are performed in one of two deliberate ways:
-1. **Via the Admin Console (`VersionSwitcher`)**: Administrators can review available release tags and commit builds directly in the browser, check GitHub Actions security and test check statuses, verify database migration safety, trigger automatic pre-migration backups, and switch versions or roll back with a click.
-2. **Via Docker Compose CLI**:
 ```bash
-docker compose pull                                        # fetch the new images
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+docker compose restart backend worker
 ```
 
-The container reconciles the database schema on start. Additive migrations apply by themselves; a migration that would drop or rewrite data stops the container and prints the command a person has to run, rather than doing it unattended.
-
-**Take a backup first.** A restore is only as good as the last one taken, and an
-upgrade is the moment you find out.
-
-*This used to be automatic.* A Watchtower container shipped in the default
-compose file and pulled new images at 3am daily. Two problems: the README called
-it optional while nothing in the compose made it so, and its scope was every
-container it could pull rather than the application — which on a source-built
-install meant it upgraded PostGIS, Redis and Caddy unattended while leaving the
-application alone. An unannounced database-engine change on a municipal server
-at 3am is not a feature. It is gone; updates are now something a person decides
-to do.
-
-**What you'd handle independently:**
-- Security patches for dependencies
-- New features and bug fixes
-- Any developer familiar with Python/FastAPI + React can maintain this codebase
+A `SENTRY_DSN` environment variable, if set, takes precedence. Events are sent
+with `send_default_pii=False`, and switching crash reporting off on the setup
+page drops events. See [docs/SENTRY_SETUP.md](docs/SENTRY_SETUP.md).
 
 ---
 
-## License
+## Integrations with town systems
 
-Pinpoint 311 is open-source software licensed under the [MIT License](LICENSE).
+Pinpoint can push reports to, and pull updates from, systems a town already runs.
+Connections are configured under **Setup & Integration > GovTech Platform
+Connections**.
+
+| Connector | Interface |
+| --- | --- |
+| Accela | Construct API v4 with OAuth2 |
+| Esri ArcGIS | Feature service REST (ArcGIS Online or Enterprise) |
+| Tyler Technologies | Open311 GeoReport v2 |
+| Generic Open311 | Any GeoReport v2 endpoint |
+| Other REST system | Configurable JSON REST client for vendors with their own API; not certified against any specific vendor |
+
+Reports are pushed after AI triage finishes, so they carry the triaged priority.
+Status changes, comments, and photos flow where the vendor's API allows it.
+Priority changes are sent to Accela (once a priority mapping is set), ArcGIS
+(once a priority column is mapped), and the generic REST connector (once an
+update path is set). Open311 has no priority update, so priority is never sent
+there. Failed syncs are retried and listed in the console.
+
+Full setup, field mapping, and per-vendor limits: [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md).
 
 ---
 
-## Fiscal Sponsorship
+## API
 
-Pinpoint 311 is fiscally sponsored by **[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/)** (d.b.a. Hack Club), a 501(c)(3) public charity (EIN: 81-2908499). Hack Club provides fiscal sponsorship infrastructure, allowing Pinpoint 311 to receive tax-deductible donations on our behalf while we focus on building civic technology.
+Pinpoint implements the Open311 GeoReport v2 standard under `/api/open311/v2`
+and a staff and admin API alongside it. The endpoint reference, authentication,
+rate limits, and error format are in [docs/API.md](docs/API.md).
 
-Donations to Pinpoint 311 are tax-deductible to the extent permitted by law.
+Interactive docs (`/api/docs`, `/api/redoc`, `/api/openapi.json`) are served
+only when `DEBUG=true`, because in production they would publish a map of every
+route.
 
-<p align="center">
-  Built by Pinpoint 311 for Civic Engagement<br>
-  <a href="https://hcb.hackclub.com/pinpoint-311"><img src="https://img.shields.io/badge/Fiscally%20Sponsored%20by-Hack%20Club-ec3750.svg" alt="Fiscally Sponsored by Hack Club"></a>
-</p>
+---
+
+## Development and tests
+
+### Running locally
+
+The default `docker-compose.yml` is also the development setup: it bind-mounts
+`./backend` into the `backend` and `worker` containers. After editing backend
+code, run `docker compose restart backend worker`. For frontend work with hot
+reload, run Vite on the host; its dev server proxies `/api` to `http://backend:8000`,
+so either run it inside the compose network or change the proxy target in
+`frontend/vite.config.ts` to `http://localhost:8000` for your local session.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+### Backend tests
+
+CI (`.github/workflows/backend-tests.yml`) runs Python 3.11 with the full
+`requirements.txt` plus `pytest`, `pytest-asyncio`, and `aiosqlite`. The tests do
+not need a running database.
+
+On the host:
+
+```bash
+cd backend
+python3.11 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt pytest pytest-asyncio aiosqlite
+python -m pytest tests/ -q
+```
+
+Or inside the backend image, without installing anything on the host:
+
+```bash
+docker compose run --rm --no-deps --entrypoint bash backend \
+  -c "pip install -q pytest pytest-asyncio aiosqlite && python -m pytest tests/ -q"
+```
+
+A few tests that exercise cloud provider SDKs can fail in an environment without
+those providers' credentials.
+
+### Frontend checks
+
+CI (`.github/workflows/frontend-checks.yml`) runs on Node 20:
+
+```bash
+cd frontend
+npm ci
+npx tsc --noEmit -p tsconfig.json   # type check (also: npm run typecheck)
+npx vitest run                      # unit, keyboard, and accessibility tests (also: npm test)
+npx vite build
+```
+
+`npm run build` runs the type check before `vite build`, so the frontend Docker
+image will not build with type errors. CI tolerates a small known baseline of
+type errors in `src/maps/providers/azure/renderer.ts`; new errors elsewhere fail
+the job.
+
+### Schema changes
+
+Add an Alembic revision under `backend/alembic/versions/`:
+
+```bash
+docker compose exec backend alembic revision --autogenerate -m "describe the change"
+```
+
+Additive changes apply automatically on the next start. Anything that drops or
+rewrites data stops the container until an operator runs it, so write
+destructive changes as a separate, deliberate revision.
+
+### Other CI
+
+- `build-publish.yml` builds and publishes the multi-architecture images.
+- `accessibility.yml` runs axe-core against a live deployment weekly and on pushes to `main`.
+- `codeql.yml` and `security-scan.yml` run CodeQL, an OWASP ZAP baseline scan, and Trivy.
+- `.gitlab-ci.yml` includes GitLab's SAST template.
+
+---
+
+## Centralized hosting (optional)
+
+Self-hosting is the default and is complete on its own. Centralized hosting is
+for a state, county, or agency that runs separate instances for many towns. Each
+town still gets its own instance, database, encryption key, and secrets; no data
+is shared between towns. The orchestrator lives in a separate repository,
+[Pinpoint-311/centralizedhosting](https://github.com/Pinpoint-311/centralizedhosting).
+
+This repository contains only the hooks an instance needs to be managed, behind
+the `MANAGED_MODE` setting (off by default): a token-protected provisioning and
+telemetry API, version and database-revision stamps on the health endpoints,
+and settings the platform owns, which appear locked in the console. In managed
+mode the in-app version switcher and backup restore are disabled. With
+`MANAGED_MODE` off, none of this changes behavior. Background:
+[docs/VISION.md](docs/VISION.md).
+
+---
+
+## Accessibility
+
+The resident portal, staff dashboard, and Admin Console are built toward WCAG 2.1
+Level AA: keyboard operation, visible focus, labeled controls, and a 4.5:1
+contrast target. The frontend test suite includes keyboard and screen-reader
+behavior tests (`*.a11y.test.tsx`, `*.keyboard.test.tsx`), and an axe-core audit
+runs in CI. This is a design target, not an independent audit or certification;
+independent screen-reader testing and a third-party audit have not been done.
+Each town can edit its own Accessibility Statement under Admin Console >
+Branding. Details: [COMPLIANCE.md](COMPLIANCE.md#4-accessibility).
+
+---
+
+## Reporting security vulnerabilities
+
+Do not open a public issue for a security vulnerability. Use GitHub's private
+vulnerability reporting: open the
+[Security tab](https://github.com/Pinpoint-311/Pinpoint-311/security) of this
+repository and choose **Report a vulnerability**. We aim to acknowledge reports
+within 48 hours.
+
+---
+
+## Further documentation
+
+| Document | Contents |
+| --- | --- |
+| [docs/API.md](docs/API.md) | API reference |
+| [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | Connectors to town systems |
+| [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md) | Backup, restore, and key-loss procedures |
+| [docs/SENTRY_SETUP.md](docs/SENTRY_SETUP.md) | Crash reporting |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Service dependencies and data flow |
+| [COMPLIANCE.md](COMPLIANCE.md) | Security posture and compliance-supporting features |
+| [docs/SECURITY_PLAN.md](docs/SECURITY_PLAN.md) | System security plan |
+| [docs/PRIVACY_ASSESSMENT.md](docs/PRIVACY_ASSESSMENT.md) | Privacy impact assessment |
+| [COST.md](COST.md) | Hosting and cloud service cost estimates |
+| [deploy/templates/README.md](deploy/templates/README.md) | Cloud resource templates |
+| [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) | Third-party licenses |
+
+---
+
+## License and fiscal sponsorship
+
+Pinpoint 311 is licensed under the [MIT License](LICENSE).
+
+Pinpoint 311 is fiscally sponsored by
+[The Hack Foundation](https://hackclub.com/fiscal-sponsorship/) (d.b.a. Hack
+Club), a 501(c)(3) public charity (EIN: 81-2908499). Donations made through
+[Hack Club Bank](https://hcb.hackclub.com/pinpoint-311) are tax-deductible to the
+extent permitted by law.

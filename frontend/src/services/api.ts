@@ -1071,6 +1071,14 @@ class ApiClient {
      *  per provider — "maps is configured" is not the same question as "Esri is
      *  configured", and conflating them made the setup guide skip a provider
      *  that had no credentials at all. */
+    /** Which staff sign-in provider this town uses, by its catalog name.
+     *  Public, like the login page that also reads it. `auth0_configured` is
+     *  the field's historical name: it is true when *any* identity provider is
+     *  configured, not only Auth0. */
+    async getAuthStatus(): Promise<AuthStatus> {
+        return this.request<AuthStatus>('/auth/status');
+    }
+
     async getProviderStatus(): Promise<ProviderStatusMap> {
         return this.request<ProviderStatusMap>('/system/providers/status');
     }
@@ -1674,6 +1682,11 @@ class ApiClient {
         return this.request(`/system/backups/${encodeURIComponent(backupName)}`, { method: 'DELETE' });
     }
 
+    /** Overwrites the live database. The server snapshots it first. */
+    async restoreBackup(backupName: string): Promise<{ status: string; backup_name: string; restored_at: string; pre_restore_snapshot?: string }> {
+        return this.request(`/system/backups/${encodeURIComponent(backupName)}/restore?confirm=true`, { method: 'POST' });
+    }
+
     async cleanupBackups(): Promise<{ status: string; deleted_count: number; deleted: string[] }> {
         return this.request('/system/backups/cleanup', { method: 'POST' });
     }
@@ -2156,6 +2169,16 @@ export interface HealthSummary {
 /** An identity attached to the compute by the cloud itself. When present, the
  *  listed keys need no value — and leaving them empty is the better answer, not
  *  merely an allowed one. */
+/** GET /api/auth/status. `provider`/`provider_name` are null until a sign-in
+ *  provider is configured; `provider_name` is the catalog's display name
+ *  ("Microsoft Entra ID", "Okta"...). */
+export interface AuthStatus {
+    auth0_configured: boolean;
+    provider?: string | null;
+    provider_name?: string | null;
+    message?: string;
+}
+
 /** Per capability: the provider in use, and which providers are set up.
  *
  *  `current_provider` is what dispatch resolves, not what is stored — photo

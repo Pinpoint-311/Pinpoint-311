@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, XCircle, AlertCircle, RefreshCw, Activity } from 'lucide-react';
-import { Card, Button } from '../components/ui';
+import { Card, Button, Chip, statusTone } from '../components/ui';
 import { useOptionalAnnounce } from './liveAnnounce';
+import { humanize, isEnumLike } from '../utils/humanize';
+import { api, type Capability } from '../services/api';
 
 interface HealthCheckResult {
     status: string;
@@ -40,11 +42,35 @@ function storeLabel(store?: string): string {
         google: 'Google Secret Manager',
         azure: 'Azure Key Vault',
         aws: 'AWS Secrets Manager',
+        database: 'Encrypted Database',
     }[store ?? ''] ?? 'Secret Store';
+}
+
+/** The catalog's name for the provider a capability is on, or null.
+ *
+ * The sign-in, AI and translation cards were headed "Auth0 SSO", "Vertex AI
+ * (Gemini)" and nothing at all, whatever the town had actually chosen. The
+ * headings are now the capability, and the provider under it is the one the
+ * town picked, by the name the provider catalog gives it. */
+type ProviderNames = Partial<Record<Capability, string | null>>;
+
+async function loadProviderNames(caps: Capability[]): Promise<ProviderNames> {
+    const entries = await Promise.all(caps.map(async cap => {
+        try {
+            const c = await api.getProviderCatalog(cap);
+            const id = c.current_provider;
+            if (!id) return [cap, null] as const;
+            return [cap, c.providers.find(p => p.provider === id)?.name || humanize(id)] as const;
+        } catch {
+            return [cap, null] as const;
+        }
+    }));
+    return Object.fromEntries(entries) as ProviderNames;
 }
 
 export default function SystemHealthDashboard() {
     const [health, setHealth] = useState<HealthCheckResponse | null>(null);
+    const [providerNames, setProviderNames] = useState<ProviderNames>({});
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const announce = useOptionalAnnounce();
@@ -68,7 +94,7 @@ export default function SystemHealthDashboard() {
             setHealth(data);
             // Pressing Refresh repaints cards in place. Without this the only
             // report that anything happened is a spinner that has stopped.
-            announce(`System health refreshed. Overall status: ${data.overall_status}.`);
+            announce(`System health refreshed. Overall status: ${humanize(data.overall_status)}.`);
         } catch (err: any) {
             const message = err.message || 'Failed to fetch health status';
             setError(message);
@@ -80,6 +106,11 @@ export default function SystemHealthDashboard() {
 
     useEffect(() => {
         fetchHealth();
+        let alive = true;
+        loadProviderNames(['identity', 'ai', 'translation'])
+            .then(n => { if (alive) setProviderNames(n); })
+            .catch(() => { /* headings fall back to the capability alone */ });
+        return () => { alive = false; };
     }, []);
 
     /** The word for a status, for anyone the colour and glyph do not reach.
@@ -157,8 +188,10 @@ export default function SystemHealthDashboard() {
 
                     return (
                         <div key={key} className="flex justify-between text-gray-300">
-                            <span className="capitalize">{key.replace(/_/g, ' ')}:</span>
-                            <span className="text-gray-400 font-mono text-xs">{displayValue}</span>
+                            <span>{humanize(key)}:</span>
+                            {isEnumLike(value)
+                                ? <Chip tone={statusTone(value)}>{humanize(value)}</Chip>
+                                : <span className="text-gray-400 font-mono text-xs">{displayValue}</span>}
                         </div>
                     );
                 })}
@@ -250,13 +283,15 @@ export default function SystemHealthDashboard() {
                         </div>
                     </Card>
 
-                    {/* Auth0 SSO */}
+                    {/* Staff sign-in. The check is keyed `auth0` for history;
+                        it reports whichever identity provider is selected. */}
                     <Card>
                         <div className="flex items-start gap-3">
                             {getStatusIcon(health.checks.auth0.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Auth0 SSO</h3>
-                                <p className={`text-sm mt-1 ${getStatusColor(health.checks.auth0.status)}`}>
+                                <h3 className="font-semibold text-white">Staff Sign-In</h3>
+                                <p className="text-xs text-gray-300 mb-1">{providerNames.identity || 'Single sign-on'}</p>
+                                <p className={`text-sm ${getStatusColor(health.checks.auth0.status)}`}>
                                     {health.checks.auth0.message}
                                 </p>
                                 {renderCheckDetails(health.checks.auth0)}
@@ -264,13 +299,16 @@ export default function SystemHealthDashboard() {
                         </div>
                     </Card>
 
-                    {/* GCP Authentication */}
-                    {health.checks.gcp_auth && (
+                    {/* Google Cloud credentials. Explicitly about Google, so
+                        only shown to a town that has stored a Google service
+                        account -- everyone else was shown a "not configured"
+                        card for a cloud they never chose. */}
+                    {health.checks.gcp_auth && health.checks.gcp_auth.status !== 'not_configured' && (
                         <Card>
                             <div className="flex items-start gap-3">
                                 {getStatusIcon(health.checks.gcp_auth.status)}
                                 <div className="flex-1">
-                                    <h3 className="font-semibold text-white">GCP Authentication</h3>
+                                    <h3 className="font-semibold text-white">Google Cloud Credentials</h3>
                                     <p className="text-xs text-gray-300 mb-1">Encrypted Service Account</p>
                                     <p className={`text-sm ${getStatusColor(health.checks.gcp_auth.status)}`}>
                                         {health.checks.gcp_auth.message}
@@ -318,13 +356,14 @@ export default function SystemHealthDashboard() {
                         </div>
                     </Card>
 
-                    {/* Vertex AI */}
+                    {/* AI analysis -- headed by the capability, with the
+                        provider the town chose beneath it. */}
                     <Card>
                         <div className="flex items-start gap-3">
                             {getStatusIcon(health.checks.vertex_ai.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Vertex AI</h3>
-                                <p className="text-xs text-gray-300 mb-1">AI Analysis (Gemini)</p>
+                                <h3 className="font-semibold text-white">AI Analysis</h3>
+                                <p className="text-xs text-gray-300 mb-1">{providerNames.ai || 'AI provider'}</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.vertex_ai.status)}`}>
                                     {health.checks.vertex_ai.message}
                                 </p>
@@ -338,8 +377,8 @@ export default function SystemHealthDashboard() {
                         <div className="flex items-start gap-3">
                             {getStatusIcon(health.checks.translation_api.status)}
                             <div className="flex-1">
-                                <h3 className="font-semibold text-white">Translation API</h3>
-                                <p className="text-xs text-gray-300 mb-1">Multi-Language Support</p>
+                                <h3 className="font-semibold text-white">Translation</h3>
+                                <p className="text-xs text-gray-300 mb-1">{providerNames.translation ? `Multi-language support · ${providerNames.translation}` : 'Multi-language support'}</p>
                                 <p className={`text-sm ${getStatusColor(health.checks.translation_api.status)}`}>
                                     {health.checks.translation_api.message}
                                 </p>

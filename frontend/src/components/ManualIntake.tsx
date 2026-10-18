@@ -1247,8 +1247,8 @@ export default function ManualIntake({
                                                                 <span className="min-w-0 flex-1 text-xs text-white/70 truncate">
                                                                     <span className="text-white font-medium" data-no-translate>{r.service_request_id}</span>
                                                                     {r.service_name && <> · {r.service_name}</>}
-                                                                    {r.status && <> · {r.status.replace('_', ' ')}</>}
                                                                 </span>
+                                                                {r.status && <StatusBadge status={r.status} size="xs" />}
                                                                 {onOpenRequest && (
                                                                     <Button variant="ghost" size="sm" onClick={() => onOpenRequest(r.service_request_id)}
                                                                         aria-label={`Open request ${r.service_request_id}`}>

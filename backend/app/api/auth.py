@@ -45,7 +45,7 @@ def _sanitize_redirect_uri(redirect_uri: str) -> str:
     return redirect_uri
 
 
-# One-time bootstrap tokens (only work until Auth0 is configured)
+# One-time bootstrap tokens (only work until staff sign-in is configured)
 _bootstrap_tokens: dict = {}
 
 
@@ -254,11 +254,11 @@ async def generate_bootstrap_token(
     matches it.
     """
     client = await _guard_bootstrap_attempt(request)
-    # Fail-closed: only when Auth0 has never been configured
+    # Fail-closed: only when no staff sign-in provider has ever been configured
     if not await _bootstrap_gate_open(db):
         raise HTTPException(
             status_code=403,
-            detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
+            detail="Bootstrap access is off because staff sign-in is set up. Sign in with your sign-in provider."
         )
     try:
         _verify_bootstrap_password(password)
@@ -291,7 +291,7 @@ async def generate_bootstrap_token(
         "token": token,
         "expires_in_seconds": 3600,
         "login_url": f"/api/auth/bootstrap/{token}",
-        "warning": "This token will be invalidated once Auth0 is configured"
+        "warning": "This token stops working once staff sign-in is set up"
     }
 
 
@@ -319,7 +319,7 @@ async def auto_bootstrap(
     if not await _bootstrap_gate_open(db):
         return _bootstrap_html_message(
             "Setup Complete",
-            '<h2>Auth0 is already configured</h2><p>Use SSO to log in.</p>'
+            '<h2>Staff sign-in is already set up</h2><p>Sign in with your sign-in provider.</p>'
             '<a href="/login" style="color:#6366f1">Go to Login</a>',
             403,
         )
@@ -363,7 +363,7 @@ async def verify_bootstrap(
     if not await _bootstrap_gate_open(db):
         return _bootstrap_html_message(
             "Setup Complete",
-            '<h2>Auth0 is already configured</h2><a href="/login" style="color:#6366f1">Go to Login</a>',
+            '<h2>Staff sign-in is already set up</h2><a href="/login" style="color:#6366f1">Go to sign-in</a>',
             403,
         )
     try:
@@ -424,13 +424,13 @@ async def use_bootstrap_token(
     """
     import time as time_module
     
-    # Fail-closed: only when Auth0 has never been configured
+    # Fail-closed: only when no staff sign-in provider has ever been configured
     if not await _bootstrap_gate_open(db):
-        # Clear all bootstrap tokens since Auth0 is now configured
+        # Clear all bootstrap tokens: staff sign-in is now configured
         _bootstrap_tokens.clear()
         raise HTTPException(
             status_code=403,
-            detail="Bootstrap access disabled - Auth0 is configured. Use SSO to log in."
+            detail="Bootstrap access is off because staff sign-in is set up. Sign in with your sign-in provider."
         )
     
     # Verify token
@@ -505,7 +505,12 @@ async def initiate_login(
     
     auth_url = await Auth0Service.get_authorization_url(callback_url, state, db)
     if not auth_url:
-        raise HTTPException(status_code=503, detail="Couldn't start Auth0 sign-in. Check the Auth0 settings.")
+        # Named for the provider actually selected: this is the generic login
+        # path, and an Entra or Okta town was told to check its Auth0 settings.
+        from app.services.identity import IDENTITY_CATALOG
+        provider = await Auth0Service._active_provider()
+        label = IDENTITY_CATALOG.get(provider, {}).get("name", "your sign-in provider")
+        raise HTTPException(status_code=503, detail=f"Couldn't start sign-in with {label}. Check its settings under Setup & Integrations.")
     
     return {"auth_url": auth_url, "state": state}
 
@@ -570,7 +575,27 @@ async def auth0_callback(
             )
         
         email = user_info["email"].lower()
-        
+
+        # Accounts are matched by email, so an address the provider itself says
+        # it has NOT verified must not sign anyone in: on a tenant with
+        # self-signup, registering an unverified account under a staff or admin
+        # address would otherwise log the registrant in as that user. Refused
+        # only on an explicit False -- Entra and some OIDC providers omit the
+        # claim for tenant-issued addresses, and those are not self-asserted.
+        if user_info.get("email_verified") is False:
+            await AuditService.log_login_failed(
+                db=db,
+                username=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                reason="Identity provider reports email not verified"
+            )
+            redirect_uri = _sanitize_redirect_uri(redirect_uri)
+            return RedirectResponse(
+                url=f"{redirect_uri}?error=Verify+your+email+address+with+your+sign-in+provider+first.",
+                status_code=302
+            )
+
         # Find or create user
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()

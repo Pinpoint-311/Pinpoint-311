@@ -14,17 +14,20 @@ This document outlines procedures for backup, recovery, and disaster response fo
 ## Backup Overview
 
 ### Automated Backups
-- **Frequency**: Configurable via Admin Console
-- **Storage**: S3-compatible storage (AWS S3, Backblaze B2, etc.)
-- **Retention**: Based on state retention policy (default: 7 years for NJ)
+- **Setup**: Admin Console → Setup & Integration → Automatic backups (endpoint, bucket, keys, encryption passphrase; **Save & Test** checks them)
+- **Frequency**: Daily at 02:00 UTC, run by the worker
+- **Format**: `pg_dump -Fc`, encrypted with GPG (AES-256), uploaded to the bucket root as `db_backup_YYYYMMDD_HHMMSS.sql.gpg`
+- **Storage**: S3-compatible storage (AWS S3, Backblaze B2, Oracle Object Storage, etc.)
+- **Retention**: Old backups are removed weekly according to the town's records-retention setting. If retention is not configured, every backup is kept.
 
 ### What's Backed Up
 | Component | Backed Up | Method |
 |-----------|-----------|--------|
-| PostgreSQL Database | ✅ | `pg_dump` compressed |
-| Uploaded Files (S3) | ✅ | Separate S3 bucket backup |
-| Configuration | ✅ | Environment variables in Secret Manager |
-| Docker Images | ✅ | GHCR (versioned with SHA) |
+| PostgreSQL Database | Yes | Encrypted `pg_dump -Fc` to S3-compatible storage |
+| Files uploaded through the console (`uploads_data` volume) | No | Back up the Docker volume separately |
+| Credentials | Depends | Kept in the chosen secret store; in the database store they are inside the database backup |
+| `.env` (`SECRET_KEY`, `DB_PASSWORD`, ...) | No | Keep a copy off the server; `SECRET_KEY` is needed to read database-stored credentials and locally wrapped PII |
+| Docker Images | Yes | GHCR (versioned with SHA) |
 
 ### Deployment-Triggered Backups
 
@@ -37,17 +40,19 @@ The **Version Switcher** in the Admin Console automatically creates a database b
 
 These backups provide an additional recovery point specifically tied to version changes, enabling rollback to the exact database state before a deployment.
 
+Separately, the container entrypoint takes an unencrypted `pg_dump` into the `migration_backups` volume before applying any schema migration, and keeps the newest three.
+
 ### What's NOT Backed Up (Ephemeral)
 - Redis cache (rebuilds automatically)
 - Session tokens (users re-login)
-- Celery task queue (tasks re-queue)
+- Celery task queue (persisted to the `redis_data` volume, but not included in off-site backups)
 
 ---
 
 ## Manual Backup Procedure
 
 ### Via Admin Console
-1. Navigate to **Admin Console → System → Backups**
+1. Navigate to **Admin Console → Compliance → Database Backups**
 2. Click **"Create Backup Now"**
 3. Wait for confirmation (typically 1-5 minutes)
 4. Verify backup appears in backup list
@@ -68,14 +73,13 @@ curl https://<YOUR_DOMAIN>/api/system/backups \
 # SSH to production server
 ssh ubuntu@<YOUR_SERVER_IP>
 
-# Enter the backend container
-docker exec -it pinpoint-311-backend-1 bash
+# From the directory holding docker-compose.yml. DB_USER and DB_NAME default to
+# township and township_db; use the values from your .env if you changed them.
+docker compose exec -T db pg_dump -U township -Fc township_db \
+  > emergency_backup_$(date +%Y%m%d_%H%M%S).dump
 
-# Manual pg_dump
-pg_dump -h db -U postgres pinpoint311 | gzip > /tmp/emergency_backup_$(date +%Y%m%d_%H%M%S).sql.gz
-
-# Copy out of container
-docker cp pinpoint-311-backend-1:/tmp/emergency_backup_*.sql.gz ./
+# This file is NOT encrypted. Encrypt it before it leaves the server, e.g.:
+gpg --symmetric --cipher-algo AES256 emergency_backup_*.dump
 ```
 
 ---
@@ -106,35 +110,42 @@ curl -X POST https://<YOUR_DOMAIN>/api/system/backups/create \
 git clone https://github.com/Pinpoint-311/Pinpoint-311.git
 cd Pinpoint-311
 
-# Copy production .env (with different DB name)
+# Copy production .env (same SECRET_KEY, so database-stored credentials and
+# locally wrapped PII stay readable), but keep the test server off the
+# production hostname
 cp /path/to/production/.env .env
-sed -i 's/pinpoint311/pinpoint311_dr_test/' .env
+sed -i 's/^DOMAIN=.*/DOMAIN=localhost/' .env
 
 # Start services
-docker compose up -d
+docker compose up -d --build
 ```
 
 #### Step 3: Download Backup from S3 (5 min)
 ```bash
-# List available backups
-aws s3 ls s3://your-backup-bucket/backups/
+# List available backups (add --endpoint-url for non-AWS providers such as Backblaze B2)
+aws s3 ls s3://your-backup-bucket/
 
-# Download latest backup
-aws s3 cp s3://your-backup-bucket/backups/latest.sql.gz ./restore.sql.gz
+# Download the newest one
+aws s3 cp s3://your-backup-bucket/db_backup_YYYYMMDD_HHMMSS.sql.gpg ./restore.sql.gpg
+
+# Decrypt with the backup encryption passphrase
+gpg --decrypt --output restore.dump restore.sql.gpg
 ```
 
 #### Step 4: Restore Database (10 min)
 ```bash
-# Stop backend to prevent writes
-docker compose stop backend celery_worker
+# Stop the API and worker to prevent writes
+docker compose stop backend worker
 
-# Restore to test database
-gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 \
-  psql -U postgres -d pinpoint311_dr_test
+# Restore (custom-format dump, so pg_restore rather than psql)
+docker compose exec -T db pg_restore -U township -d township_db --clean --if-exists < restore.dump
 
 # Restart services
 docker compose up -d
 ```
+
+Alternatively, once the test instance has the same backup settings, restore from
+**Admin Console → Compliance → Database Backups**.
 
 #### Step 5: Verify Data Integrity (15 min)
 - [ ] Login to Staff Dashboard works
@@ -188,25 +199,25 @@ cd /path/to/app
 # 2. Stop all services
 docker compose down
 
-# 3. Download latest backup
-aws s3 cp s3://your-backup-bucket/backups/latest.sql.gz ./restore.sql.gz
+# 3. Download and decrypt the latest backup
+aws s3 cp s3://your-backup-bucket/db_backup_YYYYMMDD_HHMMSS.sql.gpg ./restore.sql.gpg
+gpg --decrypt --output restore.dump restore.sql.gpg
 
-# 4. Start only database
+# 4. Start only the database
 docker compose up -d db
-sleep 30
 
-# 5. Drop and recreate database (DESTRUCTIVE)
-docker exec -i pinpoint-311-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS pinpoint311;"
-docker exec -i pinpoint-311-db-1 psql -U postgres -c "CREATE DATABASE pinpoint311;"
+# 5. Drop and recreate the database (DESTRUCTIVE). Defaults shown; use your .env values.
+docker compose exec -T db psql -U township -d postgres -c "DROP DATABASE IF EXISTS township_db;"
+docker compose exec -T db psql -U township -d postgres -c "CREATE DATABASE township_db;"
 
-# 6. Restore backup
-gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 psql -U postgres -d pinpoint311
+# 6. Restore the backup
+docker compose exec -T db pg_restore -U township -d township_db < restore.dump
 
-# 7. Start all services
+# 7. Start all services (the entrypoint brings the schema up to the image's version)
 docker compose up -d
 
 # 8. Verify system health
-curl https://<YOUR_DOMAIN>/api/health
+curl https://<YOUR_DOMAIN>/api/health/quick
 ```
 
 #### Post-Recovery

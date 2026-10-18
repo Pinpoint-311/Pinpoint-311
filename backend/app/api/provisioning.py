@@ -42,7 +42,9 @@ def require_provisioning_token(x_provisioning_token: str = Header(default="")) -
     if not settings.provisioning_token:
         # Endpoints only exist when the deployment opts in (A4).
         raise HTTPException(status_code=404, detail="Provisioning API is not enabled")
-    if not hmac.compare_digest(x_provisioning_token, settings.provisioning_token):
+    # Bytes, not str: compare_digest raises TypeError on a str holding non-ASCII,
+    # which turned a junk header from an unauthenticated caller into a 500.
+    if not hmac.compare_digest(x_provisioning_token.encode("utf-8"), settings.provisioning_token.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid provisioning token")
     return "orchestrator"
 
@@ -195,12 +197,18 @@ def _verify_break_glass(token: str, key: str) -> dict:
     expected = base64.urlsafe_b64encode(
         hmac.new(key.encode(), payload, hashlib.sha256).digest()
     ).rstrip(b"=").decode()
-    if not hmac.compare_digest(sig, expected):
+    # Compared as bytes: compare_digest raises TypeError on a str holding
+    # non-ASCII, so an unauthenticated caller could turn this into a 500.
+    if not hmac.compare_digest(sig.encode("utf-8"), expected.encode("ascii")):
         raise HTTPException(status_code=401, detail="Invalid break-glass token signature")
-    claims = json.loads(payload)
+    try:
+        claims = json.loads(payload)
+        exp = float(claims.get("exp", 0))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=401, detail="Malformed break-glass token")
     if claims.get("typ") != "state_ops_break_glass":
         raise HTTPException(status_code=401, detail="Wrong token type")
-    if datetime.now(timezone.utc).timestamp() > float(claims.get("exp", 0)):
+    if datetime.now(timezone.utc).timestamp() > exp:
         raise HTTPException(status_code=401, detail="Break-glass token expired")
     return claims
 

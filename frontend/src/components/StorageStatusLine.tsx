@@ -42,11 +42,12 @@ export function StorageStatusLine() {
      * add here. */
     if (!status.secrets.store) return null;
 
-    const storeName = {
+    const storeName = ({
+        google: 'Google Secret Manager',
         azure: 'Azure Key Vault',
         aws: 'AWS Secrets Manager',
         database: "this deployment's own encrypted database",
-    }[status.secrets.store] ?? 'Google Secret Manager';
+    } as Record<string, string>)[status.secrets.store] ?? 'your secret store';
 
     const pending: string[] = [];
     if (status.secrets.count && status.secrets.reachable) {

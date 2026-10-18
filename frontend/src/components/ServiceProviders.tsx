@@ -18,6 +18,7 @@ import { StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert, type 
 import { PlainSecrets } from './SetupWizard';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
+import { humanize } from '../utils/humanize';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
 function agoLabel(epochSeconds?: number | null): string {
@@ -937,7 +938,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             ? 'bg-amber-500/10 border-amber-400/30 text-amber-100/90'
                             : 'bg-white/[0.04] border-white/12 text-white/65'}`}>
                             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                            <span><span className="font-semibold">{w.key}</span> — {w.message}</span>
+                            <span><span className="font-semibold">{humanize(w.key)}</span> — {w.message}</span>
                         </div>
                     ))}
                 </div>
@@ -1202,7 +1203,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         {busy === 'test' ? 'Testing…' : 'Test connection'}
                     </Action>
                     {cap === 'identity' && (
-                        <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 by default · Entra, Okta and any OIDC provider also supported</span>
+                        <span className="text-white/60 text-[11px] ml-auto hidden sm:block">
+                            {catalog.current_provider
+                                ? `Staff sign in with ${currentName} · Pinpoint never stores a password`
+                                : 'Any OpenID Connect provider works · Pinpoint never stores a password'}
+                        </span>
                     )}
                     {/* On the far side of the row from Save, so a hand reaching
                         for one cannot land on the other. Off means off-and-kept:

@@ -15,6 +15,8 @@ import {
 } from 'lucide-react';
 import { useConfirmDeploy } from './DialogProvider';
 import { useOptionalAnnounce } from './liveAnnounce';
+import { Chip, type ChipTone } from './ui';
+import { humanize } from '../utils/humanize';
 
 interface Release {
     tag: string;
@@ -375,16 +377,20 @@ export default function VersionSwitcher() {
         return { type: null, scope: null, desc: msg };
     };
 
-    const getTypeColor = (type: string | null) => {
-        switch (type) {
-            case 'feat': return 'bg-emerald-500/20 text-emerald-400';
-            case 'fix': return 'bg-amber-500/20 text-amber-400';
-            case 'style': return 'bg-purple-500/20 text-purple-400';
-            case 'refactor': return 'bg-blue-500/20 text-blue-400';
-            case 'docs': return 'bg-sky-500/20 text-sky-400';
-            case 'chore': return 'bg-gray-500/20 text-gray-400';
-            default: return 'bg-white/10 text-white/60';
-        }
+    /** A conventional-commit prefix as a person reads it, with its colour. */
+    const COMMIT_TYPES: Record<string, { label: string; tone: ChipTone }> = {
+        feat: { label: 'New feature', tone: 'success' },
+        fix: { label: 'Bug fix', tone: 'warning' },
+        style: { label: 'Style update', tone: 'accent' },
+        refactor: { label: 'Refactor', tone: 'info' },
+        perf: { label: 'Performance', tone: 'info' },
+        docs: { label: 'Docs', tone: 'info' },
+        test: { label: 'Tests', tone: 'neutral' },
+        chore: { label: 'Chore', tone: 'neutral' },
+    };
+    const commitTypeChip = (type: string) => {
+        const t = COMMIT_TYPES[type.toLowerCase()] ?? { label: humanize(type), tone: 'neutral' as const };
+        return <Chip tone={t.tone}>{t.label}</Chip>;
     };
 
     return (
@@ -492,9 +498,7 @@ export default function VersionSwitcher() {
                                                     <GitCommit className="w-3 h-3 text-white/40" />
                                                     <span className="font-mono text-white text-xs">@{commit.sha}</span>
                                                     {parsed.type && (
-                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
-                                                            {parsed.type}
-                                                        </span>
+                                                        commitTypeChip(parsed.type)
                                                     )}
                                                 </div>
                                                 <span className="text-[10px] text-white/40">{formatDate(commit.date)}</span>
@@ -536,12 +540,7 @@ export default function VersionSwitcher() {
                                         <>
                                             <div className="flex items-center gap-2 mb-1">
                                                 {parsed.type && (
-                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
-                                                        {parsed.type === 'feat' ? 'New Feature' :
-                                                            parsed.type === 'fix' ? 'Bug Fix' :
-                                                                parsed.type === 'style' ? 'Style Update' :
-                                                                    parsed.type === 'refactor' ? 'Refactor' : parsed.type}
-                                                    </span>
+                                                    commitTypeChip(parsed.type)
                                                 )}
                                                 {parsed.scope && <span className="text-xs text-white/40">{parsed.scope}</span>}
                                             </div>
@@ -706,8 +705,8 @@ export default function VersionSwitcher() {
                                                 <X className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
                                             )}
                                             <div className="min-w-0">
-                                                <span className={`font-mono font-medium ${step.success ? 'text-white/60' : 'text-red-400'}`}>
-                                                    {step.step.replace(/_/g, ' ')}
+                                                <span className={`font-medium ${step.success ? 'text-white/70' : 'text-red-300'}`}>
+                                                    {humanize(step.step)}
                                                 </span>
                                                 {step.detail && (
                                                     <p className={`mt-0.5 break-all ${step.success ? 'text-white/35' : 'text-red-300/70'}`}>

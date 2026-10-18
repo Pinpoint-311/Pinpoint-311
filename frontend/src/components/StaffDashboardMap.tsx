@@ -5,6 +5,7 @@ import { MapLayer } from '../services/api';
 import { useTranslation } from '../context/TranslationContext';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { BANDS, bandFor, bandLabel } from './priority';
+import { humanize } from '../utils/humanize';
 import {
     GeoJsonLayerHandle,
     MapRenderer,
@@ -73,7 +74,7 @@ const STATUS_LABELS: Record<string, string> = {
     closed: 'Closed',
 };
 
-const statusLabel = (status: string) => STATUS_LABELS[status] ?? status.replace('_', ' ');
+const statusLabel = (status: string) => STATUS_LABELS[status] ?? humanize(status);
 
 /**
  * Status has to be readable without colour -- WCAG 1.4.1.
@@ -704,7 +705,7 @@ export default function StaffDashboardMap({
                                         .map(([k, v]) => el('p', {
                                             style: 'margin: 6px 0; font-size: 13px; color: #e5e7eb;',
                                             children: [
-                                                el('span', { style: 'color: #9ca3af;', text: `${k}:` }),
+                                                el('span', { style: 'color: #9ca3af;', text: `${humanize(k)}:` }),
                                                 ` ${v}`,
                                             ],
                                         })),

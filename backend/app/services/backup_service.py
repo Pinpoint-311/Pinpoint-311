@@ -592,6 +592,25 @@ async def download_backup(backup_name: str, output_path: str) -> bool:
         return False
 
 
+# pg_restore reports these as errors, but none of them means data is missing:
+# a newer pg_dump client writes a SET the older server does not know, and the
+# PostGIS image pre-creates its own schemas and extensions. Verified with a real
+# restore drill (2026-10-18): every table matched the live database.
+_HARMLESS_RESTORE_ERRORS = (
+    re.compile(r'unrecognized configuration parameter "transaction_timeout"'),
+    re.compile(r'schema "(tiger|tiger_data|topology)" already exists'),
+    re.compile(r'extension "[a-z_]+" already exists'),
+    re.compile(r'must be owner of extension'),
+)
+
+
+def restore_errors(stderr: str) -> list:
+    """The pg_restore errors that matter, i.e. all but the known-harmless ones."""
+    errors = [line for line in (stderr or "").splitlines()
+              if line.startswith("pg_restore: error:")]
+    return [e for e in errors if not any(p.search(e) for p in _HARMLESS_RESTORE_ERRORS)]
+
+
 def restore_database_dump(dump_path: str) -> bool:
     """Restore a PostgreSQL dump file to the database."""
     try:
@@ -610,6 +629,10 @@ def restore_database_dump(dump_path: str) -> bool:
                 "pg_restore",
                 "--clean",  # Drop existing objects before restore
                 "--if-exists",  # Don't error if objects don't exist
+                # Ownership and grants belong to the server restored onto: a
+                # new server's database user is not the one that made the dump.
+                "--no-owner",
+                "--no-privileges",
                 "-d", clean_url,
                 dump_path
             ],
@@ -618,10 +641,16 @@ def restore_database_dump(dump_path: str) -> bool:
             timeout=1800  # 30 minute timeout for large databases
         )
         
-        # pg_restore may return non-zero even on successful restore due to warnings
-        if result.returncode != 0 and "error" in result.stderr.lower():
-            logger.error(f"pg_restore failed: {result.stderr}")
-            return False
+        # pg_restore exits non-zero for errors it "ignored", and on this stack
+        # it always reports a few harmless ones, so the old test ("any error in
+        # stderr") called every successful restore a failure. Judge by the
+        # errors that remain once the harmless ones are set aside.
+        if result.returncode != 0:
+            real = restore_errors(result.stderr)
+            if real:
+                logger.error("pg_restore failed: %s", "; ".join(real[:10]))
+                return False
+            logger.info("pg_restore finished with only known-harmless messages")
         
         logger.info("Database restored successfully")
         return True
@@ -680,8 +709,19 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
                 return {"status": "error", "message": "Failed to decrypt backup - check encryption key"}
             
             decrypted_size = os.path.getsize(decrypted_path)
-            
-            # Step 3: Restore to database
+
+            # Step 3: Snapshot what is about to be overwritten. A restore of the
+            # wrong backup, or one that fails half-way, is otherwise final.
+            snapshot_dir = os.environ.get("PRE_RESTORE_SNAPSHOT_DIR", "/backups")
+            os.makedirs(snapshot_dir, exist_ok=True)
+            snapshot_path = os.path.join(
+                snapshot_dir, f"pre_restore_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.dump")
+            if not create_database_dump(snapshot_path):
+                return {"status": "error",
+                        "message": "Could not snapshot the current database first, so nothing was restored"}
+            logger.info(f"Pre-restore snapshot saved: {snapshot_path}")
+
+            # Step 4: Restore to database
             logger.info("Restoring database...")
             if not restore_database_dump(decrypted_path):
                 return {"status": "error", "message": "Failed to restore database - check pg_restore logs"}
@@ -694,12 +734,15 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
                 "encrypted_size_bytes": encrypted_size,
                 "decrypted_size_bytes": decrypted_size,
                 "restored_at": datetime.now(timezone.utc).isoformat(),
+                "pre_restore_snapshot": snapshot_path,
                 "warning": "Database has been restored. You may need to restart the application."
             }
             
     except Exception as e:
         logger.error(f"Restore failed: {e}")
-        return {"status": "error", "message": str(e)}
+        # A fixed sentence: the endpoint shows this message to the admin, and
+        # exception text can carry a storage endpoint or credential detail.
+        return {"status": "error", "message": "The restore stopped unexpectedly; the server log has the details"}
 
 
 

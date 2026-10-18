@@ -62,6 +62,27 @@ const fakeWindow = () => ({
 afterEach(() => { cleanup(); vi.restoreAllMocks(); written = ''; });
 
 describe('the printed work order', () => {
+    it('prints safety flags and the timeline as readable words, escaped once', async () => {
+        const user = userEvent.setup();
+        vi.spyOn(window, 'open').mockReturnValue(fakeWindow() as any);
+        const flagged = { ...request, ai_analysis: { safety_flags: ['electrical_hazard', `fire ${EVIL}`], classification: 'road_damage' } };
+        const audit = [{ id: 1, action: 'priority_accepted', actor_type: 'staff', actor_name: "Pat O'Brien", created_at: '2026-06-04T10:00:00Z', new_value: '7' }] as any;
+        render(
+            <AccessibilityProvider>
+                <PrintWorkOrder request={flagged} comments={[]} auditLog={audit} townshipName="Town" />
+            </AccessibilityProvider>,
+        );
+        await user.click(screen.getByRole('button', { name: /print work order/i }));
+        expect(written).toContain('>Electrical hazard<');
+        expect(written).not.toContain('electrical_hazard');
+        expect(written).toContain('Road damage');
+        expect(written).not.toContain('<img src=x');
+        // Escaped at the source; a second escape would print the entity itself.
+        expect(written).toContain('Pat O&#39;Brien');
+        expect(written).not.toContain('&amp;#39;');
+        expect(written).toContain('Priority accepted');
+    });
+
     it('escapes every value from residents, commenters, custom questions and assets', async () => {
         const user = userEvent.setup();
         vi.spyOn(window, 'open').mockReturnValue(fakeWindow() as any);

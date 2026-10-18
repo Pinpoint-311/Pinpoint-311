@@ -381,6 +381,10 @@ async def trigger_road_seed(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """Re-seed the road network for the town boundary (admin only).
+
+    Rebuilds the local road table used by road-check and corridor matching.
+    """
     from app.tasks.road_data import seed_roads_for_boundary
     result = await seed_roads_for_boundary(db, force=force)
     return result

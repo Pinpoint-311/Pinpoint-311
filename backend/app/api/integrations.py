@@ -250,6 +250,7 @@ async def list_integrations(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """List configured GovTech integrations, secrets masked (admin only)."""
     integrations = (await db.execute(
         select(IntegrationConfig).order_by(IntegrationConfig.created_at.asc())
     )).scalars().all()
@@ -305,6 +306,7 @@ async def create_integration(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
+    """Create an integration for a platform in the catalog (admin only)."""
     if data.platform not in PLATFORM_CATALOG:
         raise HTTPException(status_code=400, detail=f"Unknown platform: {data.platform}")
     _reject_unknown_keys(data.platform, data.credentials, data.config)
@@ -360,6 +362,7 @@ async def update_integration(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
+    """Update an integration's settings or credentials (admin only)."""
     integration = await _get_integration(db, integration_id)
     _reject_unknown_keys(integration.platform, data.credentials, data.config)
 
@@ -407,6 +410,7 @@ async def delete_integration(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin),
 ):
+    """Delete an integration and its links and logs (admin only)."""
     integration = await _get_integration(db, integration_id)
     platform = integration.platform
     # Read before the delete: after it, the row is gone and so is the only record
@@ -523,6 +527,7 @@ async def test_integration(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """Test the connection to the vendor API (admin only, 10/minute)."""
     integration = await _get_integration(db, integration_id)
     from app.services.connector_verification import check_integration_now
 
@@ -582,6 +587,7 @@ async def trigger_sync(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """Queue an immediate sync with the vendor (admin only, 10/minute)."""
     integration = await _get_integration(db, integration_id)
     if not integration.enabled:
         raise HTTPException(status_code=400, detail="Enable the integration before syncing")
@@ -1281,6 +1287,7 @@ async def get_sync_logs(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """Recent sync log entries for one integration (admin only)."""
     await _get_integration(db, integration_id)
     logs = (await db.execute(
         select(IntegrationSyncLog)
@@ -1439,8 +1446,10 @@ async def integration_webhook(
             IntegrationConfig.enabled == True,  # noqa: E712
         )
     )).scalar_one_or_none()
+    # Bytes, not str: compare_digest raises TypeError on a str holding
+    # non-ASCII, which turned a junk token in the URL into a 500.
     if not integration or not pysecrets.compare_digest(
-            str(integration.webhook_token or ""), str(token)):
+            str(integration.webhook_token or "").encode("utf-8"), str(token).encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid webhook token")
     # A push-only connection is one the town configured to send and not receive.
     # Accepting inbound creates on it anyway meant a vendor could open service

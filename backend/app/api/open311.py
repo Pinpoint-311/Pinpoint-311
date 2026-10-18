@@ -577,10 +577,26 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
             "actor_type": e.actor_type,
             "actor_name": e.actor_name if e.actor_type == "resident" else "Staff",
             "created_at": e.created_at,
-            "extra_data": e.extra_data,
+            "extra_data": _public_audit_extra(e),
         }
         for e in entries
     ]
+
+
+# The only audit extra_data a resident may see: how a closed report was closed.
+# extra_data is a free-form staff-side column -- a manual intake's "submitted"
+# row carries the assignee's username, the routing department, the priority
+# override and whether staff notes exist -- so passing it through verbatim
+# undid the actor_name redaction above. Allow-list, not deny-list, so the next
+# key someone adds stays internal by default.
+_PUBLIC_AUDIT_EXTRA_KEYS = ("substatus", "completion_message")
+
+
+def _public_audit_extra(entry) -> Optional[dict]:
+    if entry.action != "status_change" or not isinstance(entry.extra_data, dict):
+        return None
+    kept = {k: entry.extra_data[k] for k in _PUBLIC_AUDIT_EXTRA_KEYS if k in entry.extra_data}
+    return kept or None
 
 
 
@@ -598,7 +614,14 @@ async def open311_discovery(request: Request):
     return {
         "changeset": "2026-03-31T00:00:00Z",
         "contact": "You may email support@pinpoint311.org for any questions or issues.",
-        "key_service": f"{base_url}/api/auth/login",
+        # GeoReport v2 defines key_service as human-readable instructions for
+        # getting an API key. This pointed at the STAFF sign-in, which issues no
+        # Open311 key; a client developer following it found a login wall. No
+        # key is required or checked -- say so.
+        "key_service": (
+            "No API key is required. POST requests.json is open to anonymous "
+            "callers and rate limited per client address (10/minute)."
+        ),
         "type": "production",
         "endpoints": [
             {
@@ -868,31 +891,18 @@ def _screen_rate_key(request: Request) -> str:
     """Rate-limit key for photo screening: the caller, not the proxy.
 
     slowapi's default `get_remote_address` reads request.client.host, which
-    behind Caddy is 172.19.0.x for every resident in town -- one global bucket.
-    A 12/minute limit on that bucket is not a per-abuser cap at all: it is a
-    denial-of-service switch anyone can flip, taking photo screening away from
-    the whole town for the cost of twelve requests a minute.
+    behind Caddy is one container address for every resident in town -- one
+    global bucket, i.e. a denial-of-service switch rather than a per-abuser cap.
 
-    X-Forwarded-For is trusted ONLY when the direct peer is a private address,
-    which on this deployment means the request came from our own Caddy. uvicorn
-    runs without --forwarded-allow-ips so nothing else has already rewritten it,
-    and a header arriving from a public peer is ignored outright -- so a client
-    on the open internet cannot mint itself a fresh bucket per request.
+    This used to fix that by trusting the LEFTMOST X-Forwarded-For entry
+    whenever the peer was private. Behind Caddy the peer always is, and Caddy
+    appends to whatever header the client sent, so the leftmost entry is the
+    client's own text: one caller could mint a fresh 12/minute bucket per
+    request and spend the whole global ceiling alone. app/core/client_ip
+    resolves the address the same way every other limiter does, from the
+    trusted end of the chain.
     """
-    import ipaddress
-
-    peer = request.client.host if request.client else ""
-    try:
-        private = ipaddress.ip_address(peer).is_private or ipaddress.ip_address(peer).is_loopback
-    except ValueError:
-        private = False
-
-    if private:
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first[:64]
-    return peer or "unknown"
+    return rate_limit_key(request)
 
 
 @router.post("/photos/screen")
@@ -1725,11 +1735,14 @@ async def review_withheld_photo(
     the photo with the face in it" is a question a town will eventually be
     asked.
     """
-    result = await db.execute(
-        select(ServiceRequest).options(selectinload(ServiceRequest.assigned_department)).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    # Department-scoped like every other staff by-id route. This used the public
+    # tracking-link rule, so a staffer in any department could publish or discard
+    # another department's withheld photo -- and the response handed them that
+    # report's full staff detail, reporter contact fields included.
+    sr = await scoped_request(
+        db, current_user, service_request_id=request_id,
+        options=(selectinload(ServiceRequest.assigned_department),),
     )
-    sr = result.scalar_one_or_none()
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
 

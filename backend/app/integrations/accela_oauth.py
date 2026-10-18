@@ -179,7 +179,9 @@ def verify_state(state: str, max_age: int = STATE_TTL_SECONDS) -> Optional[Dict[
         expected = _b64(hmac.new(_signing_key(), body.encode(), hashlib.sha256).digest())
     except Exception:
         return None
-    if not hmac.compare_digest(sig, expected):
+    # Bytes, not str: compare_digest raises TypeError on a str holding non-ASCII,
+    # which turned a junk state from an unauthenticated caller into a 500.
+    if not hmac.compare_digest(sig.encode("utf-8"), expected.encode("utf-8")):
         return None
     try:
         payload = json.loads(_unb64(body))
