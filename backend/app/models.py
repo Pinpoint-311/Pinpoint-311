@@ -1194,7 +1194,7 @@ class IntegrationDeadLetter(Base):
     id = Column(Integer, primary_key=True, index=True)
     integration_id = Column(Integer, ForeignKey("integration_configs.id", ondelete="CASCADE"),
                             nullable=False, index=True)
-    # push | push_status | push_comment
+    # push | push_status | push_comment | push_priority
     operation = Column(String(30), nullable=False)
     # The thing that failed to sync. A service request for push/push_status, a
     # comment for push_comment. Both cascade, so a deleted request takes its

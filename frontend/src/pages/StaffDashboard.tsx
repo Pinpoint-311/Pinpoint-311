@@ -3922,6 +3922,12 @@ export default function StaffDashboard() {
                                                                     icon: Bot,
                                                                     text: `AI Priority Accepted: ${entry.new_value || ''}`
                                                                 };
+                                                            } else if (entry.action === 'priority_changed') {
+                                                                actionConfig = {
+                                                                    color: 'bg-amber-500',
+                                                                    icon: SlidersHorizontal,
+                                                                    text: `Priority set to ${entry.new_value}${entry.old_value ? ` (was ${entry.old_value})` : ''}`
+                                                                };
                                                             } else {
                                                                 actionConfig = { color: 'bg-gray-500', text: entry.action };
                                                             }

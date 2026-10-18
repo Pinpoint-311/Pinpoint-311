@@ -46,13 +46,14 @@ export interface MappingSave {
     service_code_map_in?: Record<string, string>;
     field_map?: Record<string, string>;
     attribute_map?: Record<string, string>;
+    priority_map_out?: Record<string, string>;
     share_pii?: boolean;
     import_new_records?: boolean;
 }
 
 export interface BacklogItem {
     id: number;
-    operation: 'push' | 'push_status' | 'push_comment' | string;
+    operation: 'push' | 'push_status' | 'push_comment' | 'push_priority' | string;
     request_id: string | null;
     comment_id: number | null;
     attempts: number;

@@ -933,6 +933,10 @@ class MappingApproval(BaseModel):
     """
     status_map_out: Optional[Dict[str, str]] = None
     status_map_in: Optional[Dict[str, str]] = None
+    # Pinpoint priority band ("high" 8-10, "medium" 5-7, "low" 1-4) or exact
+    # score ("1".."10") -> the vendor's value. Accela needs it (agency-defined
+    # priorities); elsewhere it replaces sending the 1-10 score as-is.
+    priority_map_out: Optional[Dict[str, str]] = None
     service_code_map: Optional[Dict[str, str]] = None
     service_code_map_out: Optional[Dict[str, str]] = None
     service_code_map_in: Optional[Dict[str, str]] = None
@@ -1052,8 +1056,15 @@ async def approve_integration_mapping(
     code_in = _clean_mapping(data.service_code_map_in)
     field_map = _clean_mapping(data.field_map) if data.field_map is not None else None
     attribute_map = _clean_mapping(data.attribute_map)
+    priority_out = _clean_mapping(data.priority_map_out)
 
     problems = []
+    allowed_priority_keys = {"high", "medium", "low"} | {str(n) for n in range(1, 11)}
+    stray_priority = sorted(k for k in (priority_out or {}) if str(k).strip().lower() not in allowed_priority_keys)
+    if stray_priority:
+        problems.append(f"priority keys that are not High, Medium, Low or 1-10: {', '.join(stray_priority)}")
+    if priority_out:
+        priority_out = {str(k).strip().lower(): v for k, v in priority_out.items()}
     for label, mapping, known in (
         ("status", status_out, lookups.get("statuses") or []),
         ("service code", code_out, lookups.get("services") or []),
@@ -1084,7 +1095,8 @@ async def approve_integration_mapping(
                        ("status_map_in", status_in),
                        ("service_code_map_out", code_out),
                        ("service_code_map_in", code_in),
-                       ("attribute_map", attribute_map)):
+                       ("attribute_map", attribute_map),
+                       ("priority_map_out", priority_out)):
         if value is not None:
             config[key] = value
     if field_map is not None:

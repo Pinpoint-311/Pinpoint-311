@@ -40,6 +40,8 @@ const LAYER_FIELDS: { key: string; label: string; pii?: boolean }[] = [
     { key: 'address', label: 'Address' },
     { key: 'status', label: 'Status' },
     { key: 'requested_datetime', label: 'Date submitted' },
+    // No Esri template column; mapping one lets priority changes follow the report.
+    { key: 'priority', label: 'Priority' },
     { key: 'first_name', label: 'First name', pii: true },
     { key: 'last_name', label: 'Last name', pii: true },
     { key: 'email', label: 'Email', pii: true },
@@ -50,7 +52,7 @@ const LAYER_FIELDS: { key: string; label: string; pii?: boolean }[] = [
 const ARCGIS_DEFAULT_COLUMNS: Record<string, string> = {
     service_request_id: 'reqid', service_name: 'reqcategory', service_code: 'reqtype',
     description: 'details', address: 'address', status: 'status', requested_datetime: 'submitdt',
-    first_name: 'firstname', last_name: 'lastname', email: 'email', phone: 'phone',
+    first_name: 'firstname', last_name: 'lastname', email: 'email', phone: 'phone', priority: '',
 };
 
 const CATEGORY_TARGET: Record<string, string> = {
@@ -147,6 +149,13 @@ export function MappingPanel({ integration, platform, onSaved }: {
     const statusPush = platform.status_push ?? platform.capabilities.includes('push_status');
     const isArcgis = platform.platform === 'arcgis';
     const isOpen311 = platform.integration_mode === 'open311';
+    // Where a priority can go, and what it takes for a later change to follow.
+    // Open311 has no priority and no way to update a request, so no section.
+    const priorityNote: string | null = {
+        accela: 'Accela only accepts your agency’s own priority values. Until these are filled in, no priority is sent, on new reports or after staff change one.',
+        arcgis: 'Needs a Priority column under Layer columns. Blank sends the 1–10 score. Once mapped, a priority staff set or accept is updated on the layer too.',
+        generic_rest: 'Blank sends the 1–10 score. For a change staff make later to reach the vendor, set the update path in the connection settings.',
+    }[platform.platform as string] ?? null;
 
     const [lookups, setLookups] = useState<IntegrationLookups>(integration.lookups || {});
     const [fetchedAt, setFetchedAt] = useState<string | null>(integration.lookups_fetched_at || null);
@@ -156,6 +165,7 @@ export function MappingPanel({ integration, platform, onSaved }: {
     const [statusOut, setStatusOut] = useState<Record<string, string>>(asMap(config.status_map_out));
     const [statusIn, setStatusIn] = useState<Record<string, string>>(asMap(config.status_map_in));
     const [fieldMap, setFieldMap] = useState<Record<string, string>>(asMap(config.field_map));
+    const [priorityOut, setPriorityOut] = useState<Record<string, string>>(asMap(config.priority_map_out));
     const [sharePii, setSharePii] = useState(isOn(config.share_pii));
     const [importNew, setImportNew] = useState(isOn(config.import_new_records));
     const [newWord, setNewWord] = useState('');
@@ -219,6 +229,7 @@ export function MappingPanel({ integration, platform, onSaved }: {
             if (statusPush) body.status_map_out = statusOut;
             if (canPull) body.import_new_records = importNew;
             if (isArcgis) body.field_map = fieldMap;
+            if (priorityNote) body.priority_map_out = priorityOut;
             const updated = await integrationsApi.saveMapping<MappedIntegration>(integration.id, body);
             setMessage({ ok: true, text: 'Mapping saved. New reports use it right away.' });
             onSaved(updated);
@@ -383,7 +394,7 @@ export function MappingPanel({ integration, platform, onSaved }: {
                                         onChange={(e) => setFieldMap(prev => ({ ...prev, [f.key]: e.target.value }))}
                                     >
                                         <option value="">Don’t send</option>
-                                        {!fields.some(c => c.code === ARCGIS_DEFAULT_COLUMNS[f.key]) && !(f.key in fieldMap) && (
+                                        {ARCGIS_DEFAULT_COLUMNS[f.key] && !fields.some(c => c.code === ARCGIS_DEFAULT_COLUMNS[f.key]) && !(f.key in fieldMap) && (
                                             <option value={ARCGIS_DEFAULT_COLUMNS[f.key]}>{ARCGIS_DEFAULT_COLUMNS[f.key]} (not on this layer)</option>
                                         )}
                                         {fields.map(c => (
@@ -412,6 +423,34 @@ export function MappingPanel({ integration, platform, onSaved }: {
                         {!fields.length && (
                             <p className="text-white/50 text-[11px]">Refresh from {name} to pick from the layer’s columns.</p>
                         )}
+                    </Disclosure>
+                </div>
+            )}
+
+            {/* Priority values */}
+            {priorityNote && (
+                <div className={sectionCls}>
+                    <Disclosure id={`map-priority-${integration.id}`} title="Priority">
+                        <p className="text-white/60 text-xs">{priorityNote}</p>
+                        {([['high', 'High (8–10)'], ['medium', 'Medium (5–7)'], ['low', 'Low (1–4)']] as const).map(([band, label]) => (
+                            <div key={band} className="grid grid-cols-1 sm:grid-cols-2 gap-2 items-center">
+                                <label htmlFor={`map-priority-${integration.id}-${band}`} className="text-white/80 text-sm">{label}</label>
+                                <input
+                                    id={`map-priority-${integration.id}-${band}`}
+                                    className={inputCls}
+                                    placeholder={platform.platform === 'accela' ? 'Your agency’s value' : 'Send the score'}
+                                    value={priorityOut[band] ?? ''}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        setPriorityOut(prev => {
+                                            const next = { ...prev };
+                                            if (v.trim()) next[band] = v; else delete next[band];
+                                            return next;
+                                        });
+                                    }}
+                                />
+                            </div>
+                        ))}
                     </Disclosure>
                 </div>
             )}
@@ -458,6 +497,7 @@ const OPERATION_LABEL: Record<string, string> = {
     push: 'New report',
     push_status: 'Status update',
     push_comment: 'Comment',
+    push_priority: 'Priority update',
 };
 
 /**

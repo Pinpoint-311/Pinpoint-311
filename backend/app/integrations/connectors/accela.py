@@ -135,6 +135,18 @@ class AccelaConnector(BaseConnector):
     platform = "accela"
     capabilities = {"test", "push", "push_status", "pull", "comments", "documents", "assets", "work_orders"}
 
+    # A record's priority is one of the agency's own standard choices
+    # ("1 - Emergency", "High", ...). A 1-10 score Accela does not recognise is
+    # rejected or stored as noise, so nothing is sent until the town has said
+    # which of its values each Pinpoint band means (priority_map_out).
+    SEND_RAW_PRIORITY = False
+
+    def __init__(self, config, credentials):
+        super().__init__(config, credentials)
+        self.capabilities = set(type(self).capabilities)
+        if any(v not in (None, "") for v in (self.config.get("priority_map_out") or {}).values()):
+            self.capabilities.add("push_priority")
+
     # Accela status values are agency configuration. These are common words,
     # shown in the Mapping step as defaults to confirm, never assumed correct.
     DEFAULT_STATUS_MAP_OUT = {"open": "Open", "in_progress": "In Progress", "closed": "Closed"}
@@ -338,6 +350,9 @@ class AccelaConnector(BaseConnector):
         address = self._address_body(payload)
         if address:
             body["addresses"] = [address]
+        priority = self.map_priority_out(payload.get("priority"))
+        if priority is not None:
+            body["priority"] = {"value": str(priority), "text": str(priority)}
         if payload.get("email") or payload.get("first_name"):
             body["contacts"] = [{
                 "firstName": payload.get("first_name") or "",
@@ -409,6 +424,23 @@ class AccelaConnector(BaseConnector):
                 f"{self.api_base}/v4/records/{external_id}", json=body, headers=self._headers(token)
             )
             self._raise_for_status(resp, "Accela update record status")
+
+    async def push_priority(self, external_id: str, priority: Any) -> None:
+        # Same Update Record call as status (PUT /v4/records/{id}); `priority`
+        # is an id/value/text object like status, matched on `value`.
+        mapped = self.map_priority_out(priority)
+        if mapped is None:
+            raise ConnectorError(
+                "Accela: no agency priority value is mapped for this score. "
+                "Map High, Medium and Low under Mapping."
+            )
+        token = await self._get_token()
+        body = {"priority": {"value": str(mapped), "text": str(mapped)}}
+        async with self._client() as client:
+            resp = await client.put(
+                f"{self.api_base}/v4/records/{external_id}", json=body, headers=self._headers(token)
+            )
+            self._raise_for_status(resp, "Accela update record priority")
 
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
         """Every record changed since `since`, across as many pages as it takes.

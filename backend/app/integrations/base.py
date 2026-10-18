@@ -240,8 +240,12 @@ class BaseConnector:
 
     platform: str = "base"
     # What this connector supports: subset of
-    #   {"push", "push_status", "pull", "comments", "documents", "assets",
-    #    "work_orders", "lookups", "test"}
+    #   {"push", "push_status", "push_priority", "pull", "comments",
+    #    "documents", "assets", "work_orders", "lookups", "test"}
+    # "push_priority" means push_priority() can change the priority on a record
+    # that already exists. Claimed per configuration, not per platform: it
+    # needs to know where the vendor keeps priority (a mapped column, an update
+    # path, an agency's priority values).
     # "work_orders" means pull_updates / fetch_record populate the work-order
     # fields on ExternalRecord (assignment, schedule, resolution) and push
     # carries assignment/priority outbound.
@@ -280,6 +284,38 @@ class BaseConnector:
             return None
         from app.integrations.mapping import service_code_map_out
         return service_code_map_out(self.config).get(str(local_code))
+
+    # ---- Priority mapping -----------------------------------------------
+
+    #: What to send when the town has not mapped priorities: the 1-10 score
+    #: itself. Connectors whose vendor only accepts agency-defined values
+    #: (Accela) set this False and send nothing until a mapping exists.
+    SEND_RAW_PRIORITY = True
+
+    def map_priority_out(self, score: Any) -> Optional[Any]:
+        """The vendor's value for a Pinpoint priority (1-10), or None to omit it.
+
+        ``priority_map_out`` may key an exact score ("9") or a band ("high" for
+        8-10, "medium" for 5-7, "low" for 1-4 -- the staff dashboard's bands).
+        An exact score wins over its band.
+        """
+        if score is None:
+            return None
+        try:
+            number = float(score)
+        except (TypeError, ValueError):
+            return None
+        mapping = {str(k).strip().lower(): v for k, v in (self.config.get("priority_map_out") or {}).items()
+                   if v not in (None, "")}
+        if mapping:
+            exact = str(int(number)) if number == int(number) else str(number)
+            if exact in mapping:
+                return mapping[exact]
+            band = "high" if number >= 8 else "medium" if number >= 5 else "low"
+            return mapping.get(band)
+        if not self.SEND_RAW_PRIORITY:
+            return None
+        return int(number) if number == int(number) else number
 
     # ---- Status mapping -------------------------------------------------
 
@@ -326,6 +362,12 @@ class BaseConnector:
     async def push_status(self, external_id: str, status: str, notes: Optional[str] = None) -> None:
         """Propagate a local status change to the external record."""
         raise ConnectorError(f"{self.platform} connector does not support status updates")
+
+    async def push_priority(self, external_id: str, priority: Any) -> None:
+        """Change the priority on an existing external record (capability
+        "push_priority"). `priority` is the Pinpoint 1-10 score; the connector
+        maps it with map_priority_out."""
+        raise ConnectorError(f"{self.platform} connector does not support priority updates")
 
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
         """Fetch records changed on the platform since `since`."""

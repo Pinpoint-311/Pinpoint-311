@@ -5,6 +5,12 @@ Flow:
     to every enabled integration whose sync direction includes push.
   - push_status_to_integrations: fired after a status change; propagates the
     new status to every platform the request is linked to.
+  - push_priority_to_integrations: fired when a report's priority changes
+    (staff accept the AI's score or set their own); updates it on every linked
+    platform whose connection can take a priority change.
+  - sync_after_triage: fired when AI triage finishes. Sends the report to any
+    platform it has not reached yet -- so the first push carries the triaged
+    priority -- and updates the priority on those it already reached.
   - pull_integration_updates: Celery Beat job; polls pull-enabled platforms
     for changed records and mirrors status changes onto linked local requests.
 
@@ -20,7 +26,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from contextlib import asynccontextmanager
+
+from sqlalchemy import select, text, update
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -46,6 +54,12 @@ from app.services.enqueue import enqueue
 from app.tasks.service_requests import run_async
 
 logger = logging.getLogger(__name__)
+
+# How long a new report waits for AI triage before it is pushed anyway. Triage
+# normally finishes in seconds and sends it itself (sync_after_triage); this is
+# the ceiling a slow or failing AI provider can add to a report reaching the
+# town's system.
+TRIAGE_GRACE_SECONDS = 90
 
 def _comment_fp(content: str) -> str:
     """Stable content fingerprint used as a fallback echo-dedup marker for
@@ -229,7 +243,7 @@ async def record_unqueued_push(operation: str, *, request_id: Optional[int] = No
                     if _retired(integration) or sr.source == f"integration_{integration.platform}":
                         continue
                     targets.append((integration.id, sr.id, None))
-            elif operation in ("push_status", "push_comment"):
+            elif operation in ("push_status", "push_comment", "push_priority"):
                 subject = request_id
                 if operation == "push_comment":
                     comment = (await db.execute(
@@ -247,9 +261,13 @@ async def record_unqueued_push(operation: str, *, request_id: Optional[int] = No
                            IntegrationConfig.enabled == True)  # noqa: E712
                 )).all()
                 from app.integrations.registry import PLATFORM_CATALOG
-                needed = "push_status" if operation == "push_status" else "comments"
+                needed = {"push_status": "push_status", "push_priority": None}.get(operation, "comments")
                 for integration_id, platform in rows:
-                    if needed in PLATFORM_CATALOG.get(platform, {}).get("capabilities", []):
+                    # push_priority is claimed per connection (a mapped column,
+                    # an update path), not per platform, so the catalog cannot
+                    # say; the replay re-checks the real connector and skips
+                    # the ones that cannot take it.
+                    if needed is None or needed in PLATFORM_CATALOG.get(platform, {}).get("capabilities", []):
                         targets.append((integration_id, subject,
                                         comment_id if operation == "push_comment" else None))
             for integration_id, sr_id, c_id in targets:
@@ -830,12 +848,44 @@ async def _log(db, integration_id: int, operation: str, status: str, detail: str
 #     call, and only where a retry cannot duplicate a record;
 #   * the circuit breaker stops hammering a vendor that is genuinely down, and
 #     each loop records its own failure per integration and carries on.
+@asynccontextmanager
+async def _request_push_lock(request_id: int):
+    """Serialise create-pushes of one report across workers.
+
+    A report is pushed from two places now -- triage finishing, and the delayed
+    safety-net push queued at intake -- and the "already linked?" check alone
+    cannot stop two runs that start together from both filing it. A Postgres
+    session advisory lock keyed on the report makes the second run wait, then
+    find the link and skip. Held on its own session so the push's commits do not
+    release it; anything but Postgres (the test suite's SQLite) runs unlocked.
+    """
+    async with SessionLocal() as lock_session:
+        conn = await lock_session.connection()
+        locked = conn.dialect.name == "postgresql"
+        if locked:
+            await conn.execute(text("SELECT pg_advisory_lock(hashtext('pinpoint-integration-push'), :rid)"),
+                               {"rid": int(request_id)})
+        try:
+            yield
+        finally:
+            if locked:
+                await conn.execute(text("SELECT pg_advisory_unlock(hashtext('pinpoint-integration-push'), :rid)"),
+                                   {"rid": int(request_id)})
+
+
 @celery_app.task
 def push_request_to_integrations(request_id: int):
     """Push a newly created request to all enabled push integrations."""
+    run_async(_push_new_request(request_id))
+
+
+async def _push_new_request(request_id: int) -> set:
+    """Create the report on every push integration it is not linked to yet.
+    Returns the ids of the integrations it was newly linked to."""
     from app.integrations import build_connector_for
 
-    async def _push():
+    created: set = set()
+    async with _request_push_lock(request_id):
         async with SessionLocal() as db:
             sr = (await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -919,9 +969,16 @@ def push_request_to_integrations(request_id: int):
                     await _clear_dead_letter(db, integration.id, "push",
                                              service_request_id=sr.id)
                     logger.info(f"[Integrations] Pushed {sr.service_request_id} to {integration.platform} as {record.external_id}")
+                    created.add(integration.id)
                     # Attach embedded photos to the newly created external record
                     await _push_documents(db, connector, integration, link, sr)
                     await db.commit()
+                    # Triage may have finished while this push was in flight; if
+                    # the priority moved since the payload was built, follow up.
+                    await db.refresh(sr)
+                    if (effective_priority(sr) != payload.get("priority")
+                            and "push_priority" in connector.capabilities):
+                        await _send_priority(db, connector, integration, link, sr)
                 except Exception as e:
                     # Without this a DB-level failure leaves the session in
                     # PendingRollbackError, so `_log`'s own commit raises too and
@@ -937,7 +994,7 @@ def push_request_to_integrations(request_id: int):
                                               service_request_id=sr.id)
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
 
-    run_async(_push())
+    return created
 
 
 @celery_app.task  # not retrying -- see push_request_to_integrations
@@ -1016,6 +1073,131 @@ def push_status_to_integrations(request_id: int, notes: str = None):
             await db.commit()
 
     run_async(_push_status())
+
+
+async def _send_priority(db, connector, integration, link, sr) -> bool:
+    """Send the report's current priority to one linked platform. Never raises:
+    a failure is logged and kept in Failed syncs to be retried, the same as a
+    status the vendor never received."""
+    # Read out first: after a rollback these instances are expired, and reading
+    # them then would need a lazy load the async engine refuses.
+    integration_id, platform = integration.id, integration.platform
+    sr_id, sr_code = sr.id, sr.service_request_id
+    external_id = link.external_id
+    score = effective_priority(sr)
+    if str(external_id).startswith(PENDING_ID_PREFIX):
+        # No real record id to address yet. Only Open311-style platforms issue
+        # placeholders, and those cannot take a priority change anyway.
+        return False
+    try:
+        await guard(
+            health_key(platform),
+            lambda: connector.push_priority(external_id, score),
+            db=db,
+            provider=platform,
+        )
+        await _log(db, integration_id, "push_priority", "success",
+                   f"{sr_code} -> priority {score:g}", 1)
+        await _log_connector_warnings(db, integration_id, "push_priority", connector, sr_code)
+        await _clear_dead_letter(db, integration_id, "push_priority", service_request_id=sr_id)
+        return True
+    except Exception as e:
+        await db.rollback()
+        await _log(db, integration_id, "push_priority", "error", f"{sr_code}: {_safe_error(e)}")
+        # A work order the crew sorts by priority, still showing the score from
+        # before staff changed it, is the disagreement this exists to prevent.
+        await _record_dead_letter(db, integration_id, "push_priority", e, service_request_id=sr_id)
+        logger.warning(f"[Integrations] Priority push to {platform} failed: {e}")
+        return False
+
+
+async def _push_priority(request_id: int, only_integrations: Optional[set] = None) -> int:
+    """Update the priority on every linked platform that can take it.
+    Returns how many updates landed."""
+    from app.integrations import build_connector_for
+
+    sent = 0
+    async with SessionLocal() as db:
+        sr = (await db.execute(
+            select(ServiceRequest).where(ServiceRequest.id == request_id)
+        )).scalar_one_or_none()
+        if not sr:
+            return 0
+        links = (await db.execute(
+            select(IntegrationLink, IntegrationConfig)
+            .join(IntegrationConfig, IntegrationLink.integration_id == IntegrationConfig.id)
+            .where(
+                IntegrationLink.service_request_id == sr.id,
+                IntegrationConfig.enabled == True,  # noqa: E712
+            )
+        )).all()
+        for link, integration in links:
+            if _retired(integration):
+                continue
+            if only_integrations is not None and integration.id not in only_integrations:
+                continue
+            try:
+                connector = await build_connector_for(integration)
+            except Exception as e:
+                await _log(db, integration.id, "push_priority", "error",
+                           f"{sr.service_request_id}: {_safe_error(e)}")
+                continue
+            if "push_priority" not in connector.capabilities:
+                # Nothing to send here. Clear a backlog row recorded while the
+                # worker was unreachable (it cannot tell which connections take
+                # priority), or it would wait in Failed syncs forever.
+                await _clear_dead_letter(db, integration.id, "push_priority", service_request_id=sr.id)
+                continue
+            if await _send_priority(db, connector, integration, link, sr):
+                sent += 1
+            # _send_priority may have rolled back; reload for the next link.
+            await db.refresh(sr)
+    return sent
+
+
+@celery_app.task  # not retrying -- failures go to Failed syncs, like push_status
+def push_priority_to_integrations(request_id: int):
+    """Propagate a priority change (staff accepted the AI's score, or set
+    their own) to every linked platform whose connection supports it."""
+    return run_async(_push_priority(request_id))
+
+
+@celery_app.task
+def sync_after_triage(request_id: int):
+    """AI triage has finished: get the triaged priority to the town's systems.
+
+    Reports not yet sent anywhere are sent now, carrying the triaged priority.
+    The intake path also queues a delayed push as a safety net for a slow or
+    failing AI provider; the per-report lock and the already-linked check make
+    whichever runs second a no-op. Platforms that got the report before triage
+    finished get a priority update instead -- but only when the AI's score is
+    what the report's priority now is (no staff override, which would already
+    have been sent when staff set it).
+    """
+    async def _sync():
+        async with SessionLocal() as db:
+            already = set((await db.execute(
+                select(IntegrationLink.integration_id)
+                .where(IntegrationLink.service_request_id == request_id)
+            )).scalars().all())
+            sr = (await db.execute(
+                select(ServiceRequest).where(ServiceRequest.id == request_id)
+            )).scalar_one_or_none()
+            if not sr:
+                return {"created": 0, "updated": 0}
+            if (sr.source or "").startswith("integration_"):
+                # Imported from a vendor: it was never pushed onward before,
+                # and the vendor's own priority is not ours to overwrite with
+                # an AI suggestion. Explicit staff changes still sync.
+                return {"created": 0, "updated": 0}
+            ai = sr.ai_analysis if isinstance(sr.ai_analysis, dict) else {}
+            triaged = (sr.manual_priority_score is None
+                       and isinstance(ai.get("priority_score"), (int, float)))
+        created = await _push_new_request(request_id)
+        updated = await _push_priority(request_id, only_integrations=already) if (triaged and already) else 0
+        return {"created": len(created), "updated": updated}
+
+    return run_async(_sync())
 
 
 @celery_app.task
@@ -1445,6 +1627,8 @@ def retry_integration_dead_letters(limit: int = 50):
                 push_request_to_integrations(service_request_id)
             elif operation == "push_status" and service_request_id:
                 push_status_to_integrations(service_request_id)
+            elif operation == "push_priority" and service_request_id:
+                push_priority_to_integrations(service_request_id)
             elif operation == "push_comment" and comment_id:
                 push_comment_to_integrations(comment_id)
             else:

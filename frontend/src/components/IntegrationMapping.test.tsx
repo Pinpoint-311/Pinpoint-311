@@ -106,6 +106,22 @@ afterEach(() => {
 });
 
 describe('MappingPanel', () => {
+    it('asks Accela for its own priority values and saves them; Open311 has no priority section', async () => {
+        const ACCELA: any = { ...ARCGIS_PLATFORM, platform: 'accela', name: 'Accela' };
+        saveMapping.mockResolvedValue(integration({ platform: 'accela' }));
+        await mount(<MappingPanel integration={integration({ platform: 'accela' })} platform={ACCELA} onSaved={() => { }} />);
+        await act(async () => { button('Priority').click(); });
+        expect(container.textContent).toContain('Accela only accepts your agency’s own priority values');
+        await act(async () => { typeInto(container.querySelector('#map-priority-7-high') as HTMLInputElement, '1 - Emergency'); });
+        await act(async () => { button('Save mapping').click(); });
+        expect(saveMapping.mock.calls[0][1].priority_map_out).toEqual({ high: '1 - Emergency' });
+        act(() => root.unmount());
+        container.remove();
+
+        await mount(<MappingPanel integration={integration({ platform: 'tyler' })} platform={TYLER_PLATFORM} onSaved={() => { }} />);
+        expect(container.querySelector('[id^="map-priority-"]')).toBeNull();
+    });
+
     it('lists each active category with a picker over the vendor values', async () => {
         await mount(<MappingPanel integration={integration()} platform={ARCGIS_PLATFORM} onSaved={() => { }} />);
         const pothole = container.querySelector('#map-cat-7-PTH') as HTMLInputElement;

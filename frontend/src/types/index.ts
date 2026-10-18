@@ -296,7 +296,7 @@ export interface RequestComment {
 export interface AuditLogEntry {
     id: number;
     service_request_id: number;
-    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added' | 'legal_hold' | 'public_archive' | 'deleted' | 'restored' | 'priority_accepted';
+    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added' | 'legal_hold' | 'public_archive' | 'deleted' | 'restored' | 'priority_accepted' | 'priority_changed';
     old_value: string | null;
     new_value: string | null;
     actor_type: 'resident' | 'staff' | 'admin';

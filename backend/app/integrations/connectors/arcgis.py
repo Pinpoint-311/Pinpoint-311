@@ -135,6 +135,15 @@ class ArcGISConnector(BaseConnector):
         super().__init__(config, credentials)
         self._token: Optional[str] = None
         self._metadata: Optional[Dict[str, Any]] = None
+        # Priority can follow the report only when the layer has a column for
+        # it, which Esri's templates do not; the town names it in field_map.
+        self.capabilities = set(type(self).capabilities)
+        if self._priority_column():
+            self.capabilities.add("push_priority")
+
+    def _priority_column(self) -> Optional[str]:
+        column = (self.config.get("field_map") or {}).get("priority")
+        return str(column) if column else None
 
     # ---- URLs -----------------------------------------------------------
 
@@ -407,6 +416,13 @@ class ArcGISConnector(BaseConnector):
             if ours == "status":
                 value = self.map_status_out(str(value))
                 value = self._in_domain(metadata, str(theirs), value, "status")
+                if value is None:
+                    continue
+            elif ours == "priority":
+                value = self.map_priority_out(value)
+                if value is None:
+                    continue
+                value = self._in_domain(metadata, str(theirs), value, "priority")
                 if value is None:
                     continue
             elif ours == "service_code":
@@ -683,6 +699,48 @@ class ArcGISConnector(BaseConnector):
             error = results[0].get("error") or {}
             raise ConnectorError(
                 f"ArcGIS rejected the status update: {error.get('description') or error.get('code') or 'unknown reason'}"
+            )
+
+    async def push_priority(self, external_id: str, priority: Any) -> None:
+        column = self._priority_column()
+        if not column:
+            raise ConnectorError("ArcGIS: no layer column is mapped for priority. Map it under Mapping.")
+        value = self.map_priority_out(priority)
+        if value is None:
+            raise ConnectorError("ArcGIS: this priority has no mapped value. Fix the priority mapping under Mapping.")
+        metadata = await self._layer_metadata()
+        known = {str(f.get("name")) for f in (metadata.get("fields") or []) if isinstance(f, dict)}
+        if known and column not in known:
+            raise ConnectorError(f"ArcGIS: the layer has no column named \"{column}\". Fix the field mapping under Mapping.")
+        domain = self._coded_domain(metadata, column)
+        if domain is not None:
+            if str(value) not in domain:
+                # Same reasoning as push_status: an update that exists only to
+                # set this value must not write one no map or filter can show.
+                raise ConnectorError(
+                    f"ArcGIS: \"{value}\" is not one of the values \"{column}\" accepts "
+                    f"({', '.join(sorted(domain)[:12])}). Fix the priority mapping under Mapping."
+                )
+            value = domain[str(value)]
+        token = await self._get_token()
+        oid_field = await self._object_id_field()
+        object_id = await self._resolve_object_id(external_id)
+        attributes = {oid_field: object_id, column: value}
+        async with self._client() as client:
+            resp = await client.post(
+                f"{self.layer_url}/applyEdits",
+                data={"f": "json", "token": token, "rollbackOnFailure": "true",
+                      "updates": json.dumps([{"attributes": attributes}])},
+            )
+            self._raise_for_status(resp, "ArcGIS applyEdits (priority)")
+            body = self._arcgis_json(resp, "ArcGIS applyEdits (priority)")
+        results = body.get("updateResults") or []
+        if not results:
+            raise ConnectorError("ArcGIS applyEdits returned no updateResults")
+        if not results[0].get("success"):
+            error = results[0].get("error") or {}
+            raise ConnectorError(
+                f"ArcGIS rejected the priority update: {error.get('description') or error.get('code') or 'unknown reason'}"
             )
 
     async def _resolve_object_id(self, external_id: str) -> Any:

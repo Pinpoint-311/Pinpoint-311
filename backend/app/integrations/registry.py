@@ -150,6 +150,8 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "get_path", "label": "Get-by-id path", "placeholder": "/requests/{id}", "required": False},
             {"key": "list_path", "label": "List / poll-updates path", "placeholder": "/requests", "required": False},
             {"key": "status_path", "label": "Status-update path", "placeholder": "/requests/{id}/status", "required": False},
+            {"key": "update_path", "label": "Record-update path, for priority changes (leave blank if the vendor has none)", "placeholder": "/requests/{id}", "required": False},
+            {"key": "update_method", "label": "Record-update method — PATCH, PUT or POST", "placeholder": "PATCH", "required": False},
             {"key": "id_field", "label": "Response field holding the record id", "placeholder": "id", "required": False},
             {"key": "status_field", "label": "Response field holding status", "placeholder": "status", "required": False},
             {"key": "updated_field", "label": "Response field holding the updated timestamp", "placeholder": "updated_at", "required": False},

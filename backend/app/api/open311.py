@@ -42,7 +42,7 @@ def generate_request_id() -> str:
 
 
 from app.services import road_blocking
-from app.services.enqueue import enqueue
+from app.services.enqueue import enqueue, enqueue_later
 from app.services.public_visibility import publicly_listed_conditions
 from app.core.config import get_settings
 import redis.asyncio as redis
@@ -1291,9 +1291,13 @@ async def _finalize_new_request(
     # AI triage / priority — same as a resident submission
     enqueue(analyze_request, service_request.id)
 
-    # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.)
-    from app.tasks.integrations import push_request_to_integrations
-    enqueue(push_request_to_integrations, service_request.id)
+    # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.).
+    # Triage finishing sends it (sync_after_triage), so the first push carries
+    # the triaged priority. This delayed push is the safety net for a slow or
+    # failing AI provider: a report reaches the town's system within
+    # TRIAGE_GRACE_SECONDS regardless. Whichever runs second finds it linked.
+    from app.tasks.integrations import push_request_to_integrations, TRIAGE_GRACE_SECONDS
+    enqueue_later(push_request_to_integrations, TRIAGE_GRACE_SECONDS, service_request.id)
 
     # Send branded confirmation only when we have a real resident email
     if notify_resident:
@@ -1473,6 +1477,9 @@ async def update_request_status(
     old_assigned_to = request.assigned_to
     old_department_name = request.assigned_department.name if request.assigned_department else None
     old_legal_hold = bool(request.legal_hold)
+    old_manual_priority = getattr(request, "manual_priority_score", None)
+    from app.services.priority import effective_priority
+    old_priority = effective_priority(request)
 
     # The legal hold this endpoint sets is `legal_hold`, which retention reads.
     # `flagged` is written alongside it only so the existing admin control --
@@ -1587,8 +1594,25 @@ async def update_request_status(
             actor_name=current_user.username
         )
         db.add(audit_entry)
-    
+
+    # Priority set by staff. It changes what crews and connected systems sort
+    # by, so it is recorded like any other assignment.
+    priority_changed = effective_priority(request) != old_priority
+    if "manual_priority_score" in update_dict and request.manual_priority_score != old_manual_priority:
+        db.add(RequestAuditLog(
+            service_request_id=request.id,
+            action="priority_changed",
+            old_value=f"{old_priority:g}",
+            new_value=f"{effective_priority(request):g}",
+            actor_type="staff",
+            actor_name=current_user.username,
+        ))
+
     await db.commit()
+
+    if priority_changed:
+        from app.tasks.integrations import push_priority_to_integrations
+        enqueue(push_priority_to_integrations, request.id)
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
@@ -2117,6 +2141,10 @@ async def accept_ai_priority(
     if ai_priority is None:
         raise HTTPException(status_code=400, detail="No AI priority score available")
     
+    # Read before it is overwritten: the audit entry recorded this after the
+    # assignment, so "old" always equalled "new".
+    previous = request.manual_priority_score
+
     # Set the manual priority score to the AI suggestion
     request.manual_priority_score = float(ai_priority)
     request.updated_datetime = datetime.now(timezone.utc)
@@ -2127,13 +2155,18 @@ async def accept_ai_priority(
         action="priority_accepted",
         actor_type="staff",
         actor_name=current_user.username,
-        old_value=str(request.manual_priority_score) if request.manual_priority_score else None,
+        old_value=f"{previous:g}" if previous is not None else None,
         new_value=str(ai_priority)
     )
     db.add(audit_entry)
     
     await db.commit()
     await db.refresh(request)
+
+    # Accepting confirms the score; connected systems that got the report
+    # before (or without) triage are brought into line.
+    from app.tasks.integrations import push_priority_to_integrations
+    enqueue(push_priority_to_integrations, request.id)
     
     return {"message": "AI priority accepted", "priority_score": ai_priority}
 

@@ -377,6 +377,12 @@ def analyze_request(self, request_id: int):
     try:
         result = run_async(_analyze())
         logger.info(f"[AI Analysis] Task completed: {result}")
+        if isinstance(result, dict) and result.get("status") == "success":
+            # Send the report to the town's systems now that it carries the
+            # triaged priority (and update ones it already reached).
+            from app.services.enqueue import enqueue
+            from app.tasks.integrations import sync_after_triage
+            enqueue(sync_after_triage, request_id)
         return result
     except Exception as exc:
         logger.error(f"[AI Analysis] Task failed with error: {exc}", exc_info=True)
