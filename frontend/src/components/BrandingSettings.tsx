@@ -278,13 +278,13 @@ export function BrandingSettings({ form, setForm, onSave, isLoading, setIsLoadin
             const result = await api.configureDomain(domain);
             if (result.status === 'success') {
                 alert(
-                    `✅ ${result.message}\n\n` +
+                    `${result.message}\n\n` +
                     `Your site will be available at:\n${result.url}\n\n` +
                     `HTTPS certificate is being automatically provisioned by Caddy.`
                 );
             } else if (result.status === 'partial') {
                 alert(
-                    `⚠️ ${result.message}\n\n` +
+                    `${result.message}\n\n` +
                     `Next step: ${result.next_step || 'Restart Caddy container'}\n\n` +
                     `Run on server:\nssh ubuntu@132.226.32.116\ncd ~/WWF-Open-Source-311-Template\ndocker-compose restart caddy`
                 );

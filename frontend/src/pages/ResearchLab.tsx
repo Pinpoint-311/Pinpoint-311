@@ -29,6 +29,7 @@ import {
     Sparkles,
     Send,
     X,
+    AlertTriangle,
 } from 'lucide-react';
 import { CollapsibleSection } from '../components/ui';
 import { CapabilityTile, StatusPill, Action } from '../components/capabilityUI';
@@ -125,7 +126,7 @@ export const ResearchLab: React.FC = () => {
 
     // AI Chat state
     const [showChat, setShowChat] = useState(false);
-    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; error?: boolean }[]>([
         { role: 'assistant', content: 'I\'m the Research Data Assistant. Ask about data fields, statistical analyses, methodology, or code snippets.' }
     ]);
     const [chatInput, setChatInput] = useState('');
@@ -148,7 +149,7 @@ export const ResearchLab: React.FC = () => {
             const result = await api.researchChat(msg, newMessages.slice(0, -1));
             setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
         } catch (err: any) {
-            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message || "Couldn't get a response. Try again."}` }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }]);
         } finally {
             setChatLoading(false);
         }
@@ -939,7 +940,7 @@ export const ResearchLab: React.FC = () => {
                                 ].map(q => (
                                     <button
                                         key={q}
-                                        onClick={() => { setChatInput(q); setTimeout(() => { setChatMessages(prev => [...prev, { role: 'user', content: q }]); setChatLoading(true); api.researchChat(q, chatMessages).then(r => setChatMessages(p => [...p, { role: 'assistant', content: r.response }])).catch(err => setChatMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + (err.message || 'Error') }])).finally(() => setChatLoading(false)); }, 0); }}
+                                        onClick={() => { setChatInput(q); setTimeout(() => { setChatMessages(prev => [...prev, { role: 'user', content: q }]); setChatLoading(true); api.researchChat(q, chatMessages).then(r => setChatMessages(p => [...p, { role: 'assistant', content: r.response }])).catch(err => setChatMessages(p => [...p, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }])).finally(() => setChatLoading(false)); }, 0); }}
                                         className="px-3 py-1.5 rounded-2xl bg-primary-500/10 border border-primary-400/25 text-primary-200 text-xs font-medium hover:bg-primary-500/20 transition-colors"
                                     >
                                         {q}
@@ -957,6 +958,12 @@ export const ResearchLab: React.FC = () => {
                                             ? 'bg-primary-500/20 border border-primary-400/25 text-primary-100 rounded-br-md'
                                             : 'bg-white/5 border border-white/10 text-white/80 rounded-bl-md'
                                     }`}>
+                                        {msg.error ? (
+                                            <span className="flex items-start gap-2 text-red-200">
+                                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" aria-hidden="true" />
+                                                <span>{msg.content}</span>
+                                            </span>
+                                        ) : (
                                         <div className="whitespace-pre-wrap">
                                             {msg.content.split(/(```\w*\n?[\s\S]*?```)/g).map((segment, si) => {
                                                 // Code blocks
@@ -1041,6 +1048,7 @@ export const ResearchLab: React.FC = () => {
                                                 });
                                             })}
                                         </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}

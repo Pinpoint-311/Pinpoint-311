@@ -391,7 +391,7 @@ export const useConfirmDeploy = () => {
 
     return useCallback((version: string, hasWarnings: boolean = false) => {
         return confirm({
-            title: '🚀 Deploy Version',
+            title: 'Deploy Version',
             message: (
                 <div className="space-y-3">
                     <p>This will perform a <strong className="text-violet-400">full deployment</strong>:</p>
@@ -408,8 +408,8 @@ export const useConfirmDeploy = () => {
                             <span className="text-sm">Some security checks did not pass</span>
                         </div>
                     )}
-                    <p className="text-emerald-400 text-sm">
-                        ✓ Automatic rollback on failure
+                    <p className="flex items-center gap-1.5 text-emerald-400 text-sm">
+                        <CheckCircle2 size={16} aria-hidden="true" /> Automatic rollback on failure
                     </p>
                 </div>
             ),

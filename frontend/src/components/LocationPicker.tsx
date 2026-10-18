@@ -796,7 +796,7 @@ export default function LocationPicker({
                     role="alert"
                     className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30"
                 >
-                    <span className="text-red-400" aria-hidden="true">⚠️</span>
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" aria-hidden="true" />
                     <span className="text-red-300">
                         This location is outside the municipal boundary. Choose a location within the municipality.
                     </span>
@@ -806,7 +806,7 @@ export default function LocationPicker({
             {/* Instructions or Selected location info - shown BELOW the map */}
             {!value?.lat && !value?.lng && !isLoading && !mapUnavailable ? (
                 <div className="flex items-center justify-center gap-2 text-sm bg-white/5 rounded-xl px-4 py-3 border border-white/10">
-                    <span className="text-primary-400" aria-hidden="true">📍</span>
+                    <MapPin className="w-4 h-4 text-primary-400 shrink-0" aria-hidden="true" />
                     <span className="text-white/70">Tap the map to select a location, or search above</span>
                 </div>
             ) : value?.lat && value?.lng ? (
@@ -818,8 +818,8 @@ export default function LocationPicker({
                         </span>
                     </div>
                     <span className="hidden sm:block text-white/20">•</span>
-                    <span className="text-primary-400 text-xs sm:text-sm font-medium">
-                        <span aria-hidden="true">📍</span> Drag the pin to fine-tune
+                    <span className="inline-flex items-center gap-1 text-primary-400 text-xs sm:text-sm font-medium">
+                        <Crosshair className="w-3.5 h-3.5" aria-hidden="true" /> Drag the pin to fine-tune
                     </span>
                 </div>
             ) : null}

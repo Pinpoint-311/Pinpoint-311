@@ -193,7 +193,7 @@ export default function RequestDetailMap({
                 popup.setContent(popupRoot('padding: 12px;', [
                     el('h4', {
                         style: 'margin: 0 0 8px 0; font-size: 14px; font-weight: 600; color: #1f2937;',
-                        text: '📍 Request Location',
+                        text: 'Request Location',
                     }),
                     el('p', {
                         style: 'margin: 0; font-size: 12px; color: #6b7280;',

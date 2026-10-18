@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Shield, LogIn } from 'lucide-react';
+import { AlertCircle, Shield, LogIn, Sparkles } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -149,7 +149,7 @@ export default function Login() {
                         {authStatus && !authStatus.auth0_configured ? (
                             <div className="space-y-4">
                                 <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-5 text-center">
-                                    <div className="text-2xl mb-2">✦</div>
+                                    <Sparkles className="w-6 h-6 mx-auto mb-2 text-primary-300" aria-hidden="true" />
                                     <p className="text-primary-300 font-semibold text-lg">Welcome to Pinpoint 311</p>
                                     <p className="text-white/50 text-sm mt-2">
                                         Your system is ready for initial setup. Enter the Admin Console to configure your municipality, maps, AI, and authentication.

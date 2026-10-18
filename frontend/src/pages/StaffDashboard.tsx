@@ -49,6 +49,12 @@ import {
     Lock,
     Globe,
     SlidersHorizontal,
+    Target,
+    Building2,
+    Scale,
+    RotateCcw,
+    Bot,
+    Eye,
 } from 'lucide-react';
 import { CommentCard, CommentEmptyState } from '../components/commentUI';
 import { Button, Card, Modal, Textarea, StatusBadge, Badge } from '../components/ui';
@@ -309,7 +315,7 @@ export default function StaffDashboard() {
 
     // AI Analytics Chat state
     const [chatOpen, setChatOpen] = useState(false);
-    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; error?: boolean }[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [chatLoading, setChatLoading] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
@@ -334,7 +340,7 @@ export default function StaffDashboard() {
             const result = await api.analyticsChat(msg, newMessages.slice(0, -1));
             setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
         } catch (err: any) {
-            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message || "Couldn't get a response. Try again."}` }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }]);
         } finally {
             setChatLoading(false);
         }
@@ -2101,7 +2107,7 @@ export default function StaffDashboard() {
                                 {/* Header */}
                                 <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                                     <h3 className="text-[0.92rem] font-bold flex items-center gap-2">
-                                        <span className="text-white">✦</span>
+                                        <Sparkles className="w-4 h-4 text-white" aria-hidden="true" />
                                         <span style={{ background: 'linear-gradient(135deg, #a5b4fc, #22d3a5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Analytics Advisor</span>
                                     </h3>
                                     <div className="flex items-center gap-1.5">
@@ -2138,7 +2144,7 @@ export default function StaffDashboard() {
                                             className="flex items-center justify-center transition-colors"
                                             style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}
                                         >
-                                            ✕
+                                            <X className="w-4 h-4" aria-hidden="true" />
                                         </button>
                                     </div>
                                 </div>
@@ -2183,7 +2189,12 @@ export default function StaffDashboard() {
                                                 }),
                                             }}
                                         >
-                                            {msg.role === 'assistant' ? (
+                                            {msg.role === 'assistant' && msg.error ? (
+                                                <span className="flex items-start gap-2 text-red-200">
+                                                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" aria-hidden="true" />
+                                                    <span>{msg.content}</span>
+                                                </span>
+                                            ) : msg.role === 'assistant' ? (
                                                 <div
                                                     dangerouslySetInnerHTML={{
                                                         __html: (() => {
@@ -2552,9 +2563,9 @@ export default function StaffDashboard() {
                                                 className="glass-input text-sm py-2"
                                             >
                                                 <option value="all">All Priorities</option>
-                                                <option value="high">🔴 {bandLabel('high')}</option>
-                                                <option value="medium">🟡 {bandLabel('medium')}</option>
-                                                <option value="low">🟢 {bandLabel('low')}</option>
+                                                <option value="high">{bandLabel('high')}</option>
+                                                <option value="medium">{bandLabel('medium')}</option>
+                                                <option value="low">{bandLabel('low')}</option>
                                             </select>
                                         </div>
 
@@ -2662,12 +2673,12 @@ export default function StaffDashboard() {
                                                 </div>
                                                 {/* Priority indicator */}
                                                 {request.assigned_to === user?.username ? (
-                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-400">
-                                                        🎯 Mine
+                                                    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-400">
+                                                        <Target className="w-3 h-3" aria-hidden="true" /> Mine
                                                     </span>
                                                 ) : request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id) && !request.assigned_to ? (
-                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
-                                                        🏢 Dept
+                                                    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
+                                                        <Building2 className="w-3 h-3" aria-hidden="true" /> Dept
                                                     </span>
                                                 ) : null}
                                             </div>
@@ -3037,7 +3048,7 @@ export default function StaffDashboard() {
                                             >
                                                 <FlagTriangleRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
                                                 <span className="hidden sm:inline">{selectedRequest.legal_hold === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
-                                                <span className="sm:hidden">{selectedRequest.legal_hold === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
+                                                <span className="sm:hidden inline-flex items-center gap-1">Legal Hold{selectedRequest.legal_hold === true && <Check className="w-3.5 h-3.5" aria-hidden="true" />}</span>
                                             </button>
                                         )}
 
@@ -3100,7 +3111,7 @@ export default function StaffDashboard() {
                                             <span className="hidden sm:inline">{selectedRequest.public_archived === true
                                                 ? 'Archived from Public View (Click to Restore)'
                                                 : 'Archive from Public View'}</span>
-                                            <span className="sm:hidden">{selectedRequest.public_archived === true ? 'Archived \u2713' : 'Archive'}</span>
+                                            <span className="sm:hidden inline-flex items-center gap-1">{selectedRequest.public_archived === true ? <>Archived<Check className="w-3.5 h-3.5" aria-hidden="true" /></> : 'Archive'}</span>
                                         </button>
 
                                         {selectedRequest.public_archived === true && (
@@ -3291,8 +3302,8 @@ export default function StaffDashboard() {
                                                             {/* Translation block for non-English submissions */}
                                                             {ai?.translation && ai.translation.detected_language && ai.translation.detected_language !== 'English' && ai.translation.english_translation && (
                                                                 <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                                                                    <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
-                                                                        🌐 Translation ({ai.translation.detected_language})
+                                                                    <p className="flex items-center gap-1.5 text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
+                                                                        <Globe className="w-3.5 h-3.5" aria-hidden="true" /> Translation ({ai.translation.detected_language})
                                                                     </p>
                                                                     {/* WCAG 3.1.2: without `lang` the browser
                                                                         and the screen reader both treat this as
@@ -3699,7 +3710,7 @@ export default function StaffDashboard() {
                                             {/* Completion info */}
                                             {selectedRequest.status === 'closed' && (selectedRequest.completion_message || selectedRequest.completion_photo_url) && (
                                                 <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 mb-4">
-                                                    <p className="text-green-400 font-medium text-sm mb-1">✓ {selectedRequest.closed_substatus === 'resolved' ? 'Resolved' : selectedRequest.closed_substatus === 'no_action' ? 'No Action Needed' : 'Referred'}</p>
+                                                    <p className="flex items-center gap-1.5 text-green-400 font-medium text-sm mb-1"><CheckCircle className="w-4 h-4" aria-hidden="true" />{selectedRequest.closed_substatus === 'resolved' ? 'Resolved' : selectedRequest.closed_substatus === 'no_action' ? 'No Action Needed' : 'Referred'}</p>
                                                     {selectedRequest.completion_message && (
                                                         <p className="text-white/70 text-sm mb-2">{selectedRequest.completion_message}</p>
                                                     )}
@@ -3845,7 +3856,7 @@ export default function StaffDashboard() {
 
                                                         return timelineEntries.map((entry, idx) => {
                                                             // Determine color and text based on action - simple circles, no emojis
-                                                            let actionConfig: { color: string; text: string };
+                                                            let actionConfig: { color: string; text: string; icon?: typeof Check };
 
                                                             if (entry.action === 'submitted') {
                                                                 actionConfig = { color: 'bg-emerald-500', text: 'Request submitted' };
@@ -3880,31 +3891,36 @@ export default function StaffDashboard() {
                                                                 const isArchived = entry.new_value === 'archived';
                                                                 actionConfig = {
                                                                     color: isArchived ? 'bg-slate-500' : 'bg-emerald-500',
+                                                                    icon: isArchived ? EyeOff : Eye,
                                                                     text: isArchived
-                                                                        ? '\ud83d\udc41\ufe0f Archived from public view'
-                                                                        : '\ud83d\udc41\ufe0f Restored to public view'
+                                                                        ? 'Archived from public view'
+                                                                        : 'Restored to public view'
                                                                 };
                                                             } else if (entry.action === 'legal_hold') {
                                                                 // Show if legal hold was enabled or removed
                                                                 const isEnabled = entry.new_value === 'enabled';
                                                                 actionConfig = {
                                                                     color: isEnabled ? 'bg-amber-500' : 'bg-gray-500',
-                                                                    text: isEnabled ? '⚖️ Legal Hold Enabled' : '⚖️ Legal Hold Removed'
+                                                                    icon: Scale,
+                                                                    text: isEnabled ? 'Legal Hold Enabled' : 'Legal Hold Removed'
                                                                 };
                                                             } else if (entry.action === 'deleted') {
                                                                 actionConfig = {
                                                                     color: 'bg-red-500',
-                                                                    text: `🗑️ Soft Deleted: ${entry.new_value || 'No reason given'}`
+                                                                    icon: Trash2,
+                                                                    text: `Soft Deleted: ${entry.new_value || 'No reason given'}`
                                                                 };
                                                             } else if (entry.action === 'restored') {
                                                                 actionConfig = {
                                                                     color: 'bg-green-500',
-                                                                    text: '♻️ Request Restored'
+                                                                    icon: RotateCcw,
+                                                                    text: 'Request Restored'
                                                                 };
                                                             } else if (entry.action === 'priority_accepted') {
                                                                 actionConfig = {
                                                                     color: 'bg-emerald-500',
-                                                                    text: `🤖 AI Priority Accepted: ${entry.new_value || ''}`
+                                                                    icon: Bot,
+                                                                    text: `AI Priority Accepted: ${entry.new_value || ''}`
                                                                 };
                                                             } else {
                                                                 actionConfig = { color: 'bg-gray-500', text: entry.action };
@@ -3920,7 +3936,10 @@ export default function StaffDashboard() {
                                                                     {/* Content */}
                                                                     <div className="flex-1 min-w-0 -mt-0.5">
                                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                                            <span className="text-white/90 text-sm font-medium">{actionConfig.text}</span>
+                                                                            <span className="inline-flex items-center gap-1.5 text-white/90 text-sm font-medium">
+                                                                                {actionConfig.icon && <actionConfig.icon className="w-3.5 h-3.5 text-white/60 shrink-0" aria-hidden="true" />}
+                                                                                {actionConfig.text}
+                                                                            </span>
                                                                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
                                                                                 {entry.actor_type === 'staff' || entry.actor_type === 'admin' ? entry.actor_name || 'Staff' : 'Resident'}
                                                                             </span>

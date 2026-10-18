@@ -5,7 +5,7 @@ import {
     Key, CheckCircle, CircleDashed, Activity,
     AlertCircle, ChevronDown, ChevronUp,
     ExternalLink, Database, BookOpen,
-    ListChecks, Bell, ChevronRight,
+    ListChecks, Bell, ChevronRight, Check,
 } from 'lucide-react';
 
 import { Card, Button, Badge, CollapsibleSection } from './ui';
@@ -523,7 +523,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
     const [setupDone, setSetupDone] = useState<boolean | undefined>(undefined);
     const [finishing, setFinishing] = useState(false);
     const guideAutoSet = useRef(false);
-    const [saveMessage, setSaveMessage] = useState<string | null>(null);
+    const [saveMessage, setSaveMessage] = useState<{ text: string; failed?: boolean } | null>(null);
 
     /* Every save on this page reports through saveMessage, and it reported to
      * sighted people only: the text appeared in a plain div with no live region,
@@ -531,8 +531,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
      * were all silent. One effect covers every writer of the message. */
     useEffect(() => {
         if (!saveMessage) return;
-        const failed = saveMessage.startsWith('❌');
-        announce(saveMessage.replace(/^[❌✅⚠️]\s*/u, ''), failed ? 'assertive' : 'polite');
+        announce(saveMessage.text, saveMessage.failed ? 'assertive' : 'polite');
     }, [saveMessage, announce]);
 
     // Setup Instructions chooser: the guide shows ONLY the steps for the cloud
@@ -1004,7 +1003,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             setSetupDone(true);
             setExpandedGuide(null);
         } catch (err: any) {
-            setSaveMessage(`❌ ${err?.message || 'That could not be saved'}`);
+            setSaveMessage({ text: err?.message || 'That could not be saved', failed: true });
         } finally {
             setFinishing(false);
         }
@@ -1130,10 +1129,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                 } catch (err) {
                                     // The values are saved either way; say which
                                     // half did not land rather than implying both.
-                                    setSaveMessage(
-                                        `Saved the values, but could not switch ${capability} to ${provider}. `
-                                        + `Choose it on that card and press Save & Test.`,
-                                    );
+                                    setSaveMessage({
+                                        text: `Saved the values, but could not switch ${capability} to ${provider}. `
+                                            + `Choose it on that card and press Save & Test.`,
+                                        failed: true,
+                                    });
                                 }
                             }
                             onRefresh();
@@ -1229,7 +1229,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             // value they must copy had appeared.
                             announce('A new backup passphrase has been created and is shown once on this page. Copy it now.', 'assertive');
                         } catch (err: any) {
-                            setSaveMessage(`❌ ${err.message || 'Could not create a passphrase'}`);
+                            setSaveMessage({ text: err.message || 'Could not create a passphrase', failed: true });
                         }
                     }}
                 >
@@ -1542,8 +1542,8 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                             {FEATURES.map(([f, label]) => (
                                                 <button key={f} type="button" onClick={() => toggleFeature(f)}
                                                     aria-pressed={wants(f)}
-                                                    className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
-                                                    {wants(f) ? '\u2713 ' : ''}{label}
+                                                    className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm border transition-colors ${wants(f) ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-100' : 'bg-white/5 border-white/10 text-white/60 hover:text-white'}`}>
+                                                    {wants(f) && <Check className="w-3.5 h-3.5" aria-hidden="true" />}{label}
                                                 </button>
                                             ))}
                                         </div>
@@ -1894,8 +1894,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                 app's single live region (see announceSaveMessage below), because
                 a node inserted together with its text is routinely not announced. */}
             {saveMessage && (
-                <div className="rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm text-white/80">
-                    {saveMessage}
+                <div className={`flex items-start gap-2 rounded-xl border px-4 py-3 text-sm ${saveMessage.failed ? 'border-red-400/30 bg-red-500/10 text-red-100' : 'border-white/15 bg-white/5 text-white/80'}`}>
+                    {saveMessage.failed
+                        ? <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" aria-hidden="true" />
+                        : <CheckCircle className="w-4 h-4 mt-0.5 shrink-0 text-emerald-300" aria-hidden="true" />}
+                    <span>{saveMessage.text}</span>
                 </div>
             )}
 

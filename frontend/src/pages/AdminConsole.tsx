@@ -3853,7 +3853,7 @@ export default function AdminConsole() {
 
                     {/* SSO Info */}
                     <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-200">
-                        <p className="font-medium">🔐 SSO Authentication</p>
+                        <p className="font-medium flex items-center gap-1.5"><Shield className="w-4 h-4" aria-hidden="true" />SSO Authentication</p>
                         <p className="text-blue-200/70 mt-1">
                             Users log in via Auth0 SSO using their email address. No password is required.
                         </p>
@@ -5046,7 +5046,7 @@ export default function AdminConsole() {
                                     : 'border-white/20 bg-white/5 text-white/60 hover:border-white/40'
                                     }`}
                             >
-                                <div className="text-2xl mb-1">📍</div>
+                                <MapPin className="w-6 h-6 mx-auto mb-1" aria-hidden="true" />
                                 <div className="font-semibold">Points</div>
                                 <div className="text-xs opacity-60">Individual locations (trees, lights, signs, etc.)</div>
                             </button>
@@ -5255,7 +5255,7 @@ export default function AdminConsole() {
                                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                 />
                                 {newLayer.geojson && (
-                                    <p className="text-xs text-green-400 mt-1">✓ GeoJSON loaded</p>
+                                    <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />GeoJSON loaded</p>
                                 )}
                             </div>
 
@@ -5320,7 +5320,7 @@ export default function AdminConsole() {
                                     {newLayer.service_codes.length === 0
                                         ? 'Layer is hidden until you select at least one category'
                                         : newLayer.service_codes.length === services.length
-                                            ? '✓ Layer visible for all categories'
+                                            ? 'Layer visible for all categories'
                                             : `Layer visible for ${newLayer.service_codes.length} ${newLayer.service_codes.length === 1 ? 'category' : 'categories'}`
                                     }
                                 </p>

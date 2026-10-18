@@ -331,7 +331,7 @@ async def auto_bootstrap(
     <head><title>First-run setup</title></head>
     <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
         <form method="POST" action="/api/auth/bootstrap/verify" style="max-width:22rem">
-            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <div style="margin-bottom:1rem;color:#a5b4fc"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg></div>
             <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
             <p style="color:rgba(255,255,255,.6);margin-bottom:1rem">Enter the setup password (<code>INITIAL_ADMIN_PASSWORD</code>) to create your admin session.</p>
             <input type="password" name="password" required autofocus placeholder="Setup password"
@@ -400,7 +400,7 @@ async def verify_bootstrap(
     <head><title>Setting up...</title></head>
     <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
         <div>
-            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <div style="margin-bottom:1rem;color:#a5b4fc"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg></div>
             <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
             <p style="color:rgba(255,255,255,.5)">Setting up your admin console...</p>
         </div>
