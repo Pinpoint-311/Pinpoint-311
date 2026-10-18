@@ -1775,7 +1775,20 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     ? null
                                     : 'Create the encryption passphrase below and confirm you saved a copy.',
                             body: renderBackupPassphrase(),
-                            onTest: () => api.testBackups(),
+                            onTest: async () => {
+                                const r = await api.testBackups();
+                                // The result is recorded server-side; reload so
+                                // the tile shows it straight away.
+                                loadProviderStatus();
+                                return r;
+                            },
+                            lastCheck: providerStatus?.backups?.checked_at
+                                ? {
+                                    verified: providerStatus.backups.verified === true,
+                                    checkedAt: providerStatus.backups.checked_at,
+                                    detail: providerStatus.backups.detail,
+                                }
+                                : null,
                         }] : []),
                         ...(wantedFeatures.has('errors') ? [{
                             id: 'errors',

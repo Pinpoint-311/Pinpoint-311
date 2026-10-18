@@ -218,7 +218,38 @@ def decrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
         return False
 
 
+HEALTH_KEY = "backups"
+
+
+async def record_backup_health(ok: bool, detail: str) -> None:
+    """Keep the evidence that backups work (or don't) where the setup page and
+    the health dashboard read it. Both a Test and every real backup write it,
+    so a nightly failure shows up rather than only being in a worker log.
+    Never raises."""
+    try:
+        from app.db.session import SessionLocal
+        from app.services import connector_health
+        async with SessionLocal() as db:
+            if ok:
+                await connector_health.record_success(db, HEALTH_KEY, detail=detail)
+            else:
+                await connector_health.record_failure(db, HEALTH_KEY, detail)
+    except Exception as exc:
+        logger.warning("could not record backup health: %s", exc)
+
+
 async def create_backup() -> Dict[str, Any]:
+    """Run one backup and record how it went. See _create_backup."""
+    result = await _create_backup()
+    if result.get("status") == "success":
+        kb = max(1, round((result.get("size_bytes") or 0) / 1024))
+        await record_backup_health(True, f"Backed up {result.get('backup_name')} ({kb} KB, encrypted).")
+    elif result.get("status") == "error" and "not configured" not in (result.get("message") or ""):
+        await record_backup_health(False, f"Backup failed: {result.get('message', 'unknown error')}")
+    return result
+
+
+async def _create_backup() -> Dict[str, Any]:
     """
     Create a new database backup.
     
@@ -732,3 +763,10 @@ async def test_backups() -> Dict[str, Any]:
 
     steps.append("Backups are ready. The nightly backup will run on schedule.")
     return {"ok": True, "detail": "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))}
+
+
+async def test_and_record_backups() -> Dict[str, Any]:
+    """test_backups, with the outcome kept for the setup card and health page."""
+    result = await test_backups()
+    await record_backup_health(bool(result.get("ok")), result.get("detail", ""))
+    return result

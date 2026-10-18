@@ -2156,6 +2156,10 @@ export type ProviderStatusMap = Record<string, {
      *  switchable but have no provider to choose. */
     enabled?: boolean;
     ready?: boolean;
+    /** Backups only: the latest real check (a Test, or a nightly backup). */
+    verified?: boolean;
+    checked_at?: string;
+    detail?: string | null;
 }>;
 
 /** Where a town's credentials are kept, and whether it was asked.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { History, Lock, Loader2, Mail, Search, UserRound, ChevronRight, ChevronDown, UserSearch } from 'lucide-react';
+import { History, Lock, Loader2, ChevronRight, ChevronDown, UserSearch } from 'lucide-react';
 
 import { api } from '../services/api';
 import type { ResidentHistoryItem } from '../types';
@@ -152,10 +152,10 @@ export function ResidentHistoryCard({ serviceRequestId, onOpen }: {
 }
 
 /** "Search by resident": exact search by full email address or full name.
- *  Collapsed until opened, so it does not crowd the request list. */
+ *  A quiet link until opened; then one field that works out from the "@"
+ *  whether it was given an email or a name. */
 export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
     const [open, setOpen] = useState(false);
-    const [mode, setMode] = useState<'email' | 'name'>('email');
     const [value, setValue] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -164,22 +164,23 @@ export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
         const v = value.trim();
+        const isEmail = v.includes('@');
         if (!v) {
-            setError(mode === 'email' ? 'Enter a full email address' : 'Enter a first and last name');
+            setError('Enter a full email address or a first and last name');
             return;
         }
-        if (mode === 'email' && !/\S+@\S+\.\S+/.test(v)) {
+        if (isEmail && !/\S+@\S+\.\S+/.test(v)) {
             setError('Enter the full email address');
             return;
         }
-        if (mode === 'name' && v.split(/\s+/).length < 2) {
+        if (!isEmail && v.split(/\s+/).length < 2) {
             setError('Enter both a first and a last name');
             return;
         }
         setBusy(true);
         setError('');
         try {
-            const res = await api.searchResidents(mode === 'email' ? { email: v } : { name: v });
+            const res = await api.searchResidents(isEmail ? { email: v } : { name: v });
             setResult({ total: res.total, reports: res.reports });
         } catch (err: any) {
             setResult(null);
@@ -189,100 +190,69 @@ export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
         }
     };
 
-    const switchMode = (next: 'email' | 'name') => {
-        setMode(next);
-        setValue('');
-        setError('');
-        setResult(null);
-    };
-
     return (
-        <div className="rounded-xl bg-white/[0.03] border border-white/10">
+        <div>
             <button
                 type="button"
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
                 aria-controls="resident-search-panel"
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-left rounded-xl hover:bg-white/[0.04] transition-colors"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-white/55 hover:text-white/85 transition-colors"
             >
-                <UserSearch className="w-4 h-4 text-primary-300" aria-hidden="true" />
-                <span className="text-sm font-medium text-white/80 flex-1">Search by resident</span>
-                <ChevronDown className={`w-4 h-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+                <UserSearch className="w-3.5 h-3.5" aria-hidden="true" />
+                Search by resident
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
             </button>
-            <AnimatePresence initial={false}>
-            {open && (
-            <motion.div
-                id="resident-search-panel"
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-            >
-            <div className="px-3 pb-3 space-y-2.5">
-            <div className="flex items-center justify-end gap-2">
-                <div className="inline-flex p-0.5 rounded-lg bg-white/5 border border-white/10" role="radiogroup" aria-label="Search by">
-                    {([['email', 'Email', Mail], ['name', 'Name', UserRound]] as const).map(([key, label, Icon]) => (
-                        <button
-                            key={key}
-                            type="button"
-                            role="radio"
-                            aria-checked={mode === key}
-                            onClick={() => switchMode(key)}
-                            className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${mode === key
-                                ? 'bg-gradient-to-r from-primary-500 to-indigo-600 text-white shadow shadow-primary-500/30'
-                                : 'text-white/60 hover:text-white'}`}
-                        >
-                            <Icon className="w-3 h-3" aria-hidden="true" /> {label}
-                        </button>
-                    ))}
-                </div>
-            </div>
-
-            <form onSubmit={submit} className="flex gap-2">
-                <input
-                    type={mode === 'email' ? 'email' : 'text'}
-                    value={value}
-                    onChange={e => { setValue(e.target.value); setError(''); }}
-                    placeholder={mode === 'email' ? 'jane.doe@example.com' : 'Jane Doe'}
-                    aria-label={mode === 'email' ? 'Resident email address' : 'Resident full name'}
-                    aria-invalid={!!error}
-                    aria-describedby={error ? 'resident-search-error' : undefined}
-                    autoComplete="off"
-                    className="glass-input text-sm py-2 flex-1 min-w-0"
-                />
-                <button
-                    type="submit"
-                    disabled={busy}
-                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium bg-white/10 border border-white/15 text-white hover:bg-white/15 transition-colors disabled:opacity-60"
-                >
-                    {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <Search className="w-4 h-4" aria-hidden="true" />}
-                    Search
-                </button>
-            </form>
-            {error && <p id="resident-search-error" className="text-xs text-red-400" role="alert">{error}</p>}
 
             <AnimatePresence initial={false}>
-                {result && (
+                {open && (
                     <motion.div
+                        id="resident-search-panel"
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
                         className="overflow-hidden"
                     >
-                        <p className="text-xs text-white/50 pt-1" role="status">
-                            {result.total === 0
-                                ? 'No reports you have access to match exactly.'
-                                : `${result.total} report${result.total === 1 ? '' : 's'} found${result.total > result.reports.length ? `, showing the ${result.reports.length} most recent` : ''}.`}
-                        </p>
-                        {result.reports.length > 0 && <ReportRows reports={result.reports} onOpen={onOpen} />}
+                        <form onSubmit={submit} className="relative mt-2">
+                            <UserSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 z-10" aria-hidden="true" />
+                            <input
+                                type="text"
+                                value={value}
+                                onChange={e => { setValue(e.target.value); setError(''); }}
+                                placeholder="Full email or full name"
+                                aria-label="Resident's full email address or full name"
+                                aria-invalid={!!error}
+                                aria-describedby={error ? 'resident-search-error' : 'resident-search-note'}
+                                autoComplete="off"
+                                className="glass-input pl-10 pr-10 py-2 text-sm"
+                            />
+                            <button
+                                type="submit"
+                                disabled={busy}
+                                aria-label="Search by resident"
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-colors disabled:opacity-60"
+                            >
+                                {busy ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
+                            </button>
+                        </form>
+                        {error
+                            ? <p id="resident-search-error" className="text-xs text-red-400 mt-1.5" role="alert">{error}</p>
+                            : <p id="resident-search-note" className="flex items-center gap-1 text-[11px] text-white/40 mt-1.5">
+                                <Lock className="w-3 h-3" aria-hidden="true" /> Exact match · searches are logged
+                            </p>}
+
+                        {result && (
+                            <div className="mt-2">
+                                <p className="text-xs text-white/50" role="status">
+                                    {result.total === 0
+                                        ? 'No matching reports you have access to.'
+                                        : `${result.total} report${result.total === 1 ? '' : 's'} found${result.total > result.reports.length ? `, showing the ${result.reports.length} most recent` : ''}.`}
+                                </p>
+                                {result.reports.length > 0 && <ReportRows reports={result.reports} onOpen={onOpen} />}
+                            </div>
+                        )}
                     </motion.div>
                 )}
-            </AnimatePresence>
-
-            <AuditFooter>Exact match on the full {mode === 'email' ? 'address' : 'name'}. Searches are logged without what you typed.</AuditFooter>
-            </div>
-            </motion.div>
-            )}
             </AnimatePresence>
         </div>
     );

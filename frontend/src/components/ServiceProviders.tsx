@@ -1277,6 +1277,8 @@ export interface PlainSetting {
     blockedReason?: string | null;
     /** A live check, where the setting has one (backups). */
     onTest?: () => Promise<{ ok: boolean; detail: string }>;
+    /** The latest real check, when there has been one. */
+    lastCheck?: { verified: boolean; checkedAt: string; detail?: string | null } | null;
 }
 
 function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
@@ -1285,7 +1287,12 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
     onToggle: () => void;
     secrets: PlainSecretsBridge;
 }) {
-    const { title, subtitle, icon: Icon, fields, configured, body } = setting;
+    const { title, subtitle, icon: Icon, fields, configured, body, lastCheck } = setting;
+    // What the tile says. A real check beats "set up": "set up" only means the
+    // values are saved, and the point of the Test button is to know more.
+    const checkLine = lastCheck
+        ? `${lastCheck.verified ? 'Working' : 'Not working'} · checked ${relativeTime(lastCheck.checkedAt)}`
+        : null;
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -1319,14 +1326,19 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                     {configured ? subtitle : 'Not set up'}
                                 </span>
                             </span>
-                            <span className={`shrink-0 ${configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
-                                {configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                            <span className={`shrink-0 ${lastCheck && !lastCheck.verified ? 'text-red-300' : configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
+                                {lastCheck && !lastCheck.verified
+                                    ? <AlertCircle className="w-4 h-4" />
+                                    : configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
                             </span>
                         </div>
-                        <span className={`block text-[11px] mt-2.5 ${configured ? 'text-white/45' : 'text-amber-200/85'}`}>
-                            {configured
-                                ? (setting.onTest ? 'Set up. Open to test it.' : 'Set up. Nothing here reports back, so there is nothing to test.')
-                                : 'Add its details in Setup Instructions, above.'}
+                        <span className={`block text-[11px] mt-2.5 ${checkLine
+                            ? (lastCheck!.verified ? 'text-emerald-200/80' : 'text-red-200/90')
+                            : configured ? 'text-white/45' : 'text-amber-200/85'}`}>
+                            {checkLine
+                                ?? (configured
+                                    ? (setting.onTest ? 'Set up, not tested yet. Open to test it.' : 'Set up. Nothing here reports back, so there is nothing to test.')
+                                    : 'Add its details in Setup Instructions, above.')}
                         </span>
                     </button>
                 ) : (
@@ -1340,6 +1352,11 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                         <StatusPill state={configured ? 'done' : 'unset'} name={title} />
                                     </div>
                                     <p className="text-sm text-white/60 mt-1">{subtitle}</p>
+                                    {checkLine && (
+                                        <p className={`text-xs mt-1 ${lastCheck!.verified ? 'text-emerald-200/80' : 'text-red-200/90'}`}>
+                                            {checkLine}{lastCheck!.detail ? ` — ${lastCheck!.detail.split('\n').pop()}` : ''}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <Action variant="primary" onClick={onToggle} chevron expanded>Close</Action>

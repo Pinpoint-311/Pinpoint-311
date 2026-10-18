@@ -114,13 +114,13 @@ describe('ResidentSearch', () => {
 
     it('refuses a partial email before asking the server', async () => {
         await mountSearch();
-        type('jane');
+        type('jane@');
         await submit();
         expect(api.searchResidents).not.toHaveBeenCalled();
         expect(host.querySelector('[role="alert"]')?.textContent).toContain('full email');
     });
 
-    it('searches by exact email and lists what the server returned', async () => {
+    it('treats input with an @ as an email and lists the results', async () => {
         api.searchResidents.mockResolvedValue({ searched_by: 'email', total: 1, reports: rows.slice(0, 1) });
         await mountSearch();
         type('jane.doe@example.com');
@@ -128,22 +128,24 @@ describe('ResidentSearch', () => {
         expect(api.searchResidents).toHaveBeenCalledWith({ email: 'jane.doe@example.com' });
         expect(host.textContent).toContain('1 report found');
         expect(host.textContent).toContain('SR-1042');
-        expect(host.textContent).toContain('logged without what you typed');
     });
 
-    it('needs a first and a last name when searching by name', async () => {
+    it('treats input without an @ as a full name', async () => {
         await mountSearch();
-        const nameTab = Array.from(host.querySelectorAll('button[role="radio"]'))
-            .find(b => b.textContent?.includes('Name')) as HTMLButtonElement;
-        await act(async () => { nameTab.click(); });
         type('Jane');
         await submit();
         expect(api.searchResidents).not.toHaveBeenCalled();
+        expect(host.querySelector('[role="alert"]')?.textContent).toContain('first and a last name');
 
         api.searchResidents.mockResolvedValue({ searched_by: 'name', total: 0, reports: [] });
         type('Jane Doe');
         await submit();
         expect(api.searchResidents).toHaveBeenCalledWith({ name: 'Jane Doe' });
-        expect(host.textContent).toContain('No reports you have access to match exactly');
+        expect(host.textContent).toContain('No matching reports you have access to');
+    });
+
+    it('says lookups are logged', async () => {
+        await mountSearch();
+        expect(host.textContent).toContain('searches are logged');
     });
 });

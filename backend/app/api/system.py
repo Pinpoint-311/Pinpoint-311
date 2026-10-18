@@ -2592,7 +2592,7 @@ class CloudProfileRequest(BaseModel):
 
 
 @router.get("/providers/status")
-async def get_provider_status(_: User = Depends(get_current_admin)):
+async def get_provider_status(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
     """Which provider each capability is on, and which providers are set up.
 
     One request instead of eight. The setup guide's task list needs to know
@@ -2662,6 +2662,24 @@ async def get_provider_status(_: User = Depends(get_current_admin)):
     # what it was doing, in React state that never reached the server.
     for extra in ("backups", "errors"):
         out[extra] = {"enabled": switches.get(extra, True)}
+
+    # Backups have a real check (the Test button, and every nightly run), so
+    # the card can say when it last worked rather than only "set up".
+    try:
+        from app.services import connector_health
+        h = (await connector_health.snapshot(db)).get("backups")
+        if h is not None:
+            ok_at, err_at = h.last_success_at, h.last_error_at
+            latest = max((t for t in (ok_at, err_at) if t), default=None)
+            if latest is not None:
+                verified = bool(ok_at) and (not err_at or ok_at >= err_at)
+                out["backups"].update({
+                    "verified": verified,
+                    "checked_at": latest.isoformat(),
+                    "detail": (h.last_result if verified else h.last_error) or None,
+                })
+    except Exception as exc:
+        logger.warning("backup health read failed: %s", sanitize_for_log(str(exc)))
     return out
 
 
@@ -5927,9 +5945,10 @@ async def list_backups_endpoint(
 async def test_backups_endpoint(
     _: User = Depends(get_current_admin)
 ):
-    """Check the backup settings for real: storage round trip and passphrase."""
-    from app.services.backup_service import test_backups
-    return await test_backups()
+    """Check the backup settings for real: storage round trip and passphrase.
+    The outcome is recorded, so the setup card can say when it last passed."""
+    from app.services.backup_service import test_and_record_backups
+    return await test_and_record_backups()
 
 
 @router.post("/backups/create")
