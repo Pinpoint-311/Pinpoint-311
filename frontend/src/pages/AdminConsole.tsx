@@ -1561,7 +1561,11 @@ export default function AdminConsole() {
     // Tabs are now rendered using SidebarGroup/SidebarItem components in the sidebar
 
     return (
-        <div className="min-h-screen flex">
+        // Fixed to the viewport, like the staff dashboard: only the content pane
+        // (contentRef) scrolls. With min-h-screen the pane never overflowed, so a
+        // tall section -- opening Audit Logs -- scrolled the whole window and
+        // the sidebar and header moved with it.
+        <div className="h-screen flex overflow-hidden">
             {/* The one voluntary outbound call this application makes. Gated on
               * a configured deployment rather than on sign-in: `township_name`
               * only leaves its placeholder once somebody has been through
