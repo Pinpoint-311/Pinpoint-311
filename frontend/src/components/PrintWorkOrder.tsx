@@ -22,11 +22,59 @@ interface PrintWorkOrderProps {
 const POPUP_BLOCKED =
     "The work order didn't open because your browser blocked the print window. Allow pop-ups for this site and try again.";
 
-export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, config }: PrintWorkOrderProps) {
+/** HTML-escape one value for the print page. */
+export function escapeHtml(value: unknown): string {
+    return String(value ?? '').replace(/[&<>"'`]/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;',
+    }[c] as string));
+}
+
+/** Escape every string (and object key) in a value, recursively. */
+function escapeDeep<T>(value: T): T {
+    if (typeof value === 'string') return escapeHtml(value) as unknown as T;
+    if (Array.isArray(value)) return value.map(escapeDeep) as unknown as T;
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).map(([k, v]) => [escapeHtml(k), escapeDeep(v)]),
+        ) as T;
+    }
+    return value;
+}
+
+/** Only web and inline-image addresses may appear in an <img src>. */
+function safeImageUrl(url: unknown): string | null {
+    const u = String(url ?? '').trim();
+    return /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp);base64,|\/)/i.test(u) ? u : null;
+}
+
+export default function PrintWorkOrder({
+    request: rawRequest, auditLog: rawAuditLog, comments: rawComments,
+    townshipName: rawTownshipName, logoUrl: rawLogoUrl, config,
+}: PrintWorkOrderProps) {
     const announce = useAnnounce();
     const [blocked, setBlocked] = useState(false);
 
     const handlePrint = () => {
+        /* The print page is assembled as an HTML string and written into a
+         * same-origin window, so every value in it must be escaped: a
+         * resident's description, a public comment, a custom-question answer,
+         * or an asset property containing markup would otherwise run as script
+         * in a signed-in staff session when the work order is printed. Escaped
+         * here, once, at the source -- every interpolation below reads these
+         * copies -- so a new field added to the template later is safe by
+         * default. Markup the code itself builds (icons, QR codes, the map
+         * snapshot) is not user data and is not escaped. */
+        const request = escapeDeep({
+            ...rawRequest,
+            media_urls: (rawRequest.media_urls || []).map(safeImageUrl).filter((u): u is string => !!u),
+            completion_photo_url: safeImageUrl(rawRequest.completion_photo_url) ?? null,
+        }) as typeof rawRequest;
+        const auditLog = escapeDeep(rawAuditLog);
+        const comments = escapeDeep(rawComments);
+        const townshipName = rawTownshipName ? escapeHtml(rawTownshipName) : rawTownshipName;
+        const safeLogo = safeImageUrl(rawLogoUrl);
+        const logoUrl = safeLogo ? escapeHtml(safeLogo) : undefined;
+
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
         /* A blocked pop-up used to return here in silence: the button did
@@ -102,6 +150,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                 case 'phone': return 'Phone Call';
                 case 'walk_in': return 'Walk-In';
                 case 'email': return 'Email';
+                case 'other': return 'Other';
                 default: return source || 'Resident Portal';
             }
         };
