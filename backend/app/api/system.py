@@ -6441,8 +6441,13 @@ async def analytics_chat(
         categories[cat] = categories.get(cat, 0) + 1
     
     # Priority distribution
-    high_priority = sum(1 for r in all_requests if (getattr(r, 'manual_priority_score', None) or (r.ai_analysis or {}).get('priority_score', 5) if isinstance(r.ai_analysis, dict) else 5) >= 8)
-    med_priority = sum(1 for r in all_requests if 5 <= (getattr(r, 'manual_priority_score', None) or (r.ai_analysis or {}).get('priority_score', 5) if isinstance(r.ai_analysis, dict) else 5) < 8)
+    # One priority per report, the one staff see on screen and on the work
+    # order: staff-set, else AI-suggested, else 5. The old inline expression
+    # parsed as `(manual or ai) if has_ai else 5`, so a staff override on a
+    # report without AI analysis was counted as a 5.
+    from app.services.priority import effective_priority, priority_fields
+    high_priority = sum(1 for r in all_requests if effective_priority(r) >= 8)
+    med_priority = sum(1 for r in all_requests if 5 <= effective_priority(r) < 8)
     low_priority = total - high_priority - med_priority
     
     # Resolution time for closed requests
@@ -6523,7 +6528,7 @@ async def analytics_chat(
                 "address": anonymize_address(r.address, "fuzzed") or "Unknown",
                 "summary": sanitize_description(r.ai_summary)[:200],
                 "classification": r.ai_classification,
-                "priority": (r.ai_analysis or {}).get("priority_score") if isinstance(r.ai_analysis, dict) else None
+                "priority": effective_priority(r),
             })
         if r.flagged:
             flagged_requests.append({
@@ -6767,7 +6772,10 @@ async def analytics_chat(
             "id": r.service_request_id,
             "category": r.service_name,
             "status": r.status,
-            "priority": r.priority,
+            # Was r.priority -- a column nothing writes, 5 on every report --
+            # sent next to the AI's score as "ai_priority", so the advisor
+            # quoted two different priorities for the same request.
+            **priority_fields(r),
             "address": anonymize_address(r.address, "fuzzed") or "Unknown",
             "description": (desc[:150] + "...") if desc and len(desc) > 150 else desc,
             "source": r.source,
@@ -6775,7 +6783,6 @@ async def analytics_chat(
             "closed": r.closed_datetime.isoformat() if r.closed_datetime else None,
         }
         if r.ai_analysis and isinstance(r.ai_analysis, dict):
-            detail["ai_priority"] = r.ai_analysis.get("priority_score")
             detail["ai_category"] = r.ai_classification
         if r.flagged:
             detail["flagged"] = True
@@ -6892,6 +6899,7 @@ The chat UI renders plain text with basic inline markdown only — it does NOT r
 
 ## IMPORTANT RULES
 - NEVER share or reference resident names, emails, or phone numbers
+- Each request has exactly ONE priority: the `priority` field (1-10), which is what staff see. `priority_set_by` says whether staff set it or it is the AI's suggestion. `ai_suggested_priority` appears only when staff overrode the AI; quote it only as "the AI originally suggested N", never as the request's priority
 - Always cite specific data points — never say "some" or "several" when you have exact numbers
 - If asked about something not in the data, say so clearly
 - When discussing equity metrics, explain what the numbers mean in plain language (e.g., "An SVI of 0.7 means this area is in the top 30% most vulnerable nationally")

@@ -89,3 +89,35 @@ def test_chat_endpoints_use_the_configured_provider(module, fn):
     assert "get_ai_provider" in src and "complete_text" in src
     assert "aiplatform.googleapis.com" not in src
     assert "VERTEX_AI_PROJECT" not in src
+
+
+# ---- one priority per request in the advisor's context ----------------------
+
+from types import SimpleNamespace  # noqa: E402
+
+from app.services.priority import priority_fields  # noqa: E402
+
+
+def _sr(manual=None, ai=None):
+    return SimpleNamespace(manual_priority_score=manual,
+                           ai_analysis={"priority_score": ai} if ai is not None else None,
+                           priority=5)
+
+
+def test_priority_fields_staff_override_keeps_ai_as_labelled_history():
+    assert priority_fields(_sr(manual=9, ai=4)) == {
+        "priority": 9, "priority_set_by": "staff", "ai_suggested_priority": 4}
+
+
+def test_priority_fields_ai_only_and_default():
+    assert priority_fields(_sr(ai=7)) == {"priority": 7, "priority_set_by": "ai"}
+    assert priority_fields(_sr()) == {"priority": 5, "priority_set_by": "default"}
+    # Same number from both: no second field to confuse anyone.
+    assert priority_fields(_sr(manual=6, ai=6)) == {"priority": 6, "priority_set_by": "staff"}
+
+
+def test_advisor_context_has_no_competing_priority_fields():
+    src = inspect.getsource(pytest.importorskip("app.api.system").analytics_chat)
+    assert '"priority": r.priority' not in src
+    assert 'detail["ai_priority"]' not in src
+    assert "priority_fields(r)" in src
