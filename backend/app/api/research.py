@@ -2199,78 +2199,23 @@ async def research_chat(
         conversation += f"\n**{role_label}:** {msg.content}\n"
     conversation += f"\n**User:** {body.message}\n\n**Data Assistant:**"
 
-    # Call Vertex AI
+    # Call the configured AI provider -- the same one triage and the staff
+    # Analytics Advisor use, not a hardcoded Vertex/Gemini call.
     try:
-        import os
-        from app.services.secret_manager import get_secret as sm_get_secret
+        from app.services.ai import AIProviderError, get_ai_provider
 
-        project_id = await sm_get_secret("VERTEX_AI_PROJECT")
-        if not project_id:
-            project_id = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-
-        if not project_id:
-            raise HTTPException(status_code=503, detail="Vertex AI not configured")
-
-        service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
-
-        import google.auth
-        from google.auth.transport.requests import Request
-        from google.oauth2 import service_account as sa_module
-        import aiohttp
-
-        if service_account_json:
-            sa_info = json.loads(service_account_json)
-            credentials = sa_module.Credentials.from_service_account_info(
-                sa_info,
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
-            )
-        else:
-            credentials, _ = google.auth.default(
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
+        provider = await get_ai_provider(db)
+        if not provider:
+            raise HTTPException(
+                status_code=503,
+                detail="AI is not set up or is switched off. An admin can configure it under AI in the Admin Console.",
             )
 
-        credentials.refresh(Request())
-
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent"
-
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": conversation}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.8,
-                "maxOutputTokens": 4096,
-            },
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {credentials.token}",
-                    "Content-Type": "application/json"
-                },
-                json=payload
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Vertex AI research chat error: {error_text}")
-                    raise HTTPException(status_code=502, detail=f"AI service error: {response.status}")
-
-                result = await response.json()
-
-        # Extract response text
-        ai_response = ""
-        if 'candidates' in result and result['candidates']:
-            parts = result['candidates'][0].get('content', {}).get('parts', [])
-            for part in parts:
-                if 'text' in part:
-                    ai_response += part['text']
+        try:
+            ai_response = await provider.complete_text(conversation, temperature=0.3, max_tokens=4096)
+        except AIProviderError as e:
+            logger.error(f"Research chat AI error ({provider.provider}/{provider.model}): {e}")
+            raise HTTPException(status_code=502, detail=f"The AI service ({provider.provider}) returned an error.")
 
         if not ai_response:
             ai_response = "I couldn't generate a response. Try rephrasing your question."

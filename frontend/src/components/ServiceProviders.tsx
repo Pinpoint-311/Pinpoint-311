@@ -1008,7 +1008,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     type="button"
                                     onClick={handleRefreshModels}
                                     disabled={refreshingModels}
-                                    className="shrink-0 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                                    className="btn-outline shrink-0"
                                 >
                                     <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} aria-hidden="true" />
                                     {refreshingModels ? 'Checking…' : 'Refresh from provider'}

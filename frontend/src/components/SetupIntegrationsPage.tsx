@@ -398,7 +398,7 @@ onWantAi: () => Promise<void>;
             <button
                 type="button"
                 onClick={() => setShowKms(v => !v)}
-                className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2"
+                className="btn-outline"
             >
                 {showKms ? 'Hide' : 'I was given different'} encryption key names
             </button>
@@ -1401,7 +1401,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         <button
                             type="button"
                             onClick={() => openStayInformed({ immediate: true })}
-                            className="text-xs text-indigo-300 hover:text-indigo-200 underline underline-offset-2"
+                            className="btn-outline"
                         >
                             Register a contact (optional)
                         </button>

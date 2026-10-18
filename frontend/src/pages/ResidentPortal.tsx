@@ -998,7 +998,7 @@ export default function ResidentPortal() {
                         <button
                             type="button"
                             onClick={() => goHome()}
-                            className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
+                            className="btn-outline btn-outline-md"
                             aria-label="Go back to home page"
                         >
                             <ArrowLeft className="w-5 h-5" />
@@ -1257,7 +1257,7 @@ export default function ResidentPortal() {
                                 <button
                                     type="button"
                                     onClick={() => goHome()}
-                                    className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
+                                    className="btn-outline btn-outline-md"
                                 >
                                     <ArrowLeft className="w-5 h-5" />
                                     <span>{"Back to categories"}</span>

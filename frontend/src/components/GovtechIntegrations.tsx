@@ -637,7 +637,7 @@ export default function GovtechIntegrations() {
                     ) : (
                         <button
                             type="button"
-                            className="text-[11px] text-white/55 hover:text-white/85 mt-1 underline underline-offset-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                            className="btn-outline mt-1.5"
                             onClick={() => {
                                 setValues(p => ({ ...p, [field.key]: '' }));
                                 setCleared(prev => new Set(prev).add(field.key));
@@ -1012,7 +1012,7 @@ export default function GovtechIntegrations() {
                                                     type="button"
                                                     onClick={() => handleRegenerateToken(existing, platform.name)}
                                                     disabled={busyOf(existing) !== null}
-                                                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 mt-1.5 disabled:opacity-50 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                                    className="btn-outline mt-1.5"
                                                 >
                                                     {busyOf(existing) === 'rotate' ? 'Issuing…' : 'Issue a new address'}
                                                 </button>
@@ -1364,7 +1364,7 @@ export default function GovtechIntegrations() {
                                             onClick={() => setShowPasswordFallback(v => !v)}
                                             aria-expanded={showPasswordFallback}
                                             aria-controls="wizard-password-fallback"
-                                            className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                            className="btn-outline"
                                         >
                                             {showPasswordFallback
                                                 ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
@@ -1392,7 +1392,7 @@ export default function GovtechIntegrations() {
                                         onClick={() => setShowAdvanced(v => !v)}
                                         aria-expanded={showAdvanced}
                                         aria-controls="wizard-optional-settings"
-                                        className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                        className="btn-outline"
                                     >
                                         {showAdvanced
                                             ? <ChevronUp className="w-3 h-3" aria-hidden="true" />

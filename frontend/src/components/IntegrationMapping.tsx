@@ -119,7 +119,7 @@ function Disclosure({ id, title, children, defaultOpen = false }: {
                 onClick={() => setOpen(v => !v)}
                 aria-expanded={open}
                 aria-controls={id}
-                className="text-white/75 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                className="btn-outline"
             >
                 {open ? <ChevronUp className="w-3 h-3" aria-hidden="true" /> : <ChevronDown className="w-3 h-3" aria-hidden="true" />}
                 {title}

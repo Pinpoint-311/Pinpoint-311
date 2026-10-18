@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from app.services.ai.base import (
-    AIProvider, analysis_fallback, parse_json_response, split_data_url,
+    AIProvider, AIProviderError, analysis_fallback, parse_json_response, split_data_url,
 )
 
 from urllib.parse import urlsplit, urlunsplit
@@ -118,56 +118,71 @@ class AzureOpenAIProvider(AIProvider):
             )
         return f"Azure OpenAI HTTP {resp.status_code}: {body}"
 
-    async def complete_json(self, prompt: str, image_data: Optional[List[str]] = None) -> Dict[str, Any]:
-        if not self.endpoint or not self.api_key:
-            return analysis_fallback("Azure OpenAI not configured (endpoint/api_key missing)")
+    async def _chat(self, messages, json_mode: bool, temperature_value: float,
+                    max_tokens: int = 4096):
+        """POST a chat completion; return the httpx response (any status)."""
         url = f"{self.endpoint}/openai/deployments/{self.model}/chat/completions?api-version={self.api_version}"
 
         def build(token_key: str, temperature: bool) -> Dict[str, Any]:
-            body: Dict[str, Any] = {
-                "messages": self._build_messages(prompt, image_data),
-                token_key: 4096,
-                "response_format": {"type": "json_object"},
-            }
+            body: Dict[str, Any] = {"messages": messages, token_key: max_tokens}
+            if json_mode:
+                body["response_format"] = {"type": "json_object"}
             if temperature:
-                body["temperature"] = 0.2
+                body["temperature"] = temperature_value
             return body
 
         token_key = _TOKEN_PARAM.get(self.model, "max_tokens")
         temperature = self.model not in _NO_TEMPERATURE
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            resp = await client.post(url, headers={"api-key": self.api_key},
+                                     json=build(token_key, temperature))
+
+            # Newer models reject `max_tokens` and want `max_completion_tokens`,
+            # and reasoning models reject a non-default `temperature`. Which
+            # ones is not knowable from here and moves: this codebase has
+            # already been bitten by a hardcoded model list going stale, so
+            # each switch is driven by Azure saying so rather than by a list
+            # we maintain. Azure names one offending parameter per 400, so a
+            # model with both quirks takes two retries. Remembered per
+            # deployment, so the wasted round trips happen once per process
+            # and not per report.
+            for _ in range(2):
+                if resp.status_code != 400:
+                    break
+                if "max_completion_tokens" in resp.text and token_key == "max_tokens":
+                    token_key = "max_completion_tokens"
+                    _TOKEN_PARAM[self.model] = token_key
+                elif "'temperature'" in resp.text and temperature:
+                    temperature = False
+                    _NO_TEMPERATURE.add(self.model)
+                else:
+                    break
                 resp = await client.post(url, headers={"api-key": self.api_key},
                                          json=build(token_key, temperature))
+        return resp
 
-                # Newer models reject `max_tokens` and want `max_completion_tokens`,
-                # and reasoning models reject a non-default `temperature`. Which
-                # ones is not knowable from here and moves: this codebase has
-                # already been bitten by a hardcoded model list going stale, so
-                # each switch is driven by Azure saying so rather than by a list
-                # we maintain. Azure names one offending parameter per 400, so a
-                # model with both quirks takes two retries. Remembered per
-                # deployment, so the wasted round trips happen once per process
-                # and not per report.
-                for _ in range(2):
-                    if resp.status_code != 400:
-                        break
-                    if "max_completion_tokens" in resp.text and token_key == "max_tokens":
-                        token_key = "max_completion_tokens"
-                        _TOKEN_PARAM[self.model] = token_key
-                    elif "'temperature'" in resp.text and temperature:
-                        temperature = False
-                        _NO_TEMPERATURE.add(self.model)
-                    else:
-                        break
-                    resp = await client.post(url, headers={"api-key": self.api_key},
-                                             json=build(token_key, temperature))
-
-                if resp.status_code >= 400:
-                    return analysis_fallback(self._explain(resp))
-                body = resp.json()
-            text = body["choices"][0]["message"]["content"]
+    async def complete_json(self, prompt: str, image_data: Optional[List[str]] = None) -> Dict[str, Any]:
+        if not self.endpoint or not self.api_key:
+            return analysis_fallback("Azure OpenAI not configured (endpoint/api_key missing)")
+        try:
+            resp = await self._chat(self._build_messages(prompt, image_data), True, 0.2)
+            if resp.status_code >= 400:
+                return analysis_fallback(self._explain(resp))
+            text = resp.json()["choices"][0]["message"]["content"]
             return parse_json_response(text)
         except Exception as e:  # noqa: BLE001 — providers must never raise
             logger.warning(f"[AI/azure] analysis failed: {e}")
             return analysis_fallback(str(e))
+
+    async def complete_text(self, prompt: str, temperature: float = 0.3,
+                            max_tokens: int = 4096) -> str:
+        if not self.endpoint or not self.api_key:
+            raise AIProviderError("Azure OpenAI not configured (endpoint/api_key missing)")
+        try:
+            resp = await self._chat([{"role": "user", "content": prompt}], False,
+                                    temperature, max_tokens)
+        except Exception as e:  # noqa: BLE001
+            raise AIProviderError(f"Azure OpenAI: {e}") from e
+        if resp.status_code >= 400:
+            raise AIProviderError(self._explain(resp))
+        return resp.json()["choices"][0]["message"].get("content") or ""

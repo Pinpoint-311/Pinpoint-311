@@ -6900,97 +6900,38 @@ The chat UI renders plain text with basic inline markdown only — it does NOT r
 """
 
 
-    # ========== Build Conversation & Call Vertex AI ==========
+    # ========== Build Conversation & Call the configured AI provider ==========
+    # The same provider, model and credentials as triage and the console's AI
+    # test. This used to call Vertex/Gemini directly, so a town on Azure
+    # OpenAI or Bedrock got "Vertex AI not configured" here while every
+    # other AI feature worked.
     try:
-        from app.services.secret_manager import get_secret as sm_get_secret
-        
-        project_id = await sm_get_secret("VERTEX_AI_PROJECT")
-        if not project_id:
-            # Try alternative key
-            project_id = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-        
-        if not project_id:
-            raise HTTPException(status_code=503, detail="Vertex AI not configured — VERTEX_AI_PROJECT not set")
-        
-        service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
-        
+        from app.services.ai import AIProviderError, get_ai_provider
+
+        provider = await get_ai_provider(db)
+        if not provider:
+            raise HTTPException(
+                status_code=503,
+                detail="AI is not set up or is switched off. An admin can configure it under AI in the Admin Console.",
+            )
+
         # Build the full conversation prompt
         conversation = system_prompt + "\n\n## CONVERSATION\n"
         for msg in body.history[-20:]:  # Last 20 messages for context
             role_label = "Staff" if msg.role == "user" else "AI Advisor"
             conversation += f"\n**{role_label}:** {msg.content}\n"
         conversation += f"\n**Staff:** {body.message}\n\n**AI Advisor:**"
-        
-        # Call Vertex AI — use lower temperature for factual responses
-        import google.auth
-        from google.auth.transport.requests import Request
-        from google.oauth2 import service_account
-        import aiohttp
-        
-        if service_account_json:
-            sa_info = json.loads(service_account_json)
-            credentials = service_account.Credentials.from_service_account_info(
-                sa_info,
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
-            )
-        else:
-            credentials, _ = google.auth.default(
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
-            )
-        
-        credentials.refresh(Request())
-        
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent"
-        
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": conversation}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.8,
-                "maxOutputTokens": 4096,
-            },
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {credentials.token}",
-                    "Content-Type": "application/json"
-                },
-                json=payload
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Vertex AI error: {error_text}")
-                    raise HTTPException(status_code=502, detail=f"AI service error: {response.status}")
-                
-                result = await response.json()
-        
-        # Extract response text
-        ai_response = ""
-        if 'candidates' in result and result['candidates']:
-            parts = result['candidates'][0].get('content', {}).get('parts', [])
-            for part in parts:
-                if 'text' in part:
-                    ai_response += part['text']
-        
+
+        try:
+            # Lower temperature for factual responses
+            ai_response = await provider.complete_text(conversation, temperature=0.3, max_tokens=4096)
+        except AIProviderError as e:
+            logger.error(f"Analytics chat AI error ({provider.provider}/{provider.model}): {e}")
+            raise HTTPException(status_code=502, detail=f"The AI service ({provider.provider}) returned an error.")
+
         if not ai_response:
             ai_response = "I couldn't generate a response. Try rephrasing your question."
-        
-        # Track API usage
-        try:
-            from app.services.api_usage import track_api_call
-            await track_api_call(db, "vertex_ai", endpoint="analytics_chat", tokens_used=len(conversation) // 4 + len(ai_response) // 4)
-        except Exception:
-            pass  # API usage tracking is non-critical
-        
+
         return AnalyticsChatResponse(
             response=ai_response.strip(),
             context_used=context_used

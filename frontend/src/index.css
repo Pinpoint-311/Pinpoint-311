@@ -1133,3 +1133,50 @@ html.rtl [data-no-translate] {
             linear-gradient(180deg, rgba(29, 26, 68, 0.94) 0%, rgba(17, 15, 44, 0.96) 100%) !important;
     }
 }
+
+/* Outline button for text-style actions ("Search by resident", "Clear all
+ * filters", "Back to List", "Select all"...). They were bare colored text, read
+ * as links, and had no edge to aim at. Border uses --control-border (>=3:1 on
+ * every panel); focus uses the same amber ring as ui/Button. */
+.btn-outline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.75rem;
+    border: 1px solid var(--control-border);
+    border-radius: 0.625rem;
+    background-color: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 0.75rem;
+    line-height: 1rem;
+    font-weight: 500;
+    text-decoration: none;
+    transition: background-color 150ms, border-color 150ms, color 150ms;
+}
+.btn-outline:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.8);
+    color: #fff;
+}
+.btn-outline:focus-visible {
+    outline: 3px solid #fcd34d;
+    outline-offset: 2px;
+}
+.btn-outline:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+.btn-outline-md {
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+}
+.btn-outline-danger {
+    border-color: rgba(252, 165, 165, 0.7);
+    color: #fecaca;
+}
+.btn-outline-danger:hover {
+    background-color: rgba(239, 68, 68, 0.15);
+    border-color: #fca5a5;
+    color: #fff;
+}

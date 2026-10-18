@@ -421,7 +421,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                 <div className="flex items-center justify-between mb-8">
                     <button
                         onClick={handleBackToList}
-                        className="flex items-center gap-2 text-white/60 hover:text-white transition-colors group"
+                        className="btn-outline btn-outline-md group"
                     >
                         <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                         <span className="font-medium">{"Back to all requests"}</span>

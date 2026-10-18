@@ -58,8 +58,13 @@ def split_data_url(img: str) -> Optional[tuple]:
     return "image/jpeg", img
 
 
+class AIProviderError(Exception):
+    """A text completion failed. The message is safe to log, not to show:
+    it can carry a provider's raw error body."""
+
+
 class AIProvider:
-    """Base adapter. Subclasses implement `complete_json`."""
+    """Base adapter. Subclasses implement `complete_json` and `complete_text`."""
 
     provider: str = "base"
 
@@ -69,4 +74,13 @@ class AIProvider:
     async def complete_json(self, prompt: str, image_data: Optional[List[str]] = None) -> Dict[str, Any]:
         """Run the prompt (+ optional images) and return a parsed JSON analysis.
         Implementations must never raise — return analysis_fallback(...) on error."""
+        raise NotImplementedError
+
+    async def complete_text(self, prompt: str, temperature: float = 0.3,
+                            max_tokens: int = 4096) -> str:
+        """Run a free-text prompt (the chat assistants) and return the answer.
+
+        Unlike complete_json this raises AIProviderError on failure: a chat
+        has no sensible fallback answer, and the caller turns the error into
+        an HTTP status."""
         raise NotImplementedError

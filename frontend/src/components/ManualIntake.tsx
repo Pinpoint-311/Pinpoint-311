@@ -1234,7 +1234,7 @@ export default function ManualIntake({
                                                     onClick={() => setShowCallerHistory(v => !v)}
                                                     aria-expanded={showCallerHistory}
                                                     aria-controls="intake-caller-history"
-                                                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary-200 hover:text-primary-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                                                    className="btn-outline"
                                                 >
                                                     <History className="w-3.5 h-3.5" aria-hidden="true" />
                                                     {callerMatches.total === 1 ? '1 other report' : `${callerMatches.total} other reports`} from this {copy.who}

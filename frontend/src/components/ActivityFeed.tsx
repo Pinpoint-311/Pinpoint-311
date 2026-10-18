@@ -326,7 +326,7 @@ export default function ActivityFeed({
                         {unreadCount > 0 && (
                             <button
                                 onClick={markAllAsRead}
-                                className="text-xs text-primary-400 hover:text-primary-300 transition-colors"
+                                className="btn-outline"
                             >
                                 Mark all read
                             </button>

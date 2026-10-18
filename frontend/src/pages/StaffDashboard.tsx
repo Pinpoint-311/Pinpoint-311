@@ -1185,9 +1185,13 @@ export default function StaffDashboard() {
                                 title="Go to Home"
                             >
                                 {settings?.logo_url ? (
-                                    <div className="relative">
-                                        <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-8 w-auto" />
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                    // shrink-0 + max-w-none: in this crowded flex row the
+                                    // image's preflight max-width:100% let the browser
+                                    // squeeze it narrower than its natural width at a
+                                    // fixed height, so a round seal came out cropped.
+                                    <div className="relative shrink-0">
+                                        <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-10 w-auto max-w-none object-contain" />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
                                             <Home className="w-4 h-4 text-white" aria-hidden="true" />
                                         </div>
                                     </div>
@@ -2557,7 +2561,7 @@ export default function StaffDashboard() {
                                         {hasActiveFilters && (
                                             <button
                                                 onClick={clearFilters}
-                                                className="text-xs text-primary-400 hover:text-primary-300"
+                                                className="btn-outline"
                                             >
                                                 Clear all filters
                                             </button>
@@ -2713,7 +2717,7 @@ export default function StaffDashboard() {
                                 <div className="lg:hidden p-3 border-b border-white/10 flex items-center">
                                     <button
                                         onClick={() => setSelectedRequest(null)}
-                                        className="flex items-center gap-2 text-white/70 hover:text-white"
+                                        className="btn-outline btn-outline-md"
                                     >
                                         <ChevronLeft className="w-5 h-5" aria-hidden="true" />
                                         <span>Back to List</span>
@@ -4323,7 +4327,7 @@ export default function StaffDashboard() {
                                         <img src={completionPhotoUrl} alt="Completion" className="h-12 w-12 object-cover rounded-lg" />
                                         <button
                                             onClick={() => setCompletionPhotoUrl('')}
-                                            className="text-red-400 hover:text-red-300 text-sm"
+                                            className="btn-outline btn-outline-danger"
                                         >
                                             Remove
                                         </button>

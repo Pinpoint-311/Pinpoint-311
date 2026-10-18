@@ -4296,7 +4296,7 @@ export default function AdminConsole() {
                                 <button
                                     type="button"
                                     onClick={() => setServiceRouting(p => ({ ...p, sla_hours: '' }))}
-                                    className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 ml-auto"
+                                    className="btn-outline ml-auto"
                                 >
                                     Clear
                                 </button>
@@ -4457,7 +4457,7 @@ export default function AdminConsole() {
                                 <button type="button" onClick={() => setServiceRouting(p => ({
                                     ...p,
                                     routing_config: { ...p.routing_config, contacts: [...p.routing_config.contacts, { name: '', phone: '', url: '' }] }
-                                }))} className="text-sm text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                                }))} className="btn-outline btn-outline-md">
                                     <Plus className="w-4 h-4" /> Add Contact
                                 </button>
                             </div>
@@ -4848,7 +4848,7 @@ export default function AdminConsole() {
                                             ]
                                         }
                                     }))}
-                                    className="text-sm text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                                    className="btn-outline btn-outline-md"
                                 >
                                     <Plus className="w-4 h-4" /> Add Question
                                 </button>
@@ -5269,15 +5269,14 @@ export default function AdminConsole() {
                                         <button
                                             type="button"
                                             onClick={() => setNewLayer(p => ({ ...p, service_codes: services.map(s => s.service_code) }))}
-                                            className="text-xs text-primary-400 hover:text-primary-300"
+                                            className="btn-outline"
                                         >
                                             Select All
                                         </button>
-                                        <span className="text-white/20">|</span>
                                         <button
                                             type="button"
                                             onClick={() => setNewLayer(p => ({ ...p, service_codes: [] }))}
-                                            className="text-xs text-white/40 hover:text-white/60"
+                                            className="btn-outline"
                                         >
                                             Clear All
                                         </button>

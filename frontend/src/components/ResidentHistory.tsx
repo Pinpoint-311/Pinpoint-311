@@ -197,7 +197,7 @@ export function ResidentSearch({ onOpen }: { onOpen: (id: string) => void }) {
                 onClick={() => setOpen(o => !o)}
                 aria-expanded={open}
                 aria-controls="resident-search-panel"
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-white/55 hover:text-white/85 transition-colors"
+                className="btn-outline"
             >
                 <UserSearch className="w-3.5 h-3.5" aria-hidden="true" />
                 Search by resident

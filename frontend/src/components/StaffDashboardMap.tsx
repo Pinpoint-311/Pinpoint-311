@@ -915,15 +915,14 @@ export default function StaffDashboardMap({
                             <button
                                 type="button"
                                 onClick={() => toggleAllCategories(true)}
-                                className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                className="btn-outline"
                             >
                                 {"Select All"}
                             </button>
-                            <span className="text-white/20" aria-hidden="true">|</span>
                             <button
                                 type="button"
                                 onClick={() => toggleAllCategories(false)}
-                                className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                className="btn-outline"
                             >
                                 Clear All
                             </button>
@@ -956,15 +955,14 @@ export default function StaffDashboardMap({
                                 <button
                                     type="button"
                                     onClick={() => toggleAllDepartments(true)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     Select All
                                 </button>
-                                <span className="text-white/20" aria-hidden="true">|</span>
-                                <button
+                                    <button
                                     type="button"
                                     onClick={() => toggleAllDepartments(false)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     Clear All
                                 </button>
@@ -1009,15 +1007,14 @@ export default function StaffDashboardMap({
                                 <button
                                     type="button"
                                     onClick={() => toggleAllStaff(true)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     {"Select All"}
                                 </button>
-                                <span className="text-white/20" aria-hidden="true">|</span>
-                                <button
+                                    <button
                                     type="button"
                                     onClick={() => toggleAllStaff(false)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     {"Clear All"}
                                 </button>
@@ -1092,15 +1089,14 @@ export default function StaffDashboardMap({
                                 <button
                                     type="button"
                                     onClick={() => toggleAllLayers(true)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     {"Show All"}
                                 </button>
-                                <span className="text-white/20" aria-hidden="true">|</span>
-                                <button
+                                    <button
                                     type="button"
                                     onClick={() => toggleAllLayers(false)}
-                                    className="text-xs text-primary-400 hover:text-primary-300 font-medium"
+                                    className="btn-outline"
                                 >
                                     {"Hide All"}
                                 </button>
