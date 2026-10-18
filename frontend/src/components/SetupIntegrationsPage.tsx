@@ -1775,6 +1775,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                                     ? null
                                     : 'Create the encryption passphrase below and confirm you saved a copy.',
                             body: renderBackupPassphrase(),
+                            onTest: () => api.testBackups(),
                         }] : []),
                         ...(wantedFeatures.has('errors') ? [{
                             id: 'errors',

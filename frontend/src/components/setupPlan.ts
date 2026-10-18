@@ -148,7 +148,7 @@ const VENDOR_ORDER: Vendor[] = [
  */
 export const BACKUP_SECRETS = [
     { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
-    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
+    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. For Backblaze, Oracle, MinIO and others, paste the S3 endpoint, e.g. s3.us-east-005.backblazeb2.com.' },
     { key: 'BACKUP_S3_REGION', label: 'Region' },
     { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
     { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Check, ChevronDown, ChevronRight, Circle, AlertCircle } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Circle, AlertCircle, Loader2 } from 'lucide-react';
 import { useOptionalAnnounce } from './liveAnnounce';
 
 import InlineProviderSetup from './InlineProviderSetup';
@@ -444,7 +444,7 @@ function TaskItem({
  */
 export function PlainSecrets({
     fields, values, onChange, onSave, saving, isConfigured, onSaved, className = '',
-    blockedReason,
+    blockedReason, onTest,
 }: {
     fields: { key: string; label: string; secret?: boolean; help?: string }[];
     values: Record<string, string>;
@@ -462,9 +462,27 @@ export function PlainSecrets({
      * encrypted by a passphrase nobody wrote down -- which is not a backup, and
      * is discovered at restore time. */
     blockedReason?: string | null;
+    /** A live check, for settings that have one (backups). Adds "Save & Test"
+     *  and "Test connection", and shows what the check found. */
+    onTest?: () => Promise<{ ok: boolean; detail: string }>;
 }) {
     const pending = fields.filter(f => values[f.key]).map(f => f.key);
     const allStored = fields.every(f => isConfigured(f.key));
+    const anyStored = fields.some(f => isConfigured(f.key));
+    const [testing, setTesting] = useState(false);
+    const [result, setResult] = useState<{ ok: boolean; detail: string } | null>(null);
+    const runTest = async () => {
+        if (!onTest) return;
+        setTesting(true);
+        setResult(null);
+        try {
+            setResult(await onTest());
+        } catch (err: any) {
+            setResult({ ok: false, detail: err?.message || "Couldn't run the test." });
+        } finally {
+            setTesting(false);
+        }
+    };
 
     return (
         <div className={`rounded-xl border border-white/10 bg-white/[0.03] p-3.5 ${className}`}>
@@ -484,13 +502,28 @@ export function PlainSecrets({
             <div className="flex flex-wrap items-center gap-2.5 mt-3 pt-3 border-t border-white/[0.07]">
                 <button
                     type="button"
-                    onClick={async () => { await onSave(pending); onSaved(); }}
-                    disabled={pending.length === 0 || saving !== null || !!blockedReason}
+                    onClick={async () => {
+                        await onSave(pending);
+                        onSaved();
+                        if (onTest) await runTest();
+                    }}
+                    disabled={pending.length === 0 || saving !== null || testing || !!blockedReason}
                     title={blockedReason || undefined}
                     className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white bg-primary-500 hover:bg-primary-400 border border-primary-400/50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
                 >
-                    {saving ? 'Saving…' : 'Save'}
+                    {saving ? 'Saving…' : onTest ? 'Save & Test' : 'Save'}
                 </button>
+                {onTest && (
+                    <button
+                        type="button"
+                        onClick={runTest}
+                        disabled={!anyStored || testing || saving !== null}
+                        className="inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold text-white/85 bg-white/5 hover:bg-white/10 border border-white/15 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300"
+                    >
+                        {testing && <Loader2 className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />}
+                        {testing ? 'Testing…' : 'Test connection'}
+                    </button>
+                )}
                 {blockedReason && (
                     <span className="text-[11px] text-amber-200/90 inline-flex items-center gap-1.5">
                         <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
@@ -505,13 +538,24 @@ export function PlainSecrets({
                 )}
                 {/* These have no live test, and saying so is better than a green
                     tick that only means the value reached the database. */}
-                {!allStored && pending.length === 0 && (
+                {!onTest && !allStored && pending.length === 0 && (
                     <span className="text-[11px] text-white/35 inline-flex items-center gap-1.5">
                         <AlertCircle className="w-3.5 h-3.5" aria-hidden="true" />
                         Not filled in yet.
                     </span>
                 )}
             </div>
+            {result && (
+                <div
+                    role="status"
+                    className={`mt-3 rounded-xl border px-3 py-2.5 text-xs leading-relaxed whitespace-pre-line ${result.ok
+                        ? 'border-emerald-400/30 bg-emerald-500/[0.08] text-emerald-100'
+                        : 'border-red-400/30 bg-red-500/[0.08] text-red-100'}`}
+                >
+                    <span className="font-semibold">{result.ok ? 'Working. ' : 'Not working. '}</span>
+                    {result.detail}
+                </div>
+            )}
         </div>
     );
 }

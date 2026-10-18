@@ -5923,6 +5923,15 @@ async def list_backups_endpoint(
     return await list_backups()
 
 
+@router.post("/backups/test")
+async def test_backups_endpoint(
+    _: User = Depends(get_current_admin)
+):
+    """Check the backup settings for real: storage round trip and passphrase."""
+    from app.services.backup_service import test_backups
+    return await test_backups()
+
+
 @router.post("/backups/create")
 async def create_backup_endpoint(
     _: User = Depends(get_current_admin)
@@ -5934,7 +5943,7 @@ async def create_backup_endpoint(
 
     result = await create_backup()
     if result["status"] == "error":
-        raise HTTPException(status_code=500, detail="Backup failed")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {result.get('message', 'unknown error')}")
     
     return result
 

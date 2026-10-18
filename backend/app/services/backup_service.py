@@ -77,9 +77,25 @@ async def get_backup_config() -> Optional[Dict[str, str]]:
 
 
 
+def normalize_endpoint(endpoint: Optional[str]) -> Optional[str]:
+    """An endpoint URL boto3 accepts.
+
+    Providers show the endpoint as a bare host (Backblaze B2's
+    "s3.us-east-005.backblazeb2.com", for example), and boto3 rejects that
+    with "Invalid endpoint" -- so every backup failed for a correctly copied
+    setting. Add https:// when no scheme was given.
+    """
+    value = (endpoint or "").strip().rstrip("/")
+    if not value:
+        return None
+    if "://" not in value:
+        value = "https://" + value
+    return value
+
+
 def get_s3_client(config: Dict[str, str]):
     """Create S3 client from config."""
-    endpoint = config.get("BACKUP_S3_ENDPOINT")
+    endpoint = normalize_endpoint(config.get("BACKUP_S3_ENDPOINT"))
     region = config.get("BACKUP_S3_REGION", "us-ashburn-1")
     
     client_config = BotoConfig(
@@ -139,14 +155,17 @@ def encrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
     """Encrypt a file using GPG symmetric encryption."""
     try:
         # Use gpg for symmetric encryption
+        # The passphrase goes in on stdin, not the command line, where any
+        # process on the host could read it from the process list.
         result = subprocess.run(
             [
-                "gpg", "--batch", "--yes",
+                "gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--passphrase-fd", "0",
                 "--symmetric", "--cipher-algo", "AES256",
-                "--passphrase", passphrase,
                 "--output", output_path,
                 input_path
             ],
+            input=passphrase,
             capture_output=True,
             text=True,
             timeout=300  # 5 minute timeout
@@ -175,12 +194,13 @@ def decrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
     try:
         result = subprocess.run(
             [
-                "gpg", "--batch", "--yes",
+                "gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--passphrase-fd", "0",
                 "--decrypt",
-                "--passphrase", passphrase,
                 "--output", output_path,
                 input_path
             ],
+            input=passphrase,
             capture_output=True,
             text=True,
             timeout=300
@@ -623,3 +643,92 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
         logger.error(f"Restore failed: {e}")
         return {"status": "error", "message": str(e)}
 
+
+
+TEST_PREFIX = "pinpoint-connection-test/"
+
+
+def _test_storage_round_trip(config: Dict[str, str]) -> Dict[str, Any]:
+    """Write, read back and delete one small object. Blocking (boto3)."""
+    import uuid
+
+    s3 = get_s3_client(config)
+    bucket = config["BACKUP_S3_BUCKET"]
+    key = f"{TEST_PREFIX}{uuid.uuid4().hex}.txt"
+    body = f"Pinpoint 311 backup connection test {datetime.now(timezone.utc).isoformat()}".encode()
+    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain")
+    try:
+        got = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    finally:
+        s3.delete_object(Bucket=bucket, Key=key)
+    if got != body:
+        raise ValueError("the object read back did not match what was written")
+    return {"bucket": bucket, "endpoint": normalize_endpoint(config.get("BACKUP_S3_ENDPOINT")) or "AWS S3"}
+
+
+def _test_encryption(passphrase: str) -> None:
+    """Encrypt and decrypt a small file with the backup passphrase."""
+    with tempfile.TemporaryDirectory() as tmp:
+        plain, enc, back = (os.path.join(tmp, n) for n in ("t.txt", "t.gpg", "t.out"))
+        with open(plain, "w") as f:
+            f.write("pinpoint backup encryption test")
+        if not encrypt_file(plain, enc, passphrase):
+            raise RuntimeError("encryption failed")
+        if not decrypt_file(enc, back, passphrase):
+            raise RuntimeError("decryption failed")
+        with open(back) as f:
+            if f.read() != "pinpoint backup encryption test":
+                raise RuntimeError("decrypted content did not match")
+
+
+async def test_backups() -> Dict[str, Any]:
+    """A real check of everything a nightly backup needs, short of running one.
+
+    Returns {ok, detail, steps}. Uses the same settings and client the backup
+    job uses, writes one small object under pinpoint-connection-test/ and
+    deletes it again. Never raises.
+    """
+    import asyncio
+    from app.services.secret_manager import get_secret
+
+    keys = ["BACKUP_S3_ENDPOINT", "BACKUP_S3_BUCKET", "BACKUP_S3_ACCESS_KEY",
+            "BACKUP_S3_SECRET_KEY", "BACKUP_ENCRYPTION_KEY", "BACKUP_S3_REGION"]
+    config = {}
+    for k in keys:
+        v = await get_secret(k)
+        if v:
+            config[k] = v
+
+    labels = {"BACKUP_S3_BUCKET": "bucket name", "BACKUP_S3_ACCESS_KEY": "access key ID",
+              "BACKUP_S3_SECRET_KEY": "secret access key"}
+    missing = [labels[k] for k in labels if k not in config]
+    if missing:
+        return {"ok": False, "detail": "Add the " + ", ".join(missing) + " and save, then test again."}
+
+    steps = []
+    try:
+        where = await asyncio.to_thread(_test_storage_round_trip, config)
+        steps.append(f"Wrote a test file to the {where['bucket']} bucket at {where['endpoint']}, "
+                     "read it back, and deleted it.")
+    except Exception as exc:
+        reason = str(exc)
+        try:
+            from botocore.exceptions import ClientError
+            if isinstance(exc, ClientError):
+                err = exc.response.get("Error", {})
+                reason = f"{err.get('Code', 'Error')}: {err.get('Message', '')}".strip()
+        except Exception:
+            pass
+        return {"ok": False, "detail": f"The storage service refused the test: {reason[:300]}"}
+
+    if "BACKUP_ENCRYPTION_KEY" not in config:
+        return {"ok": False, "detail": "\n".join(steps + [
+            "No backup passphrase is set, so backups can't run. Create one below and save it somewhere safe."])}
+    try:
+        await asyncio.to_thread(_test_encryption, config["BACKUP_ENCRYPTION_KEY"])
+        steps.append("Encrypted and decrypted a test file with your backup passphrase.")
+    except Exception as exc:
+        return {"ok": False, "detail": "\n".join(steps + [f"Encryption check failed: {exc}"])}
+
+    steps.append("Backups are ready. The nightly backup will run on schedule.")
+    return {"ok": True, "detail": "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))}

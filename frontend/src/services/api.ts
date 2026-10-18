@@ -1717,6 +1717,11 @@ class ApiClient {
 
     /** Generate and store a backup passphrase. Returns it once, in the clear,
      *  because a copy has to end up somewhere other than this server. */
+    /** A real backup check: storage round trip plus the passphrase. */
+    async testBackups(): Promise<{ ok: boolean; detail: string }> {
+        return this.request('/system/backups/test', { method: 'POST' });
+    }
+
     async generateBackupKey(): Promise<{ key: string }> {
         return this.request('/setup/backup-key', { method: 'POST' });
     }

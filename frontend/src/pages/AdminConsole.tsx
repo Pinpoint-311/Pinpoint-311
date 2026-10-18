@@ -2532,20 +2532,20 @@ export default function AdminConsole() {
                                                nothing about whether they were
                                                set up. They are ticks in Setup &
                                                Integrations now. */
-                                            { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
-                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works, and staff still see it', icon: EyeOff, color: 'slate' },
+                                            { key: 'research_portal' as const, label: 'Research Portal', desc: 'Give researchers access to anonymized data exports.', icon: FlaskConical, color: 'violet' },
+                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map. Staff still see it.', icon: EyeOff, color: 'slate' },
                                             /* The description is deliberately explicit about what lands
                                                in the town's database, because that is the records
                                                question a clerk has to be able to answer: one
                                                multiple-choice answer and a timestamp, no free text, no
                                                identity. Longer feedback goes to email instead, so it
                                                never becomes a record this town holds. */
-                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous multiple-choice question about whether reporting was easy. Only the answer and date are stored: no name, no comments. Longer feedback goes to the email below. Results appear on Statistics.', icon: MessageSquareHeart, color: 'sky' },
+                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous question about how easy reporting was. Stores only the answer: no name, no comments. Longer feedback goes to the email below.', icon: MessageSquareHeart, color: 'sky' },
                                             /* Spelled out because it is the one module that reads
                                                resident PII across reports, and an administrator
                                                turning it on is making a privacy decision. Every
                                                clause below is enforced on the server, not here. */
-                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s other reports and let them search by full email or name. Staff only see reports they already have access to, and every lookup is logged.', icon: UserSearch, color: 'blue' },
+                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s other reports and allow search by email or name. Every lookup is logged.', icon: UserSearch, color: 'blue' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
@@ -2572,7 +2572,7 @@ export default function AdminConsole() {
                                                             </div>
                                                             <div className="min-w-0">
                                                                 <h3 className="text-sm font-semibold text-white">{mod.label}</h3>
-                                                                <p className="text-xs text-white/50 mt-0.5 truncate">{mod.desc}</p>
+                                                                <p className="text-xs text-white/50 mt-0.5 leading-relaxed">{mod.desc}</p>
                                                             </div>
                                                         </div>
                                                         <button

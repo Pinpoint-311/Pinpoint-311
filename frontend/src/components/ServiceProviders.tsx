@@ -1275,6 +1275,8 @@ export interface PlainSetting {
     body?: ReactNode;
     /** Why saving is refused, if it is. */
     blockedReason?: string | null;
+    /** A live check, where the setting has one (backups). */
+    onTest?: () => Promise<{ ok: boolean; detail: string }>;
 }
 
 function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
@@ -1323,7 +1325,7 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                         </div>
                         <span className={`block text-[11px] mt-2.5 ${configured ? 'text-white/45' : 'text-amber-200/85'}`}>
                             {configured
-                                ? 'Set up. Nothing here reports back, so there is nothing to test.'
+                                ? (setting.onTest ? 'Set up. Open to test it.' : 'Set up. Nothing here reports back, so there is nothing to test.')
                                 : 'Add its details in Setup Instructions, above.'}
                         </span>
                     </button>
@@ -1352,6 +1354,7 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                 isConfigured={secrets.isConfigured}
                                 onSaved={secrets.onSaved}
                                 blockedReason={setting.blockedReason}
+                                onTest={setting.onTest}
                             />
                             {body}
                         </div>
@@ -1722,7 +1725,7 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                         </p>
                                     </div>
                                 </div>
-                                <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed line-clamp-2">{c.blurb}</p>
+                                <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed">{c.blurb}</p>
                                 {stillSaved(c.id) && (
                                     /* Said on the tile, not in the paragraph at
                                        the foot of the section. Whether *this*
