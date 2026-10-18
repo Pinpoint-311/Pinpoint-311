@@ -399,6 +399,46 @@ def plate_like(text: str, box: Box) -> float:
     return max(0.0, min(1.0, score))
 
 
+def _union(a: Box, b: Box) -> Box:
+    return Box(min(a.left, b.left), min(a.top, b.top), max(a.right, b.right),
+               max(a.bottom, b.bottom), "plate", 0.0)
+
+
+def _adjacent(a: Box, b: Box) -> bool:
+    """Two OCR words that could be halves of one plate: on the same baseline
+    and separated by a gap no wider than about one character height."""
+    h = max(a.height, b.height)
+    if h <= 0:
+        return False
+    same_line = abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 0.5 * h
+    gap = max(b.left - a.right, a.left - b.right, 0.0)
+    return same_line and gap <= 1.5 * h
+
+
+def plates_from_words(lines: List[List[Tuple[str, Box, float]]]) -> List[Box]:
+    """Plate boxes from OCR words grouped by line, (text, box, ocr_confidence).
+
+    Every reader returns words, and plates are usually printed in two groups:
+    "ABC 1234", or New Jersey's "A12 BCD". Scored one word at a time, "ABC"
+    failed (three letters, no digit) and only "1234" was blurred -- half a
+    plate left legible -- and "A12" / "BCD" both failed, so a New Jersey plate
+    was not blurred at all. Adjacent words on a line are therefore also scored
+    together, and the pair's combined box is what gets blurred.
+    """
+    boxes: List[Box] = []
+    for words in lines:
+        words = [w for w in words if w[1] and w[1].area > 0]
+        candidates = [(t, b, c) for t, b, c in words]
+        for (t1, b1, c1), (t2, b2, c2) in zip(words, words[1:]):
+            if _adjacent(b1, b2):
+                candidates.append((f"{t1} {t2}", _union(b1, b2), min(c1, c2)))
+        for text, box, conf in candidates:
+            score = plate_like(text, box) * max(0.0, min(1.0, conf))
+            if score >= PLATE_MIN_CONFIDENCE:
+                boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
+    return boxes
+
+
 def google_text_plates(payload: Dict[str, Any], width: int, height: int) -> List[Box]:
     """Parse Vision TEXT_DETECTION and keep the regions that look like plates.
 
@@ -409,16 +449,20 @@ def google_text_plates(payload: Dict[str, Any], width: int, height: int) -> List
     if not responses:
         return []
     annotations = responses[0].get("textAnnotations") or []
-    boxes: List[Box] = []
+    # Word annotations come in reading order; consecutive words on the same
+    # baseline form a line for pairing (see plates_from_words).
+    lines: List[List[Tuple[str, Box, float]]] = []
     for ann in annotations[1:]:
         poly = ann.get("boundingPoly") or {}
         box = _from_vertices(poly.get("vertices") or [], width, height, "plate", 0.0)
         if not box or box.area <= 0:
             continue
-        score = plate_like(ann.get("description", ""), box)
-        if score >= PLATE_MIN_CONFIDENCE:
-            boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
-    return boxes
+        word = (ann.get("description", ""), box, 1.0)
+        if lines and _adjacent(lines[-1][-1][1], box):
+            lines[-1].append(word)
+        else:
+            lines.append([word])
+    return plates_from_words(lines)
 
 
 def rekognition_text_plates(payload: Dict[str, Any]) -> List[Box]:
@@ -428,7 +472,9 @@ def rekognition_text_plates(payload: Dict[str, Any]) -> List[Box]:
     and the dealer frame, which wrecks both the aspect-ratio test and the
     character-count test.
     """
-    boxes: List[Box] = []
+    # Words grouped by their parent LINE, left to right, so the halves of a
+    # plate can be paired (plates_from_words) without gluing in the state name.
+    by_line: Dict[Any, List[Tuple[str, Box, float]]] = {}
     for det in payload.get("TextDetections") or []:
         if det.get("Type") != "WORD":
             continue
@@ -439,14 +485,11 @@ def rekognition_text_plates(payload: Dict[str, Any]) -> List[Box]:
                   top + float(bb.get("Height", 0) or 0), "plate", 0.0).clamped()
         if box.area <= 0:
             continue
-        score = plate_like(det.get("DetectedText", ""), box)
         # Rekognition's own OCR confidence gates the geometry score, so a
         # half-read smudge cannot reach the threshold on shape alone.
         ocr = float(det.get("Confidence", 0) or 0) / 100.0
-        score *= max(0.0, min(1.0, ocr))
-        if score >= PLATE_MIN_CONFIDENCE:
-            boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
-    return boxes
+        by_line.setdefault(det.get("ParentId", id(det)), []).append((det.get("DetectedText", ""), box, ocr))
+    return plates_from_words([sorted(ws, key=lambda w: w[1].left) for ws in by_line.values()])
 
 
 def azure_text_plates(payload: Dict[str, Any], width: int, height: int) -> List[Box]:
@@ -457,18 +500,16 @@ def azure_text_plates(payload: Dict[str, Any], width: int, height: int) -> List[
     if width <= 0 or height <= 0:
         return []
     read = payload.get("readResult") or {}
-    boxes: List[Box] = []
+    lines: List[List[Tuple[str, Box, float]]] = []
     for block in read.get("blocks") or []:
         for line in block.get("lines") or []:
+            words = []
             for word in line.get("words") or []:
                 box = _from_vertices(word.get("boundingPolygon") or [], width, height, "plate", 0.0)
-                if not box or box.area <= 0:
-                    continue
-                score = plate_like(word.get("text", ""), box)
-                score *= max(0.0, min(1.0, float(word.get("confidence", 1) or 0)))
-                if score >= PLATE_MIN_CONFIDENCE:
-                    boxes.append(Box(box.left, box.top, box.right, box.bottom, "plate", score))
-    return boxes
+                if box and box.area > 0:
+                    words.append((word.get("text", ""), box, float(word.get("confidence", 1) or 0)))
+            lines.append(words)
+    return plates_from_words(lines)
 
 
 # --------------------------------------------------------------------------
