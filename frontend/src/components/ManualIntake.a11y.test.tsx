@@ -79,7 +79,7 @@ async function open() {
     );
     // The dialog focuses the description on open, on a timer. Waiting for that
     // to land keeps a stray late focus out of the assertions below.
-    const description = await screen.findByLabelText(/what is the caller reporting/i);
+    const description = await screen.findByLabelText(/what is being reported/i);
     await waitFor(() => expect(document.activeElement).toBe(description));
     return description as HTMLTextAreaElement;
 }
@@ -101,21 +101,21 @@ describe('ManualIntake field labelling', () => {
         await open();
 
         // getByLabelText only finds these if the association is programmatic.
-        expect(screen.getByLabelText(/what is the caller reporting/i).tagName).toBe('TEXTAREA');
-        expect(screen.getByLabelText(/callback number/i).tagName).toBe('INPUT');
+        expect(screen.getByLabelText(/what is being reported/i).tagName).toBe('TEXTAREA');
+        expect(screen.getByLabelText(/phone number/i).tagName).toBe('INPUT');
         expect(screen.getByLabelText(/^location/i).tagName).toBe('INPUT');
         expect(category()).toBeTruthy();
 
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
         expect(screen.getByLabelText(/first name/i).tagName).toBe('INPUT');
         expect(screen.getByLabelText(/last name/i).tagName).toBe('INPUT');
-        expect(screen.getByLabelText(/caller email/i).tagName).toBe('INPUT');
+        expect(screen.getByLabelText(/^email/i).tagName).toBe('INPUT');
     });
 
     it('marks the required fields as required', async () => {
         await open();
         expect(category().getAttribute('aria-required')).toBe('true');
-        expect(screen.getByLabelText(/what is the caller reporting/i)
+        expect(screen.getByLabelText(/what is being reported/i)
             .getAttribute('aria-required')).toBe('true');
     });
 
@@ -123,8 +123,8 @@ describe('ManualIntake field labelling', () => {
         const user = userEvent.setup();
         await open();
 
-        await user.click(screen.getByText(/callback number/i));
-        expect(document.activeElement).toBe(screen.getByLabelText(/callback number/i));
+        await user.click(screen.getByText(/phone number/i));
+        expect(document.activeElement).toBe(screen.getByLabelText(/phone number/i));
     });
 });
 
@@ -179,7 +179,7 @@ describe('ManualIntake validation feedback', () => {
         expect(document.activeElement).toBe(summary);
         await user.click(within(summary).getByRole('link', { name: /at least 10 characters/i }));
 
-        const description = screen.getByLabelText(/what is the caller reporting/i);
+        const description = screen.getByLabelText(/what is being reported/i);
         expect(document.activeElement).toBe(description);
         expect(description.getAttribute('aria-invalid')).toBe('true');
         expect(description.getAttribute('aria-describedby')).toContain('intake-description-error');
@@ -193,18 +193,18 @@ describe('ManualIntake validation feedback', () => {
         await user.keyboard('{ArrowDown}{Enter}');
         description.focus();
         await user.keyboard('Pothole outside the library');
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        const email = screen.getByLabelText(/caller email/i);
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        const email = screen.getByLabelText(/^email/i);
         email.focus();
         await user.keyboard('not-an-email');
         // Collapse it again: the error must re-open it.
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
 
         await user.click(logRequest());
 
         const summary = document.getElementById('intake-error-summary')!;
         await user.click(within(summary).getByRole('link', { name: /valid email/i }));
-        const reopened = screen.getByLabelText(/caller email/i);
+        const reopened = screen.getByLabelText(/^email/i);
         expect(document.activeElement).toBe(reopened);
         expect(reopened.getAttribute('aria-invalid')).toBe('true');
         expect(createManualIntake).not.toHaveBeenCalled();
@@ -229,7 +229,7 @@ describe('ManualIntake validation feedback', () => {
 });
 
 describe('ManualIntake category combobox', () => {
-    const options = () => screen.getAllByRole('option');
+    const options = () => within(screen.getByRole('listbox')).getAllByRole('option');
 
     it('opens from the keyboard and moves a cursor with the arrow keys', async () => {
         const user = userEvent.setup();

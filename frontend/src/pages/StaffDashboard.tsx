@@ -56,6 +56,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
 import { languageLabel } from '../utils/languages';
+import { sourceLabel } from '../utils/requestSource';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData, PlatformFeedbackStatistics } from '../types';
@@ -2729,6 +2730,14 @@ export default function StaffDashboard() {
                                                 <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
                                                     <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
+                                                    {/* How it came in. */}
+                                                    <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded border bg-white/5 text-white/80 border-white/20">
+                                                        {selectedRequest.source === 'phone' ? <Phone className="w-3 h-3" aria-hidden="true" />
+                                                            : selectedRequest.source === 'email' ? <Mail className="w-3 h-3" aria-hidden="true" />
+                                                            : selectedRequest.source === 'walk_in' ? <User className="w-3 h-3" aria-hidden="true" />
+                                                            : <Globe className="w-3 h-3" aria-hidden="true" />}
+                                                        <span className="sr-only">Received by: </span>{sourceLabel(selectedRequest.source)}
+                                                    </span>
                                                     {selectedRequest.sla_due_datetime && selectedRequest.sla_state && (() => {
                                                         const due = new Date(selectedRequest.sla_due_datetime);
                                                         const when = due.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });

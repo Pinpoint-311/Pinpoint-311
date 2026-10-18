@@ -121,7 +121,7 @@ async function open(props: Record<string, any> = {}) {
             />
         </AccessibilityProvider>,
     );
-    const description = await screen.findByLabelText(/what is the caller reporting/i);
+    const description = await screen.findByLabelText(/what is being reported/i);
     await waitFor(() => expect(document.activeElement).toBe(description));
     return description as HTMLTextAreaElement;
 }
@@ -155,10 +155,10 @@ describe('validation', () => {
         await open();
         await pickCategory(user, 'Pothole');
 
-        await user.type(screen.getByLabelText(/what is the caller reporting/i), 'short');
-        await user.type(screen.getByLabelText(/callback number/i), '12');
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        await user.type(screen.getByLabelText(/caller email/i), 'bad@');
+        await user.type(screen.getByLabelText(/what is being reported/i), 'short');
+        await user.type(screen.getByLabelText(/phone number/i), '12');
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        await user.type(screen.getByLabelText(/^email/i), 'bad@');
         await user.click(logRequest());
 
         const summary = document.getElementById('intake-error-summary')!;
@@ -179,7 +179,7 @@ describe('validation', () => {
         await user.click(category());
         // "Spray paint" is only in Graffiti's description.
         await user.keyboard('spray paint');
-        const options = screen.getAllByRole('option');
+        const options = within(screen.getByRole('listbox')).getAllByRole('option');
         expect(options).toHaveLength(1);
         expect(options[0].textContent).toContain('Graffiti');
         expect(options[0].textContent).toContain('Spray paint tags');
@@ -192,7 +192,7 @@ describe('category questions', () => {
         await open();
         await pickCategory(user, 'Pothole');
 
-        await user.type(screen.getByLabelText(/what is the caller reporting/i), 'Pothole by the library steps');
+        await user.type(screen.getByLabelText(/what is being reported/i), 'Pothole by the library steps');
         await user.type(screen.getByLabelText(/Nearest cross street/), 'Oak Ave');
         const blocked = screen.getByRole('group', { name: /Is the road blocked\?/ });
         await user.click(within(blocked).getByRole('radio', { name: 'Yes' }));
@@ -210,13 +210,13 @@ describe('category questions', () => {
         const user = userEvent.setup();
         await open();
         await pickCategory(user, 'Graffiti');
-        await user.type(screen.getByLabelText(/what is the caller reporting/i), 'Tags on the library wall');
+        await user.type(screen.getByLabelText(/what is being reported/i), 'Tags on the library wall');
         await user.click(logRequest());
         await screen.findByRole('heading', { name: /request logged/i });
 
         await user.click(screen.getByRole('button', { name: /^log another$/i }));
         await user.click(category());
-        const first = screen.getAllByRole('option')[0];
+        const first = within(screen.getByRole('listbox')).getAllByRole('option')[0];
         expect(first.textContent).toContain('Recent');
         expect(first.textContent).toContain('Graffiti');
     });
@@ -253,14 +253,14 @@ describe('the success panel', () => {
         const description = await open();
         await pickCategory(user, 'Graffiti');
         await user.type(description, 'Tags on the library wall');
-        await user.type(screen.getByLabelText(/callback number/i), '(555) 123-4567');
+        await user.type(screen.getByLabelText(/phone number/i), '(555) 123-4567');
         await user.click(logRequest());
         await screen.findByRole('heading', { name: /request logged/i });
 
-        await user.click(screen.getByRole('button', { name: /same caller/i }));
-        const fresh = await screen.findByLabelText(/what is the caller reporting/i);
+        await user.click(screen.getByRole('button', { name: /same resident/i }));
+        const fresh = await screen.findByLabelText(/what is being reported/i);
         expect((fresh as HTMLTextAreaElement).value).toBe('');
-        expect((screen.getByLabelText(/callback number/i) as HTMLInputElement).value).toBe('(555) 123-4567');
+        expect((screen.getByLabelText(/phone number/i) as HTMLInputElement).value).toBe('(555) 123-4567');
         expect(category().textContent).toContain('Choose a category');
     });
 
@@ -269,12 +269,12 @@ describe('the success panel', () => {
         const description = await open();
         await pickCategory(user, 'Graffiti');
         await user.type(description, 'Tags on the library wall');
-        await user.type(screen.getByLabelText(/callback number/i), '(555) 123-4567');
+        await user.type(screen.getByLabelText(/phone number/i), '(555) 123-4567');
         await user.click(logRequest());
         await screen.findByRole('heading', { name: /request logged/i });
 
         await user.click(screen.getByRole('button', { name: /^log another$/i }));
-        expect((await screen.findByLabelText(/callback number/i) as HTMLInputElement).value).toBe('');
+        expect((await screen.findByLabelText(/phone number/i) as HTMLInputElement).value).toBe('');
     });
 });
 
@@ -292,7 +292,7 @@ describe('closing and reopening', () => {
     it('starts clean after a request was logged, so it cannot be logged twice', async () => {
         const user = userEvent.setup();
         render(<Harness />);
-        const description = await screen.findByLabelText(/what is the caller reporting/i);
+        const description = await screen.findByLabelText(/what is being reported/i);
         await waitFor(() => expect(document.activeElement).toBe(description));
         await pickCategory(user, 'Graffiti');
         await user.type(description, 'Tags on the library wall');
@@ -302,7 +302,7 @@ describe('closing and reopening', () => {
         await user.click(screen.getByRole('button', { name: /^close$/i }));
         await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
         await user.click(screen.getByRole('button', { name: 'Reopen' }));
-        const fresh = await screen.findByLabelText(/what is the caller reporting/i);
+        const fresh = await screen.findByLabelText(/what is being reported/i);
         expect((fresh as HTMLTextAreaElement).value).toBe('');
         expect(category().textContent).toContain('Choose a category');
     });
@@ -329,8 +329,8 @@ describe('staff options', () => {
         const description = await open();
         await pickCategory(user, 'Graffiti');
         await user.type(description, 'Tags on the library wall');
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        await user.type(screen.getByLabelText(/caller email/i), 'caller@example.gov');
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        await user.type(screen.getByLabelText(/^email/i), 'caller@example.gov');
 
         await user.click(screen.getByRole('button', { name: /staff options/i }));
         const dept = screen.getByLabelText(/^Department/) as HTMLSelectElement;
@@ -343,7 +343,7 @@ describe('staff options', () => {
         await user.selectOptions(assignee, 'jdoe');
         await user.selectOptions(screen.getByLabelText(/^Priority/), '8');
         await user.type(screen.getByLabelText(/^Internal note/), 'Owner is on vacation');
-        const confirm = screen.getByLabelText(/send the caller a confirmation/i) as HTMLInputElement;
+        const confirm = screen.getByLabelText(/send the resident a confirmation/i) as HTMLInputElement;
         expect(confirm.checked).toBe(true);
         await user.click(confirm);
 
@@ -363,7 +363,7 @@ describe('staff options', () => {
         const user = userEvent.setup();
         await open();
         await user.click(screen.getByRole('button', { name: /staff options/i }));
-        const confirm = screen.getByLabelText(/send the caller a confirmation/i) as HTMLInputElement;
+        const confirm = screen.getByLabelText(/send the resident a confirmation/i) as HTMLInputElement;
         expect(confirm.disabled).toBe(true);
         expect(confirm.checked).toBe(false);
     });
@@ -459,17 +459,24 @@ describe('what the resident form says before submit', () => {
 });
 
 describe('call-taker shortcuts and context', () => {
-    it('switches channel with Alt+number, and shows the 911 cue only for calls', async () => {
+    it('switches Received by with Alt+number, and shows the 911 cue for phone and in person', async () => {
         await open();
-        expect(screen.getByText(/transfer the caller to 911/i)).toBeTruthy();
+        const received = () => screen.getByLabelText(/received by/i) as HTMLSelectElement;
+        expect(received().value).toBe('phone');
+        expect(screen.getByText(/direct them to 911/i)).toBeTruthy();
 
-        fireEvent.keyDown(screen.getByLabelText(/what is the caller reporting/i), { key: '¡', code: 'Digit2', altKey: true });
-        expect(screen.getByRole('radio', { name: /email/i }).getAttribute('aria-checked')).toBe('true');
-        expect(screen.getByLabelText(/what does the email say/i)).toBeTruthy();
-        expect(screen.queryByText(/transfer the caller to 911/i)).toBeNull();
+        fireEvent.keyDown(screen.getByLabelText(/what is being reported/i), { key: '¡', code: 'Digit2', altKey: true });
+        expect(received().value).toBe('email');
+        expect(screen.queryByText(/direct them to 911/i)).toBeNull();
+        // The form keeps one wording whatever the channel.
+        expect(screen.getByLabelText(/what is being reported/i)).toBeTruthy();
 
-        fireEvent.keyDown(screen.getByLabelText(/what does the email say/i), { key: '4', code: 'Digit4', altKey: true });
-        expect(screen.getByRole('radio', { name: /other/i }).getAttribute('aria-checked')).toBe('true');
+        fireEvent.keyDown(screen.getByLabelText(/what is being reported/i), { key: '3', code: 'Digit3', altKey: true });
+        expect(received().value).toBe('walk_in');
+        expect(screen.getByText(/direct them to 911/i)).toBeTruthy();
+
+        fireEvent.keyDown(screen.getByLabelText(/what is being reported/i), { key: '4', code: 'Digit4', altKey: true });
+        expect(received().value).toBe('other');
     });
 
     it('logs with Ctrl+Enter and sends the chosen language', async () => {
@@ -477,9 +484,9 @@ describe('call-taker shortcuts and context', () => {
         const description = await open();
         await pickCategory(user, 'Graffiti');
         await user.type(description, 'Tags on the library wall');
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
         await user.selectOptions(screen.getByLabelText(/preferred language/i), 'es');
-        fireEvent.keyDown(screen.getByLabelText(/what is the caller reporting/i), { key: 'Enter', ctrlKey: true });
+        fireEvent.keyDown(screen.getByLabelText(/what is being reported/i), { key: 'Enter', ctrlKey: true });
         await waitFor(() => expect(createManualIntake).toHaveBeenCalled());
         expect(payload().preferred_language).toBe('es');
         expect(payload().source).toBe('phone');
@@ -518,12 +525,12 @@ describe('call-taker shortcuts and context', () => {
         });
         const user = userEvent.setup();
         await open();
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        await user.type(screen.getByLabelText(/caller email/i), 'Caller@Example.gov');
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        await user.type(screen.getByLabelText(/^email/i), 'Caller@Example.gov');
         await user.tab();
 
         await waitFor(() => expect(searchResidents).toHaveBeenCalledWith({ email: 'caller@example.gov' }));
-        const toggle = await screen.findByRole('button', { name: /2 other reports from this caller/i });
+        const toggle = await screen.findByRole('button', { name: /2 other reports from this resident/i });
         await user.click(toggle);
         await user.click(screen.getByRole('button', { name: 'Open request REQ-2' }));
         expect(onOpenRequest).toHaveBeenCalledWith('REQ-2');
@@ -532,8 +539,8 @@ describe('call-taker shortcuts and context', () => {
     it('never searches residents when the module is off', async () => {
         const user = userEvent.setup();
         await open();
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        await user.type(screen.getByLabelText(/caller email/i), 'caller@example.gov');
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        await user.type(screen.getByLabelText(/^email/i), 'caller@example.gov');
         await user.tab();
         expect(searchResidents).not.toHaveBeenCalled();
     });
@@ -541,8 +548,8 @@ describe('call-taker shortcuts and context', () => {
     it('turns autofill off on the contact fields', async () => {
         const user = userEvent.setup();
         await open();
-        await user.click(screen.getByRole('button', { name: /caller details/i }));
-        for (const label of [/first name/i, /last name/i, /caller email/i, /callback number/i]) {
+        await user.click(screen.getByRole('button', { name: /resident details/i }));
+        for (const label of [/first name/i, /last name/i, /^email/i, /phone number/i]) {
             expect(screen.getByLabelText(label).getAttribute('autocomplete')).toBe('off');
         }
     });

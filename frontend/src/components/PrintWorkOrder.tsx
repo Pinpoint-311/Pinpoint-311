@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { languageLabel } from '../utils/languages';
+import { sourceLabel } from '../utils/requestSource';
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 import { MapProviderConfig, mapSnapshot } from '../maps';
@@ -145,16 +146,8 @@ export default function PrintWorkOrder({
         };
 
         // Source label
-        const getSourceLabel = (source: string) => {
-            switch (source) {
-                case 'resident_portal': return 'Resident Portal';
-                case 'phone': return 'Phone Call';
-                case 'walk_in': return 'Walk-In';
-                case 'email': return 'Email';
-                case 'other': return 'Other';
-                default: return source || 'Resident Portal';
-            }
-        };
+        // Same labels as the staff view and the intake "Received by" selector.
+        const getSourceLabel = (source: string) => escapeHtml(sourceLabel(source));
 
         // SVG Icons for formal look
         const icons = {

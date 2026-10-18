@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig, isPointInGeoJson } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Phone, Mail, Footprints, Search, CheckCircle, CheckCircle2, ChevronDown, MapPin, MapPinOff,
-    User as UserIcon, X, EyeOff, SignpostBig, ClipboardList, MessageSquare, Siren, Layers,
+    Phone, Mail, Search, CheckCircle, CheckCircle2, ChevronDown, MapPin, MapPinOff,
+    User as UserIcon, X, EyeOff, SignpostBig, MessageSquare, Siren, Layers,
     Copy, Check, ExternalLink, Plus, UserPlus, Settings2, History, AlertTriangle, Camera,
 } from 'lucide-react';
 
@@ -25,61 +25,26 @@ import { useAnnounce } from '../context/AccessibilityContext';
 
 type Source = 'phone' | 'email' | 'walk_in' | 'other';
 
-const SOURCES: { value: Source; label: string; icon: typeof Phone }[] = [
-    { value: 'phone', label: 'Phone call', icon: Phone },
-    { value: 'email', label: 'Email', icon: Mail },
-    { value: 'walk_in', label: 'Walk-in', icon: Footprints },
-    { value: 'other', label: 'Other', icon: MessageSquare },
+// How the report reached the town. Recorded on the request (statistics,
+// exports, the work order, connected systems), so it stays -- but as one
+// compact selector, not four big buttons, and the form no longer rewords
+// itself per channel.
+const SOURCES: { value: Source; label: string }[] = [
+    { value: 'phone', label: 'Phone' },
+    { value: 'email', label: 'Email' },
+    { value: 'walk_in', label: 'In person' },
+    { value: 'other', label: 'Other' },
 ];
 
-// Per-channel copy — a phone caller, an email sender and a walk-in visitor are
-// different intake situations, so the labels and examples are tailored to each
-// rather than defaulting everything to "caller".
-const COPY: Record<Source, {
-    who: string;
-    descLabel: string;
-    descPlaceholder: string;
-    phoneLabel: string;
-    contactToggle: string;
-    contactBlurb: string;
-    emailLabel: string;
-}> = {
-    phone: {
-        who: 'caller',
-        descLabel: 'What is the caller reporting?',
-        descPlaceholder: 'Large pothole in the eastbound lane of Main St near the library.',
-        phoneLabel: 'Callback number',
-        contactToggle: 'Caller details',
-        contactBlurb: 'Needed only for a status update or a callback.',
-        emailLabel: 'Caller email',
-    },
-    email: {
-        who: 'sender',
-        descLabel: 'What does the email say?',
-        descPlaceholder: 'Paste or summarize the message.',
-        phoneLabel: 'Contact number',
-        contactToggle: 'Sender details',
-        contactBlurb: 'Copy the sender’s name and address from the email so replies reach them.',
-        emailLabel: 'Sender email',
-    },
-    walk_in: {
-        who: 'visitor',
-        descLabel: 'What is the visitor reporting?',
-        descPlaceholder: 'The playground gate at Riverside Park won’t latch.',
-        phoneLabel: 'Contact number',
-        contactToggle: 'Visitor details',
-        contactBlurb: 'Needed only for a status update or a callback.',
-        emailLabel: 'Visitor email',
-    },
-    other: {
-        who: 'resident',
-        descLabel: 'What is being reported?',
-        descPlaceholder: 'Letter from a resident about a broken streetlight on Oak Ave.',
-        phoneLabel: 'Contact number',
-        contactToggle: 'Resident details',
-        contactBlurb: 'Needed only for a status update or a callback.',
-        emailLabel: 'Resident email',
-    },
+// One wording for every channel, so the form doesn't change under the clerk.
+const COPY = {
+    who: 'resident',
+    descLabel: 'What is being reported?',
+    descPlaceholder: 'Large pothole in the eastbound lane of Main St near the library.',
+    phoneLabel: 'Phone number',
+    contactToggle: 'Resident details',
+    contactBlurb: 'Needed only for a status update or a callback.',
+    emailLabel: 'Email',
 };
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -288,7 +253,6 @@ export default function ManualIntake({
     const catButtonRef = useRef<HTMLButtonElement>(null);
     const errorSummaryRef = useRef<HTMLDivElement>(null);
     const successHeadingRef = useRef<HTMLHeadingElement>(null);
-    const channelRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const loggedRef = useRef(false);
 
     const active = useMemo(() => services.filter(s => s.is_active !== false), [services]);
@@ -319,7 +283,7 @@ export default function ManualIntake({
     const staff = staffProp ?? fetchedStaff ?? [];
     const emailIsValid = EMAIL_RE.test(email.trim());
 
-    const copy = COPY[source];
+    const copy = COPY;
 
     /* ---------------------------------------------------------- lifecycle */
 
@@ -533,19 +497,10 @@ export default function ManualIntake({
 
     /* ------------------------------------------------------------- channel */
 
-    const chooseSource = (value: Source, focus = false) => {
+    const chooseSource = (value: Source) => {
         setSource(value);
+        // An email has the sender's address in it; open the contact fields.
         if (value === 'email') setShowContact(true);
-        if (focus) channelRefs.current[SOURCES.findIndex(s => s.value === value)]?.focus();
-    };
-
-    // A radio group moves with the arrow keys and is one Tab stop.
-    const onChannelKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-        const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1
-            : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-        if (!step) return;
-        e.preventDefault();
-        chooseSource(SOURCES[(index + step + SOURCES.length) % SOURCES.length].value, true);
     };
 
     /* ------------------------------------------------------- caller lookup */
@@ -727,7 +682,7 @@ export default function ManualIntake({
             if (index >= 0 && index < SOURCES.length) {
                 e.preventDefault();
                 chooseSource(SOURCES[index].value);
-                announce(`Channel: ${SOURCES[index].label}.`);
+                announce(`Received by: ${SOURCES[index].label}.`);
             }
         }
     };
@@ -842,41 +797,26 @@ export default function ManualIntake({
                 ) : (
                     /* ---------------------------------------------- form */
                     <>
-                        {/* How it came in */}
-                        <section aria-labelledby="intake-source-label">
-                            <SectionHeading
-                                icon={ClipboardList}
-                                title="How did it come in?"
-                                id="intake-source-label"
-                                aside={<span className="hidden sm:block text-[11px] text-white/45">Alt+1–4 to switch</span>}
-                            />
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-labelledby="intake-source-label">
-                                {SOURCES.map((s, i) => {
-                                    const isSel = source === s.value;
-                                    return (
-                                        <button
-                                            key={s.value}
-                                            ref={el => { channelRefs.current[i] = el; }}
-                                            type="button"
-                                            role="radio"
-                                            aria-checked={isSel}
-                                            tabIndex={isSel ? 0 : -1}
-                                            aria-keyshortcuts={`Alt+${i + 1}`}
-                                            onClick={() => chooseSource(s.value)}
-                                            onKeyDown={e => onChannelKeyDown(e, i)}
-                                            className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2.5 border text-sm font-medium transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 ${isSel
-                                                ? 'bg-gradient-to-br from-primary-500/25 to-primary-700/15 border-primary-400/50 text-white shadow-lg shadow-primary-900/30'
-                                                : 'bg-white/[0.03] border-white/10 text-white/70 hover:bg-white/[0.06] hover:border-white/20'}`}
-                                        >
-                                            <s.icon className="w-4 h-4" aria-hidden="true" /> {s.label}
-                                        </button>
-                                    );
-                                })}
+                        {/* How it came in: one compact selector */}
+                        <section aria-label="How the report came in" className="space-y-3">
+                            <div className="flex flex-wrap items-center gap-3">
+                                <label htmlFor="intake-source" className="text-sm font-medium text-white/70">Received by</label>
+                                <select
+                                    id="intake-source"
+                                    value={source}
+                                    onChange={e => chooseSource(e.target.value as Source)}
+                                    aria-keyshortcuts="Alt+1 Alt+2 Alt+3 Alt+4"
+                                    className="glass-input text-sm py-2 w-auto min-w-[9rem]"
+                                >
+                                    {SOURCES.map((s, i) => (
+                                        <option key={s.value} value={s.value}>{s.label}{` (Alt+${i + 1})`}</option>
+                                    ))}
+                                </select>
                             </div>
-                            {source === 'phone' && (
-                                <p className="mt-3 flex items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-sm text-red-100">
+                            {(source === 'phone' || source === 'walk_in') && (
+                                <p className="flex items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3.5 py-2.5 text-sm text-red-100">
                                     <Siren className="w-4 h-4 shrink-0 text-red-300" aria-hidden="true" />
-                                    If this is an emergency, transfer the caller to 911.
+                                    If this is an emergency, direct them to 911.
                                 </p>
                             )}
                         </section>
