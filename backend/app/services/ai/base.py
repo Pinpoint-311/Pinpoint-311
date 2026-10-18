@@ -1,7 +1,7 @@
 """Provider-agnostic AI interface for Pinpoint 311.
 
 An AIProvider turns a prompt (+ optional images) into a parsed JSON analysis
-object. The concrete adapters (Vertex AI / Azure Government AI / AWS Bedrock)
+object. The concrete adapters (Vertex AI / Azure OpenAI / AWS Bedrock)
 all return the same shape, so the triage pipeline and analytics assistant don't
 care which boundary/model a jurisdiction chose.
 """

@@ -21,10 +21,6 @@
       "    That is a directory object, outside the scope of resource templates. Use",
       "    a managed identity instead where the server runs on Azure - then there",
       "    is no credential at all - or create the app registration by hand.",
-      "  * an AI Face resource. Microsoft gates Face behind a Limited Access review.",
-      "    The multi-service account below serves the Face endpoint once your",
-      "    subscription is approved; until then it answers 403, which is a provider",
-      "    gate and not a fault in this template.",
       "  * email and SMS. Both need DNS you control or carrier registration that",
       "    takes weeks. No template shortens either."
     ]
@@ -172,7 +168,7 @@
       "type": "bool",
       "defaultValue": false,
       "metadata": {
-        "description": "Create one multi-service AI Services account. A single key and endpoint from it covers Translator (with the region above), image reading for licence plates, and face detection once Microsoft's Limited Access review has approved your subscription."
+        "description": "Create one multi-service AI Services account. A single key and endpoint from it covers Translator (with the region above), image reading for license plates, and face detection (no Limited Access approval is needed for detection)."
       }
     },
     "cognitiveAccountName": {
@@ -506,7 +502,7 @@
       "type": "string",
       "value": "[parameters('location')]",
       "metadata": {
-        "description": "Pinpoint box: Region. On the Translation card; leave its Endpoint box empty."
+        "description": "Pinpoint box: Region. On the Translation card. Leave its Endpoint box empty, unless you set Allowed IP address: then paste the AI Services endpoint (https://NAME.cognitiveservices.azure.com/) there, because the firewall blocks the global endpoint."
       }
     }
   }

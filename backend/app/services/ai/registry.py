@@ -37,9 +37,9 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
         },
     },
     "azure": {
-        "name": "Azure Government AI",
-        "boundary": "Azure Government / GCC High (FedRAMP High / DoD)",
-        "description": "Azure OpenAI (GPT models) in US government regions. Best for Microsoft/M365 states.",
+        "name": "Azure OpenAI",
+        "boundary": "Azure commercial or Azure Government / GCC High",
+        "description": "Azure OpenAI (GPT models) in your own Azure subscription, commercial or Government. Best for Microsoft/M365 towns.",
         # Deliberately no model list, and no default.
         #
         # Azure addresses a model by the *deployment name the town invented*,
@@ -62,10 +62,10 @@ AI_CATALOG: Dict[str, Dict[str, Any]] = {
             {"key": "AZURE_OPENAI_API_VERSION", "label": "API version (optional)", "secret": False},
         ],
         "field_help": {
-            "AZURE_OPENAI_ENDPOINT": "e.g. https://your-resource.openai.azure.us — the Gov-cloud endpoint from the Azure portal.",
+            "AZURE_OPENAI_ENDPOINT": "e.g. https://NAME.openai.azure.com/ or https://NAME.cognitiveservices.azure.com/ (.us on Azure Government), from Keys and Endpoint.",
             "AZURE_OPENAI_API_KEY": "Key 1 or Key 2 from your Azure OpenAI resource.",
-            "AZURE_OPENAI_DEPLOYMENT": "The name YOU gave the deployment in Azure AI Foundry -- not a model id like gpt-4.1-mini, unless that is what you named it. Foundry -> your resource -> Deployments.",
-            "AZURE_OPENAI_API_VERSION": "Leave blank to use the supported default.",
+            "AZURE_OPENAI_DEPLOYMENT": "The name YOU gave the deployment in Microsoft Foundry -- not a model id like gpt-4.1-mini, unless that is what you named it. Foundry -> your resource -> Deployments.",
+            "AZURE_OPENAI_API_VERSION": "Leave blank for most models. For o-series or GPT-5 deployments, enter 2024-12-01-preview or later.",
         },
     },
     "bedrock": {

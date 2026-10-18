@@ -1027,16 +1027,13 @@ async def _aws_detect(raw: bytes, faces: bool, plates: bool) -> List[Box]:
 
 # ---- Azure ----------------------------------------------------------------
 #
-# Azure needs two separate resources: AI Face for faces and AI Vision for the
-# text read. They are not the same endpoint and not the same key.
+# Faces go to the Face API and plates to the Vision text read. One Azure AI
+# Services account serves both, so the two credential pairs usually hold the
+# same endpoint and key; separate Face and Vision resources also work.
 #
-# Face carries an access caveat the other providers do not. Microsoft placed the
-# Face API behind a Limited Access registration under its Responsible AI
-# Standard; detection (returning rectangles) is the least restricted operation,
-# but a subscription still has to be approved before the resource will serve
-# traffic. A town that cannot get through that form should pick another
-# provider, and the admin UI says so rather than letting them discover it from
-# a 403.
+# Face detection with returnFaceId=false, which is all this sends, needs no
+# Limited Access approval. Identification and verification do, and Pinpoint
+# never calls them.
 
 async def _azure_face_creds():
     from app.services.secret_manager import get_secret
@@ -1320,8 +1317,7 @@ async def _usable(provider: str) -> bool:
             face_endpoint, face_key = await _azure_face_creds()
             vision_endpoint, vision_key = await _azure_vision_creds()
             # Either half is enough to be worth calling: Face covers faces,
-            # Vision covers plates, and a town may deliberately have only one
-            # because Face is behind Microsoft's Limited Access review.
+            # Vision covers plates, and a town may deliberately want only one.
             return bool((face_endpoint and face_key) or (vision_endpoint and vision_key))
     except Exception as exc:
         from app.core.sanitize import sanitize_for_log

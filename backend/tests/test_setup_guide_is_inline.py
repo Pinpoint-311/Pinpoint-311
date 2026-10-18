@@ -340,7 +340,11 @@ CLAIMS = re.compile(
     r"\b(free tier|for free|no cost|costs? (?:only|about|around)|"
     r"\$\d|per month|a few dollars|cents? per|a cent per|"
     r"about \d+ minutes?|takes \d+|in (?:under )?\d+ minutes?|"
-    r"quickest|fastest|easiest|simplest|it is easy|very easy)\b",
+    r"quickest|fastest|easiest|simplest|it is easy|very easy|"
+    r"about (?:a|an|one|two|three|four|five|ten|a few) (?:minutes?|hours?|days?)|"
+    r"within (?:a|an|one|two|a few) (?:minutes?|hours?|days?)|"
+    r"give it (?:a|an) (?:minute|moment|hour)|"
+    r"takes about|it is free|it's free)\b",
     re.I,
 )
 

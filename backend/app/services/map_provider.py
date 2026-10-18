@@ -54,12 +54,13 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         "field_help": {
             "GOOGLE_MAPS_API_KEY": (
                 "Server-side only, for geocoding -- never sent to a browser. "
-                "Restrict it to this server's IP address."
+                "Restrict it to this server's IP address, with Geocoding API "
+                "and Places API (New)."
             ),
             "GOOGLE_MAPS_BROWSER_API_KEY": (
                 "Goes into the page residents load, so restrict it by HTTP "
-                "referrer to your domain. It needs Maps Embed API, Maps "
-                "JavaScript API, Places API (New) and Places API. The same "
+                "referrer to your domain. It needs Maps JavaScript API, Maps "
+                "Embed API, Places API (New) and Geocoding API. The same "
                 "value in both boxes works if you would rather run one key."
             ),
             "GOOGLE_MAPS_MAP_ID": (

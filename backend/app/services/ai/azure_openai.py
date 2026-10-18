@@ -1,9 +1,9 @@
-"""Azure Government AI adapter — Azure OpenAI Service (GPT models) in the
-US Government / GCC High regions. Uses the REST API over httpx (OpenAI-
+"""Azure OpenAI adapter — Azure OpenAI Service (GPT models) in Azure commercial
+or Azure Government / GCC High. Uses the REST API over httpx (OpenAI-
 compatible), so no extra SDK dependency and it's fully mockable.
 
 Config/creds:
-    endpoint    e.g. https://your-resource.openai.azure.us   (Gov cloud)
+    endpoint    e.g. https://NAME.openai.azure.com (.us on Azure Government)
     api_key     Azure OpenAI key
     deployment  the model deployment name (acts as the model id)
     api_version default 2024-06-01
@@ -112,7 +112,7 @@ class AzureOpenAIProvider(AIProvider):
         if resp.status_code == 404 and "DeploymentNotFound" in resp.text:
             return (
                 f"Azure has no deployment named \"{self.model}\". A deployment name is "
-                "one you choose in Azure AI Foundry when you deploy a model -- it is not "
+                "one you choose in Microsoft Foundry when you deploy a model -- it is not "
                 "a model id, and a name from another provider will never match. Create a "
                 "deployment there and put its name in the Deployment name box."
             )

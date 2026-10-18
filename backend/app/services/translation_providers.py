@@ -195,7 +195,7 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure AI Translator",
-        "description": "Azure Cognitive Services Translator — for Microsoft/Azure-Government stacks.",
+        "description": "Azure AI Translator — for Microsoft and Azure Government stacks.",
         "credential_fields": [
             {"key": "AZURE_TRANSLATOR_KEY", "label": "Translator Key", "secret": True},
             {"key": "AZURE_TRANSLATOR_REGION", "label": "Region", "secret": False},

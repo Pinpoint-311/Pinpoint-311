@@ -147,15 +147,15 @@ const VENDOR_ORDER: Vendor[] = [
  * both surfaces render the same array.
  */
 export const BACKUP_SECRETS = [
-    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
-    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. For Backblaze, Oracle, MinIO and others, paste the S3 endpoint, e.g. s3.us-east-005.backblazeb2.com.' },
-    { key: 'BACKUP_S3_REGION', label: 'Region' },
-    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
+    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name', help: 'A Backblaze key limited to one bucket also needs listAllBucketNames.' },
+    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: "Leave blank for AWS S3. For Backblaze B2, Wasabi, Oracle or MinIO, paste the S3 endpoint, like s3.us-east-005.backblazeb2.com. Azure Blob Storage isn't S3-compatible." },
+    { key: 'BACKUP_S3_REGION', label: 'Region', help: "Required. For AWS S3, the bucket's region, like us-east-1. For Backblaze, the part of the endpoint after s3., like us-east-005." },
+    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true, help: "For Backblaze, the keyID of an application key. The master key doesn't work with S3." },
     { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
 ];
 
 export const SENTRY_SECRETS = [
-    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' },
+    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Sentry → Settings → Projects → your project → Client Keys (DSN). Restart Pinpoint after saving. A SENTRY_DSN environment variable takes priority.' },
 ];
 
 export function buildPlan(input: PlanInput): PlanTask[] {

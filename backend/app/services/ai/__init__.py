@@ -1,4 +1,4 @@
-"""Pluggable AI providers (Vertex AI / Azure Government AI / AWS Bedrock).
+"""Pluggable AI providers (Vertex AI / Azure OpenAI / AWS Bedrock).
 
 Every deployment — self-hosted or centrally hosted — can choose its AI
 boundary and model via config, with Vertex/Gemini as the unchanged default.

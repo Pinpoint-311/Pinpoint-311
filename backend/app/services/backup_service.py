@@ -6,11 +6,13 @@ Supports Oracle Cloud Object Storage, AWS S3, and other S3-compatible services.
 """
 
 import os
+import re
 import logging
 import tempfile
 import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 import boto3
 from botocore.config import Config as BotoConfig
 
@@ -93,10 +95,35 @@ def normalize_endpoint(endpoint: Optional[str]) -> Optional[str]:
     return value
 
 
+_BACKBLAZE_HOST = re.compile(r"^s3\.([a-z0-9-]+)\.backblazeb2\.com$", re.I)
+# NAMESPACE.compat.objectstorage.REGION.oraclecloud.com
+_ORACLE_HOST = re.compile(r"\.compat\.objectstorage\.([a-z0-9-]+)\.oraclecloud\.com$", re.I)
+
+
+def resolve_region(endpoint: Optional[str], region: Optional[str]) -> Optional[str]:
+    """The region to sign with when the Region box may be blank.
+
+    A blank region used to fall back to us-ashburn-1, an Oracle region, which
+    AWS S3 rejects for every bucket. Instead: a Backblaze endpoint names its
+    region in the host; no endpoint means AWS, where us-east-1 is the default;
+    anything else is left to boto3.
+    """
+    value = (region or "").strip()
+    if value:
+        return value
+    if not endpoint:
+        return "us-east-1"
+    host = urlparse(endpoint).hostname or ""
+    match = _BACKBLAZE_HOST.match(host) or _ORACLE_HOST.search(host)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
 def get_s3_client(config: Dict[str, str]):
     """Create S3 client from config."""
     endpoint = normalize_endpoint(config.get("BACKUP_S3_ENDPOINT"))
-    region = config.get("BACKUP_S3_REGION", "us-ashburn-1")
+    region = resolve_region(endpoint, config.get("BACKUP_S3_REGION"))
     
     client_config = BotoConfig(
         signature_version='s3v4',

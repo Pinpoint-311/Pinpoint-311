@@ -140,7 +140,7 @@ defineCloudFork('azure', (ctx) => ({
     templateExtras: AZURE_TEMPLATE_EXTRAS(ctx),
     template: {
         label: 'Deploy with the Azure template',
-        blurb: <>One form, about two minutes. Creates the key vault and, if you want them, the OpenAI, Translator and Vision resources.</>,
+        blurb: <>One form. Creates the key vault and, if you want them, the OpenAI, Translator and Vision resources.</>,
         switchLabel: 'Use the template instead',
     },
     manual: {
@@ -433,18 +433,17 @@ defineSteps('maps', 'google', (ctx) => [
         body: (
             <>
                 In <L href="https://console.cloud.google.com">Google Cloud</L>, open{' '}
-                <B>APIs &amp; Services → Library</B> and enable all three of <C>Maps JavaScript API</C>,{' '}
-                <C>Geocoding API</C> and <C>Places API (New)</C>. Then open <B>Billing</B> and attach a
-                payment method.
+                <B>APIs &amp; Services → Library</B> and enable all four: <C>Maps JavaScript API</C>,{' '}
+                <C>Maps Embed API</C>, <C>Geocoding API</C> and <C>Places API (New)</C>. Then open{' '}
+                <B>Billing</B> and attach a payment method.
             </>
         ),
-        check: <>an "API Enabled" banner on each of the three, and a billing account listed under Billing.</>,
+        check: <>an "API Enabled" banner on each of the four, and a billing account listed under Billing.</>,
         trouble: (
             <>
                 Billing is required. Google will issue a key without it, but the map then shows a gray box
-                saying "this page can't load Google Maps correctly". Also,{' '}
-                <C>Places API (New)</C> and <C>Places API</C> are separate products. Enable both, or
-                the address box offers no suggestions.
+                saying "this page can't load Google Maps correctly". Enable <C>Places API (New)</C>,
+                not the legacy <C>Places API</C>, or the address box offers no suggestions.
             </>
         ),
     },
@@ -456,14 +455,14 @@ defineSteps('maps', 'google', (ctx) => [
                 <br /><br />
                 <B>Browser key</B> — restrict to <B>Websites</B>, add{' '}
                 <CopyValue ctx={ctx} id="gmref" value={`${ctx.origin}/*`} /> (the <C>/*</C> matters), and
-                check all four: <C>Maps Embed API</C>, <C>Maps JavaScript API</C>,{' '}
-                <C>Places API (New)</C> and <C>Places API</C>.
+                check all four: <C>Maps JavaScript API</C>, <C>Maps Embed API</C>,{' '}
+                <C>Places API (New)</C> and <C>Geocoding API</C>.
                 <br /><br />
                 <B>Server key</B> — restrict to <B>IP addresses</B>, add this server's, and check{' '}
                 <C>Geocoding API</C> and <C>Places API (New)</C>.
             </>
         ),
-        check: <>two keys: one restricted to your site with the four map and Places APIs, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
+        check: <>two keys: one restricted to your site with all four APIs, one restricted to this server's IP with <C>Geocoding API</C> and <C>Places API (New)</C>.</>,
         trouble: (
             <>
                 Restrict both keys so they can't be used elsewhere and billed to the town. The Test
@@ -506,7 +505,7 @@ defineSteps('maps', 'esri', () => [
                 year, so set an expiry date you'll track.
             </>
         ),
-        check: <>a key string starting <C>AAPK</C>. (<C>AAPT</C> is Esri's prefix for short-lived access tokens — if that is what you have, it is not the right credential.)</>,
+        check: <>a new API key credential in the developer dashboard. Older legacy API keys no longer work; create a new credential if yours predates it.</>,
         note: <>Record the expiry date where the town will see it. Keys expire at 00:00 GMT on that date, and the map goes blank until a new key is saved.</>,
     },
     {
@@ -658,7 +657,8 @@ defineSteps('ai', 'azure', () => [
             <>
                 Open the resource in <L href="https://ai.azure.com">Microsoft Foundry</L> and deploy a
                 model — <B>Deployments → Deploy model</B>. Enter the <B>deployment name</B> you choose in
-                the box below. It can differ from the model name.
+                the box below. It can differ from the model name. Pick a model that accepts images
+                and JSON output, like <C>gpt-4.1-mini</C> or <C>gpt-4o</C>.
             </>
         ),
         check: <>your deployment listed with status Succeeded.</>,
@@ -667,8 +667,8 @@ defineSteps('ai', 'azure', () => [
         body: (
             <>
                 Back on the Azure resource, open <B>Resource Management → Keys and Endpoint</B> and copy{' '}
-                <B>KEY 1</B> and the <B>Endpoint</B>. Leave the API version box empty to use the
-                current default.
+                <B>KEY 1</B> and the <B>Endpoint</B>. Leave the API version box empty for most
+                models. For an o-series or GPT-5 deployment, enter <C>2024-12-01-preview</C> or later.
             </>
         ),
         fields: ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION'],
@@ -689,20 +689,20 @@ defineSteps('ai', 'bedrock', () => [
     {
         body: (
             <>
-                In the left pane under <B>Bedrock configurations</B> choose <B>Model access</B>, then{' '}
-                <B>Modify model access</B>. Select the models you want and submit the use-case form.
-                Access is typically granted within a few minutes.
+                Serverless models turn on the first time they are called. Anthropic models also need a
+                one-time use-case form: open a Claude model in the Bedrock console's model catalog and
+                submit it.
             </>
         ),
-        check: <>the model showing <B>Access granted</B> rather than Available to request.</>,
-        note: <>If submitting fails, the account lacks AWS Marketplace subscription permission. The AWS account owner can grant it under <B>Billing → Marketplace settings</B>.</>,
+        note: <>The first call to a Marketplace model subscribes the account, which needs the permissions in the next step.</>,
     },
     {
         body: (
             <>
                 Create an IAM user for Pinpoint with permission to invoke models —{' '}
-                <C>bedrock:InvokeModel</C> and <C>bedrock:InvokeModelWithResponseStream</C> — and nothing
-                else. Take an access key from <B>Security credentials</B> and paste it here with the same
+                <C>bedrock:InvokeModel</C> and <C>bedrock:InvokeModelWithResponseStream</C>, plus{' '}
+                <C>aws-marketplace:Subscribe</C> and <C>aws-marketplace:ViewSubscriptions</C> for a
+                model's first use. Take an access key from <B>Security credentials</B> and paste it here with the same
                 region you set above.
             </>
         ),
@@ -769,8 +769,10 @@ const azureTranslatorTemplateSteps: StepBuilder = () => [
         body: (
             <>
                 Open your <B>AI Services</B> account (the one the deployment created, not a new Translator resource) → <B>Resource Management → Keys and Endpoint</B> and copy{' '}
-                <B>KEY 1</B> and the <B>Location/Region</B> value. Leave the endpoint box empty
-                unless you were given a custom one.
+                <B>KEY 1</B> and the <B>Location/Region</B> value. If you filled in{' '}
+                <B>Allowed IP address</B> on the form, paste the account's endpoint
+                (<C>https://NAME.cognitiveservices.azure.com/</C>) in the endpoint box, because the
+                firewall blocks the global one. Otherwise leave it empty.
             </>
         ),
         fields: ['AZURE_TRANSLATOR_KEY', 'AZURE_TRANSLATOR_REGION', 'AZURE_TRANSLATOR_ENDPOINT'],
@@ -840,7 +842,7 @@ defineSteps('email', 'smtp', () => [
                 account.
             </>
         ),
-        note: <>Microsoft 365 and Google Workspace block plain SMTP by default, and Microsoft retires password-based SMTP entirely in December 2026. On Microsoft 365, SES or Azure Communication Services is the durable choice.</>,
+        note: <>Google Workspace blocks password sign-in for SMTP by default. At the end of December 2026, Microsoft 365 turns password-based SMTP off by default; admins can turn it back on. On Microsoft 365, SES or Azure Communication Services is the durable choice.</>,
     },
     {
         body: (
@@ -850,12 +852,14 @@ defineSteps('email', 'smtp', () => [
             </>
         ),
         fields: ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_USE_TLS'],
+        note: <>On Brevo: host <C>smtp-relay.brevo.com</C>, port <C>587</C>. The username is the Login shown under <B>Settings → SMTP &amp; API</B>, and the password is an SMTP key, not an API key.</>,
     },
     {
         body: (
             <>
                 Then what residents see in their inbox. Use a monitored address such as{' '}
                 <C>311@yourtown.gov</C> rather than <C>noreply@</C>, because residents reply to these.
+                On Brevo, it must be a verified sender or on an authenticated domain.
             </>
         ),
         fields: ['SMTP_FROM_EMAIL', 'SMTP_FROM_NAME'],
@@ -878,16 +882,16 @@ defineSteps('email', 'ses', () => [
             <>
                 New SES accounts are in the <B>sandbox</B> and can only send to addresses you have also
                 verified, so residents receive nothing. Open <B>Account dashboard</B> and press{' '}
-                <B>Request production access</B>. Approval takes about a day.
+                <B>Request production access</B>.
             </>
         ),
-        trouble: <>Complete this before launch. In the sandbox, SES reports success but residents don't receive the message.</>,
+        trouble: <>Complete this before launch. In the sandbox, SES rejects mail to residents with "Email address is not verified".</>,
     },
     {
         body: (
             <>
                 Create an IAM user for Pinpoint with the <C>AmazonSESFullAccess</C> policy (or only{' '}
-                <C>ses:SendEmail</C> and <C>ses:SendRawEmail</C>), then
+                <C>ses:SendEmail</C>, <C>ses:SendRawEmail</C> and <C>ses:GetSendQuota</C>), then
                 fill these in. The from address must be on the domain you verified.
             </>
         ),
@@ -954,7 +958,7 @@ defineSteps('sms', 'twilio', () => [
     {
         body: <>Buy or select a number under <B>Phone Numbers → Manage → Active numbers</B>, and enter it in <C>+1XXXXXXXXXX</C> form.</>,
         fields: ['TWILIO_PHONE_NUMBER'],
-        note: <>Use a number you own in Twilio. A trial account can only text numbers you have verified.</>,
+        note: <>Use a number you own in Twilio. A trial account can only text numbers you have verified. To text US numbers from a local number, register for A2P 10DLC in Twilio, or use a verified toll-free number.</>,
     },
 ]);
 
@@ -983,7 +987,8 @@ defineSteps('sms', 'sns', () => [
     {
         body: (
             <>
-                Create an IAM user for Pinpoint with permission for <C>sns:Publish</C>, and enter its
+                Create an IAM user for Pinpoint with permission for <C>sns:Publish</C> and{' '}
+                <C>sns:GetSMSAttributes</C>, and enter its
                 access key with your region. The sender ID box is optional and has no effect on US numbers.
             </>
         ),
@@ -1114,7 +1119,7 @@ defineSteps('kms', 'google', () => [
             </>
         ),
         check: <>your key listed inside your key ring.</>,
-        trouble: <>Set the <B>destroy scheduled duration</B> on that same form — it starts at 24 hours, goes up to 120 days, and is only offered at creation.</>,
+        trouble: <>Set the <B>destroy scheduled duration</B> on that same form — 24 hours minimum, 30 days default, up to 120 days. It is only offered at creation.</>,
         note: <>Requires Cloud KMS Admin or Owner; Project Editor can't create keys. Google has no one-click template, so set this up by hand.</>,
     },
     {
@@ -1158,7 +1163,7 @@ defineSteps('kms', 'google', () => [
             </>
         ),
         check: <>the lien returned by <C>liens list</C>.</>,
-        note: <>No command line? Whoever manages your Google Cloud billing can run it. It is free.</>,
+        note: <>No command line? Whoever manages your Google Cloud billing can run it.</>,
     },
     {
         body: <>{ACCOUNT_SURVIVES}</>,
@@ -1185,7 +1190,7 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>the vault's overview, showing a URL ending <C>.vault.azure.net</C>.</>,
-        trouble: <>Turn on purge protection now. Some configurations don't allow it later, and it can't be turned off.</>,
+        trouble: <>Turn on purge protection now. It can be turned on later, but never turned off.</>,
     },
     {
         body: (
@@ -1196,7 +1201,7 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>your account on the vault's role assignments as Key Vault Crypto Officer.</>,
-        note: <>Give it a minute to take effect. On the older access policy model, add yourself under the vault's access policies instead.</>,
+        note: <>Role assignments can take a moment to apply. On the older access policy model, add yourself under the vault's access policies instead.</>,
     },
     {
         body: <>Open the vault's <B>Objects → Keys</B> and use <B>Generate/Import</B> to create an <B>RSA</B> key. 2048 or 4096, either is fine. Note its name.</>,
@@ -1225,7 +1230,7 @@ const azureManualSteps: StepBuilder = () => [
             </>
         ),
         check: <>that identity on the vault's role assignments as Key Vault Crypto User.</>,
-        trouble: <>On the older access policy model, grant <B>Get</B>, <B>Wrap Key</B> and <B>Unwrap Key</B>. Get alone is not enough.</>,
+        trouble: <>On the older access policy model, grant the key permissions <B>Wrap Key</B> and <B>Unwrap Key</B>.</>,
     },
     {
         body: <>Fill these in. The vault URL is the <C>https://yourvault.vault.azure.net/</C> address on the overview.</>,
@@ -1330,7 +1335,7 @@ const azureTemplateSteps: StepBuilder = () => [
                 <br /><br />
                 Without this role, Key Vault returns <C>403 Forbidden</C> and Pinpoint encrypts
                 resident data with its own key instead of yours. Press <B>Save &amp; Test</B> on this
-                card to confirm. Role assignments take about a minute to apply.
+                card to confirm. Role assignments can take a moment to apply.
             </>
         ),
     },
@@ -1443,7 +1448,7 @@ const awsTemplateSteps: StepBuilder = () => [
             </>
         ),
         check: <>the instance profile on the instance, or the task role on the task definition.</>,
-        note: <>Running Pinpoint outside AWS? Create an IAM user and attach the same policy the stack made.</>,
+        note: <>Running Pinpoint outside AWS? Create an IAM user and attach the same policy the stack made. This card has no key boxes; it uses the AWS access key entered on any AWS card.</>,
     },
 ];
 
@@ -1494,7 +1499,7 @@ defineSteps('secrets', 'azure', () => [
             </>
         ),
         check: <>that identity listed twice on the vault's role assignments: Key Vault Crypto User, and Key Vault Secrets Officer.</>,
-        trouble: <>Use Officer, not User. Pinpoint writes credentials to this vault, and Secrets User can only read.</>,
+        trouble: <>Use Officer, not User. Pinpoint writes credentials to this vault, and Secrets User can only read. On the older access policy model, give the identity the secret permissions <B>Get</B>, <B>Set</B>, <B>Delete</B> and <B>Recover</B>.</>,
     },
     {
         body: <>Creating the vault did not give <em>you</em> access to its secrets either.</>,
@@ -1524,12 +1529,13 @@ defineSteps('secrets', 'aws', () => [
                 This uses the identity your server already signs in to AWS as, typically the instance
                 role, so there is nothing to enter below. Attach a policy allowing{' '}
                 <C>secretsmanager:CreateSecret</C>, <C>secretsmanager:PutSecretValue</C>,{' '}
-                <C>secretsmanager:GetSecretValue</C>, <C>secretsmanager:DescribeSecret</C> and{' '}
-                <C>secretsmanager:ListSecrets</C> in the region entered on the other AWS cards.
+                <C>secretsmanager:GetSecretValue</C>, <C>secretsmanager:DescribeSecret</C>,{' '}
+                <C>secretsmanager:DeleteSecret</C> and <C>secretsmanager:ListSecrets</C> in the region
+                entered on the other AWS cards.
             </>
         ),
-        check: <>those five actions on the role or user's attached policy.</>,
-        note: <>Pinpoint creates each secret on first save, so the policy needs CreateSecret and can't be scoped to existing secret ARNs.</>,
+        check: <>those six actions on the role or user's attached policy.</>,
+        note: <>Every secret Pinpoint writes is named <C>pinpoint/…</C>, so scope the resource to <C>arn:aws:secretsmanager:REGION:ACCOUNT:secret:pinpoint/*</C>.</>,
     },
 ]);
 
@@ -1578,8 +1584,9 @@ defineSteps('redaction', 'google', () => [
         body: (
             <>
                 In <L href="https://console.cloud.google.com">Google Cloud</L>, open{' '}
-                <B>APIs &amp; Services → Library</B> and enable <C>Cloud Vision API</C>. The service
-                account this deployment already uses needs no extra role beyond being able to call it.
+                <B>APIs &amp; Services → Library</B> and enable <C>Cloud Vision API</C>. Redaction signs
+                in with the service account key entered on the AI Provider card under Vertex AI. Enter
+                it there even if AI is off.
             </>
         ),
         check: <>"API Enabled" on the Cloud Vision API page.</>,
@@ -1605,42 +1612,60 @@ defineSteps('redaction', 'aws', () => [
 ]);
 
 // Azure is the only redaction backend with credentials of its own. Google and
-// AWS reuse what was entered elsewhere; Azure needs two separate resources,
-// because Microsoft splits face detection and text reading across them.
+// AWS reuse what was entered elsewhere. One Azure AI Services account serves
+// both Face and Vision, so the same endpoint and key go in both pairs of boxes;
+// the template creates exactly that account. Face detection with
+// returnFaceId=false, which is all Pinpoint sends, needs no Limited Access
+// approval.
+//
+// Forked like translation, for the same reason: an operator who ran the
+// template would otherwise create a second, redundant resource.
 
-defineSteps('redaction', 'azure', () => [
+const azureRedactionTemplateSteps: StepBuilder = () => [
     {
         body: (
             <>
-                <B>Azure needs two resources.</B> Faces and plates use different Azure services, and the{' '}
-                <B>Face API</B> requires Microsoft's Limited Access approval before it responds, even
-                for detection only. If you only need plates, skip the face resource.
+                <B>Nothing to create.</B> The deployment made the AI Services account that serves
+                both faces and plates. If you pasted the outputs, both endpoint boxes are filled.
+                Open that account → <B>Resource Management → Keys and Endpoint</B>, copy{' '}
+                <B>KEY 1</B>, and paste it into both key boxes.
             </>
         ),
-        note: <>If your town isn't approved, choose a different detector. Google, Amazon and the on-server option need no approval.</>,
+        fields: ['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY', 'AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
+        check: <>the same endpoint in both endpoint boxes and the same key in both key boxes.</>,
+        note: <>{UNCONFIGURED_DETECTOR}</>,
     },
+    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
+];
+
+const azureRedactionManualSteps: StepBuilder = () => [
     {
         body: (
             <>
-                For faces: in the <L href="https://portal.azure.com">Azure portal</L> create a <B>Face</B>{' '}
-                resource (under Azure AI services), then open{' '}
-                <B>Resource Management → Keys and Endpoint</B> and copy <B>KEY 1</B> and the endpoint.
+                In the <L href="https://portal.azure.com">Azure portal</L>, create an{' '}
+                <B>Azure AI Services</B> multi-service resource. One resource serves faces and
+                plates. Open <B>Resource Management → Keys and Endpoint</B>, put its endpoint in
+                both endpoint boxes and <B>KEY 1</B> in both key boxes.
             </>
         ),
-        fields: ['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY'],
-    },
-    {
-        body: (
+        fields: ['AZURE_FACE_ENDPOINT', 'AZURE_FACE_KEY', 'AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
+        check: <>the same endpoint in both endpoint boxes and the same key in both key boxes.</>,
+        note: (
             <>
-                For plates: create a <B>Computer Vision</B> resource — also listed as{' '}
-                <B>Azure AI Vision</B>. Copy its key and endpoint from the same place.
+                Separate <B>Face</B> and <B>Azure AI Vision</B> (formerly Computer Vision) resources
+                also work; each goes in its own pair of boxes. Face detection needs no Limited Access
+                approval, because Pinpoint asks only where faces are, not who they are.{' '}
+                {UNCONFIGURED_DETECTOR}
             </>
         ),
-        fields: ['AZURE_VISION_ENDPOINT', 'AZURE_VISION_KEY'],
-        note: <>A multi-service Azure AI resource covers Vision but not Face, which is always a separate resource.</>,
     },
-    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'] },
-]);
+    { body: REDACTION_CHOICE, fields: ['REDACT_FACES', 'REDACT_PLATES'], trouble: VERIFY_WITH_A_PHOTO },
+];
+
+defineFork('redaction', 'azure', (ctx) => ({
+    template: azureRedactionTemplateSteps(ctx),
+    manual: azureRedactionManualSteps(ctx),
+}));
 
 defineSteps('redaction', 'local', () => [
     {
