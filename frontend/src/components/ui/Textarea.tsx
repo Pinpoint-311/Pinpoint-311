@@ -31,7 +31,8 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         const generatedId = useId();
         const textareaId = providedId || `textarea-${generatedId}`;
         const errorId = error ? `${textareaId}-error` : undefined;
-        const helperId = helperText ? `${textareaId}-helper` : undefined;
+        // Only when the helper is on screen: it is hidden while an error shows.
+        const helperId = helperText && !error ? `${textareaId}-helper` : undefined;
         const countId = maxLength ? `${textareaId}-count` : undefined;
 
         // Combine IDs for aria-describedby

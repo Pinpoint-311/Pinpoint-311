@@ -30,7 +30,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
         const generatedId = useId();
         const inputId = providedId || `input-${generatedId}`;
         const errorId = error ? `${inputId}-error` : undefined;
-        const helperId = helperText ? `${inputId}-helper` : undefined;
+        // Only when the helper is on screen: it is hidden while an error shows.
+        const helperId = helperText && !error ? `${inputId}-helper` : undefined;
 
         // Combine IDs for aria-describedby
         const describedBy = [errorId, helperId].filter(Boolean).join(' ') || undefined;

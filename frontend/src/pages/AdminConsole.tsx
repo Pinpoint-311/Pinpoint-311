@@ -42,11 +42,6 @@ import {
     GripVertical,
     User as UserIcon,
     Globe,
-    Facebook,
-    Instagram,
-    Youtube,
-    Twitter,
-    Linkedin,
     type LucideIcon,
     FlaskConical,
     Search,
@@ -60,7 +55,7 @@ import {
     MapPinOff,
     UserSearch,
 } from 'lucide-react';
-import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
+import { Button, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
@@ -77,6 +72,7 @@ import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import AuditLogViewer from '../components/AuditLogViewer';
 import VersionSwitcher from '../components/VersionSwitcher';
 import StayInformedHost from '../components/StayInformed';
+import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -1606,6 +1602,7 @@ export default function AdminConsole() {
 
             {/* Sidebar */}
             <aside
+                id="admin-sidebar"
                 className={`fixed lg:static inset-y-0 left-0 z-50 w-72 glass-sidebar transform transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
                     }`}
                 aria-label="Admin console navigation"
@@ -1634,6 +1631,8 @@ export default function AdminConsole() {
                                 onClick={() => setSidebarOpen(false)}
                                 className="lg:hidden p-2 hover:bg-white/10 rounded-lg"
                                 aria-label="Close navigation menu"
+                                aria-expanded={sidebarOpen}
+                                aria-controls="admin-sidebar"
                             >
                                 <X className="w-5 h-5 text-white/60" aria-hidden="true" />
                             </button>
@@ -1787,6 +1786,8 @@ export default function AdminConsole() {
                         onClick={() => setSidebarOpen(true)}
                         className="p-2 hover:bg-white/10 rounded-lg"
                         aria-label="Open navigation menu"
+                        aria-expanded={sidebarOpen}
+                        aria-controls="admin-sidebar"
                     >
                         <Menu className="w-6 h-6 text-white" aria-hidden="true" />
                     </button>
@@ -1833,378 +1834,13 @@ export default function AdminConsole() {
 
                         {/* Branding Tab */}
                         {currentTab === 'branding' && (
-                            <div className="space-y-6">
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Branding Settings</h1>
-                                    <Button className="w-full sm:w-auto" leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveBranding} isLoading={isLoading}>
-                                        Save Changes
-                                    </Button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                                    <Card>
-                                        <div className="space-y-4">
-                                            <Input
-                                                label="Municipality Name"
-                                                value={brandingForm.township_name || ''}
-                                                onChange={(e) => setBrandingForm((p) => ({ ...p, township_name: e.target.value }))}
-                                            />
-                                            <Input
-                                                label="Hero Text"
-                                                value={brandingForm.hero_text || ''}
-                                                onChange={(e) => setBrandingForm((p) => ({ ...p, hero_text: e.target.value }))}
-                                            />
-                                            <div>
-                                                <label className="block text-sm font-medium text-white/70 mb-2">
-                                                    Logo
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    {brandingForm.logo_url && (
-                                                        <img src={brandingForm.logo_url} alt="Logo" className="h-10 rounded" />
-                                                    )}
-                                                    <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer transition-all">
-                                                        <Upload className="w-4 h-4 text-white/60" />
-                                                        <span className="text-sm text-white/70">Upload Logo</span>
-                                                        <input
-                                                            type="file"
-                                                            accept="image/*"
-                                                            className="hidden"
-                                                            onChange={async (e) => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    try {
-                                                                        const result = await api.uploadImage(file);
-                                                                        setBrandingForm((p) => ({ ...p, logo_url: result.url }));
-                                                                    } catch (err) {
-                                                                        console.error('Logo upload failed:', err);
-                                                                    }
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    {brandingForm.logo_url && (
-                                                        <button
-                                                            onClick={() => setBrandingForm((p) => ({ ...p, logo_url: '' }))}
-                                                            className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                            title="Remove logo"
-                                                            aria-label="Remove logo"
-                                                        >
-                                                            <X className="w-4 h-4" aria-hidden="true" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-white/70 mb-2">
-                                                    Favicon
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    {brandingForm.favicon_url && (
-                                                        <img src={brandingForm.favicon_url} alt="Favicon" className="h-8 w-8 rounded" />
-                                                    )}
-                                                    <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer transition-all">
-                                                        <Upload className="w-4 h-4 text-white/60" />
-                                                        <span className="text-sm text-white/70">Upload Favicon</span>
-                                                        <input
-                                                            type="file"
-                                                            accept="image/*,.ico"
-                                                            className="hidden"
-                                                            onChange={async (e) => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    try {
-                                                                        const result = await api.uploadImage(file);
-                                                                        setBrandingForm((p) => ({ ...p, favicon_url: result.url }));
-                                                                    } catch (err) {
-                                                                        console.error('Favicon upload failed:', err);
-                                                                    }
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    {brandingForm.favicon_url && (
-                                                        <button
-                                                            onClick={() => setBrandingForm((p) => ({ ...p, favicon_url: '' }))}
-                                                            className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                            title="Remove favicon"
-                                                            aria-label="Remove favicon"
-                                                        >
-                                                            <X className="w-4 h-4" aria-hidden="true" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </Card>
-
-                                    <Card>
-                                        <h3 className="text-lg font-semibold text-white mb-4">Preview</h3>
-                                        <div className="p-4 rounded-xl bg-black/20 space-y-4">
-                                            {brandingForm.logo_url ? (
-                                                <img src={brandingForm.logo_url} alt="Logo preview" className="h-16" />
-                                            ) : (
-                                                <div
-                                                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                                                    style={{ background: 'linear-gradient(135deg, #6366f1, #6366f1dd)' }}
-                                                >
-                                                    <Sparkles className="w-8 h-8 text-white" />
-                                                </div>
-                                            )}
-                                            <h2 className="text-xl font-bold text-white">{brandingForm.township_name}</h2>
-                                            <p className="text-white/60">{brandingForm.hero_text}</p>
-                                        </div>
-                                    </Card>
-                                </div>
-
-
-                                {/* Domain Connection */}
-                                <Card className="mt-6">
-                                    <h3 className="text-lg font-semibold text-white mb-4">Custom Domain</h3>
-                                    <p className="text-sm text-white/50 mb-4">
-                                        Connect your own domain (e.g., 311.yourtownship.gov) to this 311 portal.
-                                    </p>
-
-                                    <div className="space-y-4">
-                                        <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                                            <p className="text-sm font-medium text-white mb-2">Current URL</p>
-                                            <code className="text-primary-300 text-sm bg-black/30 px-2 py-1 rounded break-all">
-                                                {window.location.origin}
-                                            </code>
-                                        </div>
-
-                                        {/* Auto-Configure Domain */}
-                                        <div className="p-4 rounded-xl bg-primary-500/10 border border-primary-500/20">
-                                            <p className="text-sm font-medium text-primary-300 mb-3">Auto-Configure Domain</p>
-                                            <p className="text-xs text-white/60 mb-3">
-                                                Once your DNS records are in place, enter your domain and select Configure Domain. HTTPS is set up automatically.
-                                            </p>
-                                            <div className="flex gap-2">
-                                                <Input
-                                                    placeholder="311.yourtownship.gov"
-                                                    value={(brandingForm as any).custom_domain || ''}
-                                                    onChange={(e) => setBrandingForm(p => ({ ...p, custom_domain: e.target.value }))}
-                                                    className="flex-1"
-                                                />
-                                                <Button
-                                                    onClick={async () => {
-                                                        const domain = (brandingForm as any).custom_domain;
-                                                        if (!domain) { alert("Enter a domain."); return; }
-                                                        setIsLoading(true);
-                                                        try {
-                                                            const result = await api.configureDomain(domain);
-                                                            if (result.status === 'success') {
-                                                                alert(
-                                                                    `✅ ${result.message}\n\n` +
-                                                                    `Your site will be available at:\n${result.url}\n\n` +
-                                                                    `HTTPS certificate is being automatically provisioned by Caddy.`
-                                                                );
-                                                            } else if (result.status === 'partial') {
-                                                                alert(
-                                                                    `⚠️ ${result.message}\n\n` +
-                                                                    `Next step: ${result.next_step || 'Restart Caddy container'}\n\n` +
-                                                                    `Run on server:\nssh ubuntu@132.226.32.116\ncd ~/WWF-Open-Source-311-Template\ndocker-compose restart caddy`
-                                                                );
-                                                            } else {
-                                                                alert(`Error: ${result.message}`);
-                                                            }
-                                                        } catch (err: any) { alert(`Error: ${err.message}`); }
-                                                        finally { setIsLoading(false); }
-                                                    }}
-                                                    isLoading={isLoading}
-                                                >
-                                                    Configure Domain
-                                                </Button>
-                                            </div>
-                                        </div>
-
-                                        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                                            <p className="text-sm font-medium text-amber-300 mb-3">Step 1: Set up DNS Records first</p>
-                                            <ol className="text-sm text-white/70 space-y-2 list-decimal list-inside">
-                                                <li>Log into your domain registrar (GoDaddy, Namecheap, etc.)</li>
-                                                <li>Add an <strong className="text-white">A Record</strong> pointing to: <code className="text-primary-300 bg-black/30 px-1 rounded">132.226.32.116</code></li>
-                                                <li>Wait 5-30 minutes for DNS propagation</li>
-                                                <li>Enter the domain above and select Configure Domain</li>
-                                            </ol>
-                                        </div>
-
-                                        <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                                            <p className="text-sm font-medium text-white mb-3">DNS Records to Add</p>
-                                            <table className="w-full text-sm">
-                                                <thead>
-                                                    <tr className="text-white/50">
-                                                        <th className="text-left py-1">Type</th>
-                                                        <th className="text-left py-1">Host</th>
-                                                        <th className="text-left py-1">Value</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="text-white/80">
-                                                    <tr>
-                                                        <td className="py-1">A</td>
-                                                        <td className="py-1">@ or 311</td>
-                                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td className="py-1">A</td>
-                                                        <td className="py-1">www</td>
-                                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </Card>
-
-                                {/* Social Links */}
-                                <Card className="mt-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div>
-                                            <h3 className="text-lg font-semibold text-white">Social Links</h3>
-                                            <p className="text-sm text-white/50">Add links to display in the resident portal footer</p>
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            leftIcon={<Plus className="w-4 h-4" />}
-                                            onClick={() => {
-                                                const currentLinks = (brandingForm as any).social_links || [];
-                                                setBrandingForm(p => ({
-                                                    ...p,
-                                                    social_links: [...currentLinks, { platform: 'website', url: '', icon: 'Globe' }]
-                                                }));
-                                            }}
-                                        >
-                                            Add Link
-                                        </Button>
-                                    </div>
-
-                                    <div className="space-y-3">
-                                        {((brandingForm as any).social_links || []).map((link: { platform: string; url: string; icon: string }, index: number) => (
-                                            <div key={index} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                                                {/* Platform/Icon selector */}
-                                                <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
-                                                    {link.icon === 'Globe' && <Globe className="w-5 h-5 text-blue-400" />}
-                                                    {link.icon === 'Facebook' && <Facebook className="w-5 h-5 text-blue-500" />}
-                                                    {link.icon === 'Instagram' && <Instagram className="w-5 h-5 text-pink-500" />}
-                                                    {link.icon === 'Youtube' && <Youtube className="w-5 h-5 text-red-500" />}
-                                                    {link.icon === 'Twitter' && <Twitter className="w-5 h-5 text-sky-400" />}
-                                                    {link.icon === 'Linkedin' && <Linkedin className="w-5 h-5 text-blue-600" />}
-                                                </div>
-                                                <Select
-                                                    value={link.platform}
-                                                    onChange={(e) => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        const iconMap: Record<string, string> = {
-                                                            website: 'Globe',
-                                                            facebook: 'Facebook',
-                                                            instagram: 'Instagram',
-                                                            youtube: 'Youtube',
-                                                            twitter: 'Twitter',
-                                                            linkedin: 'Linkedin',
-                                                        };
-                                                        currentLinks[index] = {
-                                                            ...currentLinks[index],
-                                                            platform: e.target.value,
-                                                            icon: iconMap[e.target.value] || 'Globe'
-                                                        };
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="w-36"
-                                                    options={[
-                                                        { value: 'website', label: 'Website' },
-                                                        { value: 'facebook', label: 'Facebook' },
-                                                        { value: 'instagram', label: 'Instagram' },
-                                                        { value: 'youtube', label: 'YouTube' },
-                                                        { value: 'twitter', label: 'X (Twitter)' },
-                                                        { value: 'linkedin', label: 'LinkedIn' },
-                                                    ]}
-                                                />
-                                                <Input
-                                                    placeholder="https://..."
-                                                    value={link.url}
-                                                    onChange={(e) => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        currentLinks[index] = { ...currentLinks[index], url: e.target.value };
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="flex-1"
-                                                />
-                                                <button
-                                                    onClick={() => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        currentLinks.splice(index, 1);
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                    title="Remove link"
-                                                >
-                                                    <X className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                        {((brandingForm as any).social_links || []).length === 0 && (
-                                            <div className="text-center py-8 text-white/40">
-                                                <Globe className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                                <p className="text-sm">No social links configured</p>
-                                                <p className="text-xs mt-1">Click "Add Link" to add your social media profiles</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </Card>
-
-                                {/* Legal Documents */}
-                                <Card className="mt-6">
-                                    <div className="mb-4">
-                                        <h3 className="text-lg font-semibold text-white">Legal Documents</h3>
-                                        <p className="text-sm text-white/50">Customize your Privacy Policy, Terms of Service, and Accessibility Statement</p>
-                                    </div>
-
-                                    <div className="space-y-6">
-                                        {/* Privacy Policy */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Privacy Policy</label>
-                                                <a href="/privacy" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).privacy_policy || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, privacy_policy: e.target.value || null }))}
-                                                placeholder="Leave blank to use default privacy policy with 311 best practices..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Supports Markdown formatting. Leave blank for sensible defaults.</p>
-                                        </div>
-
-                                        {/* Terms of Service */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Terms of Service</label>
-                                                <a href="/terms" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).terms_of_service || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, terms_of_service: e.target.value || null }))}
-                                                placeholder="Leave blank to use default terms with non-emergency disclaimer..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Default includes prominent non-emergency disclaimer. Supports Markdown.</p>
-                                        </div>
-
-                                        {/* Accessibility Statement */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Accessibility Statement</label>
-                                                <a href="/accessibility" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).accessibility_statement || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, accessibility_statement: e.target.value || null }))}
-                                                placeholder="Leave blank to use default WCAG/ADA compliant accessibility statement..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Default covers WCAG 2.1 AA, Section 508, and ADA requirements.</p>
-                                        </div>
-                                    </div>
-                                </Card>
-                            </div>
+                            <BrandingSettings
+                                form={brandingForm as BrandingForm}
+                                setForm={setBrandingForm as React.Dispatch<React.SetStateAction<BrandingForm>>}
+                                onSave={handleSaveBranding}
+                                isLoading={isLoading}
+                                setIsLoading={setIsLoading}
+                            />
                         )}
 
                         {/* Users Tab */}
