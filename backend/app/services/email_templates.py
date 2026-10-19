@@ -823,3 +823,95 @@ async def build_sms_status_update_async(
         message += f"\n{i18n.get('sms_details', 'Details')}: {tracking_link}"
     
     return message
+
+
+# --- Staff invite -------------------------------------------------------------
+#
+# Sent to a new staff account when an administrator creates it (and again on
+# "Resend invite"). Staff-facing, so English only, like the health alerts and
+# the weekly digest: EMAIL_I18N is the resident's language, and a staff member
+# has none recorded at this point.
+#
+# There is no password and no token in it. Sign-in goes through the town's
+# identity provider, so the message only has to say where to go and which
+# account to use; anybody who forwards it has forwarded a link to a login page.
+
+# Role values (app.schemas.UserRole) in the words the invitee would use.
+INVITE_ROLE_WORDS = {
+    "admin": ("an administrator", "Administrator",
+              "You can work on service requests and manage staff accounts and settings."),
+    "staff": ("a staff member", "Staff",
+              "You can view and work on service requests."),
+    "researcher": ("a researcher", "Researcher",
+                   "You can use the Research Lab to analyze request data."),
+}
+
+
+def invite_role_words(role: Optional[str]) -> tuple:
+    """(with article, title-case label, one-sentence description) for a role."""
+    return INVITE_ROLE_WORDS.get((role or "").strip().lower(), INVITE_ROLE_WORDS["staff"])
+
+
+def build_staff_invite_email(
+    *,
+    township_name: str,
+    logo_url: Optional[str],
+    primary_color: str,
+    invitee_email: str,
+    invitee_name: Optional[str],
+    role: Optional[str],
+    department_names: Optional[list] = None,
+    invited_by: Optional[str] = None,
+    provider_name: Optional[str] = None,
+    origin: Optional[str] = None,
+) -> Dict[str, str]:
+    """The staff invite. Returns {'subject','html','text'}.
+
+    `origin` is the site's public address (api.system.public_origin). When it
+    is None the message carries no link at all and says where to go in words:
+    a guessed address -- localhost, a container hostname -- is worse than none,
+    because it looks right and goes nowhere.
+    """
+    town = township_name or "your township"
+    with_article, label, description = invite_role_words(role)
+    by = (invited_by or "").strip() or "An administrator"
+    depts = [str(d) for d in (department_names or []) if str(d).strip()]
+    account = f"your {provider_name} account" if provider_name else "your work account"
+
+    origin = _safe_url(origin)
+    login_url = f"{origin.rstrip('/')}/login" if origin else None
+
+    greeting = f"Hello {invitee_name.strip()}," if (invitee_name or "").strip() else "Hello,"
+    blocks = [
+        L.heading("Your 311 staff account is ready", 2),
+        L.paragraph(greeting),
+        L.paragraph(f"{by} added you as {with_article}. {description}"),
+        L.fields([
+            ("Role", label),
+            ("Department" if len(depts) == 1 else "Departments", ", ".join(depts)),
+            ("Sign-in email", invitee_email),
+        ]),
+        L.paragraph(f"Sign in with {account} using this email address. "
+                    f"There is no separate password for the 311 system."),
+    ]
+    if login_url:
+        blocks.append(L.button("Sign in", login_url))
+    else:
+        blocks.append(L.paragraph("To get started, sign in at your township's 311 site."))
+
+    subject = f"You have been added to {town}'s 311 system"
+    footer = [
+        f"You are receiving this because an administrator at {town} created an "
+        f"account for this email address. If you were not expecting it, you can "
+        f"ignore this message or tell your administrator.",
+    ]
+    return L.build_email(
+        subject=subject,
+        township_name=township_name,
+        blocks=blocks,
+        logo_url=logo_url,
+        primary_color=primary_color,
+        footer_lines=footer,
+        preheader=f"{by} added you as {with_article}.",
+        tagline="Staff account",
+    )

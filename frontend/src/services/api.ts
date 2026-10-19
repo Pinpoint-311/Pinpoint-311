@@ -12,6 +12,7 @@ import {
     AdvancedStatistics,
     UserCreate,
     UserUpdate,
+    InviteOutcome,
     ConnectorHealthReport,
     ClientErrorEntry,
     ServiceCreate,
@@ -849,11 +850,16 @@ class ApiClient {
     }
 
 
-    async createUser(data: UserCreate): Promise<User> {
-        return this.request<User>('/users/', {
+    async createUser(data: UserCreate): Promise<User & { invite: InviteOutcome }> {
+        return this.request<User & { invite: InviteOutcome }>('/users/', {
             method: 'POST',
             body: JSON.stringify(data),
         });
+    }
+
+    /** Send a staff member their invite email again (admin only, rate-limited). */
+    async resendInvite(id: number): Promise<{ invite: InviteOutcome }> {
+        return this.request<{ invite: InviteOutcome }>(`/users/${id}/invite`, { method: 'POST' });
     }
 
     /** Browser crashes staff and residents have hit. The error screen promises

@@ -78,6 +78,7 @@ import { CategoryScopePicker } from '../components/CategoryScopePicker';
 import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
 import SignInProviderNote from '../components/SignInProviderNote';
+import { InviteCheckbox, InviteNotice, inviteResultMessage } from '../components/StaffInvite';
 import { useSignInProvider } from '../hooks/useSignInProvider';
 import BackupRestore from '../components/BackupRestore';
 import VersionSwitcher from '../components/VersionSwitcher';
@@ -708,7 +709,10 @@ export default function AdminConsole() {
         full_name: '',
         role: 'staff' as 'staff' | 'admin',
         department_ids: [] as number[],
+        send_invite: true,
     });
+    // What happened to the last invite (created or resent), shown above the table.
+    const [inviteNotice, setInviteNotice] = useState<{ message: string; ok: boolean } | null>(null);
 
     /* Editing an existing staff member.
      *
@@ -1299,14 +1303,27 @@ export default function AdminConsole() {
                 role: newUser.role,
                 full_name: newUser.full_name || undefined,
                 department_ids: newUser.department_ids.length > 0 ? newUser.department_ids : undefined,
+                send_invite: newUser.send_invite,
             };
-            await api.createUser(userData as any);
+            const created = await api.createUser(userData);
+            const message = inviteResultMessage(created.invite, created.email || newUser.email);
+            setInviteNotice(message ? { message, ok: created.invite === 'queued' } : null);
             setShowUserModal(false);
-            setNewUser({ username: '', email: '', full_name: '', role: 'staff', department_ids: [] });
+            setNewUser({ username: '', email: '', full_name: '', role: 'staff', department_ids: [], send_invite: true });
             loadTabData();
         } catch (err: any) {
             console.error('Failed to create user:', err);
             alert(err.message || 'Failed to create user');
+        }
+    };
+
+    const handleResendInvite = async (u: User) => {
+        try {
+            const { invite } = await api.resendInvite(u.id);
+            const message = inviteResultMessage(invite, u.email, 'resent');
+            setInviteNotice(message ? { message, ok: invite === 'queued' } : null);
+        } catch (err) {
+            reportError('Could not resend the invite', err);
         }
     };
 
@@ -1898,6 +1915,12 @@ export default function AdminConsole() {
                                     </Button>
                                 </div>
 
+                                <InviteNotice
+                                    message={inviteNotice?.message ?? null}
+                                    ok={!!inviteNotice?.ok}
+                                    onDismiss={() => setInviteNotice(null)}
+                                />
+
                                 {/* Stats Cards */}
                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                     <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm">
@@ -1989,6 +2012,16 @@ export default function AdminConsole() {
                                                                 <span className="text-xs text-white/25 italic">No department</span>
                                                             )}
                                                         </div>
+                                                        {u.is_active !== false && (
+                                                            <button
+                                                                onClick={() => handleResendInvite(u)}
+                                                                className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                                title="Resend invite"
+                                                                aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                            >
+                                                                <Mail className="w-4 h-4" aria-hidden="true" />
+                                                            </button>
+                                                        )}
                                                         <button
                                                             onClick={() => openEditUser(u)}
                                                             className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
@@ -2063,7 +2096,17 @@ export default function AdminConsole() {
 
                                                     {/* Actions */}
                                                     <div className="col-span-1 flex justify-end">
-                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                                                            {u.is_active !== false && (
+                                                                <button
+                                                                    onClick={() => handleResendInvite(u)}
+                                                                    className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                                    title="Resend invite"
+                                                                    aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                                >
+                                                                    <Mail className="w-4 h-4" aria-hidden="true" />
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 onClick={() => openEditUser(u)}
                                                                 className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
@@ -3606,6 +3649,11 @@ export default function AdminConsole() {
                             </div>
                         </div>
                     )}
+
+                    <InviteCheckbox
+                        checked={newUser.send_invite}
+                        onChange={(next) => setNewUser((p) => ({ ...p, send_invite: next }))}
+                    />
 
                     <div className="flex justify-end gap-3 pt-4">
                         <Button variant="ghost" onClick={() => setShowUserModal(false)}>Cancel</Button>

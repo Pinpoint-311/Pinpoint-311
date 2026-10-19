@@ -8,15 +8,24 @@ export interface User {
     is_active: boolean;
     created_at?: string;
     departments?: { id: number; name: string }[];
+    /** When an invite email was last sent to this account, if ever. */
+    invited_at?: string | null;
 }
+
+/** What happened to the invite email when an account was created or an
+ *  invite resent. "queue_failed": the account is saved, but the background
+ *  worker could not be reached, so nothing was sent. */
+export type InviteOutcome = 'queued' | 'skipped_email_off' | 'not_requested' | 'queue_failed';
 
 export interface UserCreate {
     username: string;
     email: string;
     full_name?: string;
     role: 'admin' | 'staff' | 'researcher';
-    password: string;
+    password?: string;
     department_ids?: number[];
+    /** Email the new account an invitation to sign in. Defaults to true on the server. */
+    send_invite?: boolean;
 }
 
 /** Everything an admin can change about an existing staff member.
