@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     # those render a sign-in page in a frame rather than the questions.
     contact_form_embed: bool = True
 
+    # Overpass endpoints for the weekly critical-facilities refresh, tried in
+    # order (comma-separated https URLs). Empty means the main public instance.
+    # A town that runs its own Overpass, or has a preferred mirror, sets it
+    # here; see app/services/critical_facilities.py.
+    overpass_urls: str = ""
+
     # Managed (state-hosted) mode — orchestrator-driven deployment. Every
     # managed-mode hook is additive and a no-op when this flag is off
     # (docs/ORCHESTRATOR_PLAN.md Part A).

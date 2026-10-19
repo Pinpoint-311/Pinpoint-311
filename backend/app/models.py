@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, UniqueConstraint, CheckConstraint, Index, event, select
+from sqlalchemy import BigInteger, Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, UniqueConstraint, CheckConstraint, Index, event, select
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
@@ -1036,6 +1036,51 @@ class MapLayerFeature(Base):
         Index("ix_map_layer_features_layer_key", "layer_id", "feature_key"),
         Index("ix_map_layer_features_geom", "geom", postgresql_using="gist"),
     )
+
+
+class CriticalFacility(Base):
+    """A hospital, clinic, school, fire/police/ambulance station or nursing home.
+
+    The town's whole set, refreshed weekly from OpenStreetMap in one query
+    (app/services/critical_facilities.py), so the per-report "near critical
+    infrastructure" check is a local distance and sends no resident location
+    anywhere. `geom` is the real outline where OSM has one -- a campus
+    polygon, not its centre -- so distance is measured to the edge.
+    Replaced wholesale on each refresh; `id` means nothing across refreshes.
+    """
+
+    __tablename__ = "critical_facilities"
+
+    id = Column(Integer, primary_key=True)
+    osm_type = Column(String(10), nullable=False)
+    osm_id = Column(BigInteger, nullable=False)
+    kind = Column(String(32), nullable=False)
+    name = Column(String(300), nullable=True)
+    geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=False), nullable=False)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_critical_facilities_geom", "geom", postgresql_using="gist"),
+        Index("ix_critical_facilities_kind", "kind"),
+    )
+
+
+class CriticalFacilitiesStatus(Base):
+    """One row: when the facility store last refreshed, what it holds, the last error.
+
+    Read by the proactive health check. `refreshed_at` is the last successful
+    swap; `attempted_at` moves on every try, so the two diverging is a refresh
+    that keeps failing while the previous set stays in use.
+    """
+
+    __tablename__ = "critical_facilities_status"
+
+    id = Column(Integer, primary_key=True)
+    refreshed_at = Column(DateTime(timezone=True), nullable=True)
+    attempted_at = Column(DateTime(timezone=True), nullable=True)
+    counts = Column(JSON, nullable=True)
+    source = Column(String(300), nullable=True)
+    last_error = Column(Text, nullable=True)
 
 
 class ResearchAccessLog(Base):

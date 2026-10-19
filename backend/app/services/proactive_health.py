@@ -633,6 +633,57 @@ async def _translation_budget_check() -> Dict[str, Any]:
                       "Could not read translation usage.")
 
 
+async def _critical_facilities_check(db) -> Dict[str, Any]:
+    """Is the store behind "near a hospital / school" current?
+
+    Warning, not critical: an empty or stale store means reports lose their
+    proximity context (and the AI its priority nudge), not that anything is
+    lost. Only while a boundary is configured -- without one there is nothing
+    to fetch, and the boundary has its own place in setup.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from app.services import critical_facilities as cf
+
+        # In a savepoint: a database still without the table must not abort
+        # the transaction the remaining health reads share.
+        async with db.begin_nested():
+            st = await cf.store_status(db)
+        detail = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in st.items()}
+        counts = ", ".join(
+            f"{n} {cf.KIND_LABELS.get(k, k).lower()}" for k, n in sorted(st["counts"].items())
+        ) or "none"
+        error = f" Last error: {st['last_error']}" if st.get("last_error") else ""
+        action = ("The refresh retries daily. If it keeps failing, check that the server can reach "
+                  "the Overpass API, or set OVERPASS_URLS to a mirror the town trusts.")
+        if not st["boundary_configured"]:
+            check = _check("critical_facilities", "Critical facilities", "ok", "no boundary",
+                           "No town boundary is set, so there is no area to load hospitals, "
+                           "schools and fire stations for.")
+        elif not st["total"]:
+            check = _check("critical_facilities", "Critical facilities", "warning", 0,
+                           "No hospitals, schools or fire stations are loaded, so reports show "
+                           "nothing near them." + error, action)
+        else:
+            refreshed = st.get("refreshed_at")
+            age = datetime.now(timezone.utc) - refreshed if refreshed else None
+            when = refreshed.strftime("%Y-%m-%d") if refreshed else "unknown"
+            if age is None or age > cf.STALE_AFTER:
+                check = _check("critical_facilities", "Critical facilities", "warning", st["total"],
+                               f"Facility list last refreshed {when}, over "
+                               f"{cf.STALE_AFTER.days} days ago ({counts})." + error, action)
+            else:
+                check = _check("critical_facilities", "Critical facilities", "ok", st["total"],
+                               f"{st['total']} loaded, refreshed {when}: {counts}." + error)
+        check["detail"] = detail
+        return check
+    except Exception:
+        logger.debug("Critical facilities health probe failed", exc_info=True)
+        return _check("critical_facilities", "Critical facilities", "unknown", None,
+                      "Could not read the critical-facility store.")
+
+
 # Every key `collect_checks` can emit. Named here so the mute route can refuse
 # a key that is not a real check -- muting is a write, and without an allowlist
 # any admin request could insert arbitrary rows into the health table.
@@ -648,6 +699,7 @@ CHECK_KEYS = (
     "redaction",
     "retention",
     "translation_budget",
+    "critical_facilities",
 )
 
 
@@ -665,6 +717,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _redaction_check(),
         await _retention_check(db),
         await _translation_budget_check(),
+        await _critical_facilities_check(db),
     ]
     return checks
 
