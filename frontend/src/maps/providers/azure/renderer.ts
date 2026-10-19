@@ -78,6 +78,10 @@ const AZURE_STYLES: Record<BaseMapType, string> = {
     terrain: 'road_shaded_relief',
 };
 
+/** MapInitOptions.colorScheme === 'dark'. Azure's dark street cartography;
+ *  imagery styles have no light/dark distinction. */
+const AZURE_DARK_STYLE = 'grayscale_dark';
+
 const BASE_MAP_BY_STYLE: Record<string, BaseMapType> = Object.fromEntries(
     Object.entries(AZURE_STYLES).map(([type, style]) => [style, type as BaseMapType]),
 ) as Record<string, BaseMapType>;
@@ -889,7 +893,10 @@ export class AzureMapRenderer implements MapRenderer {
             bearing: options.heading ?? 0,
             pitch: options.tilt ?? 0,
             // styleId, when set, is an Azure style name and wins over baseMapType.
-            style: options.styleId || AZURE_STYLES[this.baseMapType],
+            style: options.styleId
+                || (this.baseMapType === 'roadmap' && options.colorScheme === 'dark'
+                    ? AZURE_DARK_STYLE
+                    : AZURE_STYLES[this.baseMapType]),
             language: providerOptions.language,
             // Azure requires a localisation view for disputed borders; 'Auto'
             // resolves it from the caller's IP, which is the documented default

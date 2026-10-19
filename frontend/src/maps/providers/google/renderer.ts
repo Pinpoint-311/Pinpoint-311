@@ -521,6 +521,22 @@ function createCanvasOverlay(
     return handle;
 }
 
+/**
+ * MapInitOptions.colorScheme === 'dark' for Google. A style array rather than
+ * the v3.56 `colorScheme` map option, which only applies to vector maps and so
+ * does nothing for a town without a Map ID -- which is most of them.
+ */
+const DARK_MAP_STYLE: google.maps.MapTypeStyle[] = [
+    { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
+    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
+    { elementType: 'labels.text.fill', stylers: [{ color: '#8b8ba7' }] },
+    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a4a' }] },
+    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b8a' }] },
+    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e1a' }] },
+    { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+    { featureType: 'transit', stylers: [{ visibility: 'off' }] },
+];
+
 export class GoogleMapRenderer implements MapRenderer {
     readonly providerId: MapProviderId = 'google';
     readonly capabilities = GOOGLE_CAPABILITIES;
@@ -545,6 +561,7 @@ export class GoogleMapRenderer implements MapRenderer {
             streetViewControl: controls.streetView?.enabled ?? false,
             fullscreenControl: controls.fullscreen?.enabled ?? false,
             zoomControl: controls.zoom?.enabled ?? false,
+            ...(options.colorScheme === 'dark' && !options.styleId ? { styles: DARK_MAP_STYLE } : {}),
             ...(options.vendorOptions as google.maps.MapOptions | undefined),
         };
 

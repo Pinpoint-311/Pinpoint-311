@@ -305,20 +305,6 @@ export function clusterBias(hs: Pick<HotspotData, 'count' | 'unique_reporters' |
 
 const isFlagged = (level: BiasLevel) => level === 'high' || level === 'moderate';
 
-// Google's style array. Deliberately routed through vendorOptions rather than
-// modelled generically: MapLibre wants a style URL and Esri a basemap id, so
-// there is nothing honest to abstract here.
-const DARK_MAP_STYLE = [
-    { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#8b8ba7' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2a2a4a' }] },
-    { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b8a' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0e0e1a' }] },
-    { featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] },
-    { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-];
-
 /** The two selectable heat layers, in radio-group order. */
 const MODE_OPTIONS = [
     { mode: 'reports' as const, label: 'All Reports', icon: FileText, selectedClass: 'bg-indigo-500/30 text-indigo-200 border border-indigo-500/40' },
@@ -435,9 +421,11 @@ export default function SpatialBiasHeatmap({
                 fullscreen: { enabled: true },
                 streetView: { enabled: false },
             },
-            // Google-only dark styling. Non-portable by definition, which is why
-            // it goes through vendorOptions rather than pretending to be generic.
-            vendorOptions: { styles: DARK_MAP_STYLE },
+            // The heat gradients are mixed against a dark base; over a bright
+            // street map they wash out and the panel stops reading. This used to
+            // be a Google style array passed through vendorOptions, so every
+            // other provider got the light basemap -- see MapInitOptions.
+            colorScheme: 'dark',
         })
             .then(renderer => {
                 if (cancelled) { renderer.destroy(); return; }
