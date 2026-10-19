@@ -281,6 +281,11 @@ class GoogleMarkerLayer implements MarkerLayer {
 
 class GoogleGeoJsonLayer implements GeoJsonLayerHandle {
     private data: google.maps.Data;
+    // A Data feature is clickable by default, and a click on it never reaches
+    // the map's own click listener -- so outlines with no click handler of
+    // their own (resident parcel outlines) ate the click that drops the pin.
+    // Clickable only when the caller asked for feature clicks.
+    private readonly interactive: boolean;
 
     constructor(
         private readonly map: google.maps.Map,
@@ -288,6 +293,7 @@ class GoogleGeoJsonLayer implements GeoJsonLayerHandle {
         private readonly onRemove: (layer: GoogleGeoJsonLayer) => void,
     ) {
         this.data = new window.google.maps.Data();
+        this.interactive = Boolean(options.onFeatureClick);
 
         const gj = options.data as any;
         // Data.addGeoJson only accepts Feature/FeatureCollection, so wrap bare
@@ -323,7 +329,8 @@ class GoogleGeoJsonLayer implements GeoJsonLayerHandle {
             if (pointRendering === 'hidden' && info.geometryType === 'Point') {
                 return { visible: false };
             }
-            return toGoogleStyle(typeof style === 'function' ? style(info) : style);
+            const resolved = toGoogleStyle(typeof style === 'function' ? style(info) : style);
+            return { ...resolved, clickable: resolved.clickable ?? this.interactive };
         });
     }
 

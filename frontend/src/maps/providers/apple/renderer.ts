@@ -371,6 +371,10 @@ class AppleGeoJsonLayer implements GeoJsonLayerHandle {
                     const info = this.infoByItem.get(item)!;
                     this.options.onFeatureClick!(info, { position: info.position ?? this.ctx.lastTap() });
                 });
+            } else if ('enabled' in item) {
+                // Not selectable, so a tap on the shape is a tap on the map --
+                // otherwise outlines with no click handler swallow pin drops.
+                item.enabled = false;
             }
         }
 

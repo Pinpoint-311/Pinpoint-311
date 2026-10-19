@@ -142,6 +142,9 @@ export function useContextLayerOutlines(
                                 strokeColor: layer.stroke_color,
                                 strokeWidth: 1,
                                 strokeOpacity: 0.6,
+                                // Shapes only: a click goes through to the map,
+                                // where it places the report's pin.
+                                clickable: false,
                             },
                         } : {
                             data: fc,
