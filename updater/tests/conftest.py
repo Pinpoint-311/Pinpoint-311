@@ -57,6 +57,14 @@ def base_config(tmp_path: Path, **instance_overrides) -> dict:
     }
 
 
+def write_secret(path: Path, value: str) -> Path:
+    """A credential file as the README installs it: mode 0600. The updater
+    refuses one any user on the host could read."""
+    path.write_text(value)
+    path.chmod(0o600)
+    return path
+
+
 def make_instance_dir(tmp_path: Path, lock: Optional[LockState] = None) -> Path:
     d = tmp_path / "pinpoint-town"
     d.mkdir(exist_ok=True)

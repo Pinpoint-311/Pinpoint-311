@@ -154,7 +154,15 @@ masked in every log line and report.
 - **The registry is not trusted.** Images are pinned by the digest the registry
   returns. The digest is checked against the manifest body, cosign verifies it
   against a pinned identity and issuer (or key), and the updater pulls and runs
-  that digest. Moving a tag changes nothing.
+  that digest. A signature covers a digest, not a tag, so the version label
+  inside the signed image must also name the requested tag: pointing `1.8.0`
+  at the signed `1.7.0` digest is refused.
+- **The console is not trusted with the host.** A console request cannot
+  "upgrade" to a release older than the one running (rollback goes to the
+  previous release only; an older one needs an operator on the host). Its
+  answers are capped at 1 MiB and about 30 s, at most three requests run per
+  instance per pass, and the unit caps the process at `MemoryMax=1G`.
+  Credential files any user on the host can read are refused.
 - **The schema is not assumed.** The compatibility window and the app's own
   migration gate stop code from starting on a schema it cannot serve, and
   destructive changes need a human.

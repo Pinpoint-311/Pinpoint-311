@@ -59,6 +59,14 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 UMask=0027
+ProtectProc=invisible
+RemoveIPC=yes
+# The updater reads answers from the internet-facing backend and the registry.
+# A hostile or broken one must not be able to grow this process (which holds
+# the Docker socket) until the host's OOM killer picks a database instead.
+# Image pulls and one-off containers run under dockerd, not in this cgroup.
+MemoryMax=1G
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target

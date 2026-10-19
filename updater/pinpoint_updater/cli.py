@@ -354,58 +354,70 @@ def _poll(args, cfg, source, hooks, requests: RequestSource) -> int:
     summary = {}
     worst = exitcodes.OK
     for name in cfg.instances:
-        engine = _engine(args, cfg, source, hooks, name)
-        base_reporter = engine.reporter
-        entry: dict = {"pending": 0, "ran": []}
-        publish_error = _publish(args, cfg, source, hooks, requests, name, engine)
-        if publish_error:
-            entry["publish_error"] = publish_error
         try:
-            pending = requests.pending(name)
-        except (RequestSourceError, ConfigError) as exc:
-            pending = []
-            entry["request_error"] = redact(str(exc))
-            worst = max(worst, exitcodes.ERROR)
-        entry["pending"] = len(pending)
-        for req in pending:
-            try:
-                if not requests.claim(req):
-                    entry["ran"].append({"request": req.id, "outcome": "claimed_elsewhere"})
-                    continue
-            except RequestSourceError as exc:
-                entry.setdefault("errors", []).append(redact(str(exc)))
-                continue
-            engine.approval = requests.approval_policy_for(req)
-            engine.reporter = MultiReporter([LostTrackMarker(req), base_reporter, requests.reporter(req)])
-            run = RunContext(instance=name, action=req.action, tag=req.tag, requested_by=req.requested_by,
-                             request_id=req.id, insecure=args.insecure_skip_verify)
-            try:
-                # Heartbeats renew the console's lease while long steps run.
-                with requests.heartbeat(req):
-                    if req.action == "upgrade":
-                        outcome = engine.upgrade(run, req)
-                    elif req.action == "rollback":
-                        outcome = engine.rollback(run, req)
-                    else:
-                        outcome = engine.restart(run, req)
-            except (InstanceNotReady, LockFileError) as exc:
-                # Claimed but cannot act: say so to the console rather than
-                # leaving the request "claimed" forever.
-                from pinpoint_updater.models import RunOutcome
-                outcome = RunOutcome("refused", f"{redact(str(exc))}; nothing changed")
-                engine.reporter.finished(run, outcome)
-            finally:
-                engine.reporter = base_reporter
-            entry["ran"].append({"request": req.id, "action": req.action, "outcome": outcome.outcome,
-                                 **({"console_lost_track": True} if req.console_lost else {})})
-            worst = max(worst, exitcodes.for_outcome(outcome.outcome))
-        if entry["ran"] and any(r.get("outcome") not in (None, "claimed_elsewhere") for r in entry["ran"]):
-            # What runs may have changed: tell the console now, not at the next hourly rebuild.
-            err = _publish(args, cfg, source, hooks, requests, name, engine, force=True)
-            if err:
-                entry["publish_error"] = err
-        st = engine.status()
-        entry.update({"health": st.get("health"), "drift": st.get("drift"), "error": st.get("error")})
-        summary[name] = entry
+            summary[name], code = _poll_instance(args, cfg, source, hooks, requests, name)
+        except Exception as exc:
+            # One instance's broken registry answer, console or lock file must
+            # not stop the pass for the instances after it.
+            summary[name], code = {"error": f"{exc.__class__.__name__}: {redact(str(exc))[:300]}"}, exitcodes.ERROR
+        worst = max(worst, code)
     _out(args, summary, lambda: [print(f"{n}: {json.dumps(redact(s), default=str)}") for n, s in summary.items()])
     return worst
+
+
+def _poll_instance(args, cfg, source, hooks, requests: RequestSource, name: str) -> tuple[dict, int]:
+    """One instance's share of a pass: (summary entry, worst exit code)."""
+    worst = exitcodes.OK
+    engine = _engine(args, cfg, source, hooks, name)
+    base_reporter = engine.reporter
+    entry: dict = {"pending": 0, "ran": []}
+    publish_error = _publish(args, cfg, source, hooks, requests, name, engine)
+    if publish_error:
+        entry["publish_error"] = publish_error
+    try:
+        pending = requests.pending(name)
+    except (RequestSourceError, ConfigError) as exc:
+        pending = []
+        entry["request_error"] = redact(str(exc))
+        worst = max(worst, exitcodes.ERROR)
+    entry["pending"] = len(pending)
+    for req in pending:
+        try:
+            if not requests.claim(req):
+                entry["ran"].append({"request": req.id, "outcome": "claimed_elsewhere"})
+                continue
+        except RequestSourceError as exc:
+            entry.setdefault("errors", []).append(redact(str(exc)))
+            continue
+        engine.approval = requests.approval_policy_for(req)
+        engine.reporter = MultiReporter([LostTrackMarker(req), base_reporter, requests.reporter(req)])
+        run = RunContext(instance=name, action=req.action, tag=req.tag, requested_by=req.requested_by,
+                         request_id=req.id, insecure=args.insecure_skip_verify)
+        try:
+            # Heartbeats renew the console's lease while long steps run.
+            with requests.heartbeat(req):
+                if req.action == "upgrade":
+                    outcome = engine.upgrade(run, req)
+                elif req.action == "rollback":
+                    outcome = engine.rollback(run, req)
+                else:
+                    outcome = engine.restart(run, req)
+        except (InstanceNotReady, LockFileError) as exc:
+            # Claimed but cannot act: say so to the console rather than
+            # leaving the request "claimed" forever.
+            from pinpoint_updater.models import RunOutcome
+            outcome = RunOutcome("refused", f"{redact(str(exc))}; nothing changed")
+            engine.reporter.finished(run, outcome)
+        finally:
+            engine.reporter = base_reporter
+        entry["ran"].append({"request": req.id, "action": req.action, "outcome": outcome.outcome,
+                             **({"console_lost_track": True} if req.console_lost else {})})
+        worst = max(worst, exitcodes.for_outcome(outcome.outcome))
+    if entry["ran"] and any(r.get("outcome") not in (None, "claimed_elsewhere") for r in entry["ran"]):
+        # What runs may have changed: tell the console now, not at the next hourly rebuild.
+        err = _publish(args, cfg, source, hooks, requests, name, engine, force=True)
+        if err:
+            entry["publish_error"] = err
+    st = engine.status()
+    entry.update({"health": st.get("health"), "drift": st.get("drift"), "error": st.get("error")})
+    return entry, worst

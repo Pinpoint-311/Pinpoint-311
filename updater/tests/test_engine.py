@@ -430,3 +430,45 @@ def test_selfcheck_runs_in_backend_and_worker_after_upgrade(cfg):
     execs = [c for c in runner.calls if c[:2] == ["docker", "compose"] and "app.cli.selfcheck" in c]
     services = {c[c.index("-T") + 1] for c in execs}
     assert services == {"backend", "worker"}
+
+
+# -- adversarial review 2026-10-19 ----------------------------------------------------
+
+def _console_request(tag):
+    from pinpoint_updater.request_source import UpgradeRequest
+    return UpgradeRequest(instance="town", action="upgrade", tag=tag, requested_by="alice", source="http",
+                          approvals=["bob"], policy="two_person")
+
+
+def test_a_console_request_cannot_downgrade(cfg):
+    """A compromised backend (or one misused admin) must not move the town
+    back onto an older signed release with a known flaw: the console's way
+    back is rollback, to the previous release only."""
+    from pinpoint_updater.request_source import TwoPersonApproval
+    runner = good_runner()
+    e, rec = engine(cfg, runner, FakeProbe([healthy("1.7.0", "aaa")]),
+                    source=FakeSource(release("v1.6.0", db="aaa", min_db="aaa")))
+    e.approval = TwoPersonApproval()
+    out = e.upgrade(run_ctx(tag="v1.6.0"), _console_request("v1.6.0"))
+    assert out.outcome == "refused" and "older than" in out.steps[-1].detail
+    assert not runner.calls  # no cosign, no backup, no compose
+    assert read_lock(cfg.instance("town").lock_path).current.version == "v1.7.0"
+
+
+def test_an_operator_on_the_host_may_still_downgrade(cfg):
+    runner = good_runner()
+    e, rec = engine(cfg, runner, FakeProbe([healthy("1.7.0", "aaa"), healthy("1.6.0", "aaa")]),
+                    source=FakeSource(release("v1.6.0", db="aaa", min_db="aaa")))
+    out = e.upgrade(run_ctx(tag="v1.6.0"), request(tag="v1.6.0"))
+    assert out.outcome == "succeeded", statuses(out)
+
+
+def test_a_version_the_lock_cannot_hold_is_refused_before_anything_changes(cfg):
+    """Found at the commit, it would leave the new release serving with the
+    old lock (and an exception instead of a report)."""
+    runner = good_runner()
+    e, rec = engine(cfg, runner, FakeProbe([healthy("1.7.0", "aaa")]),
+                    source=FakeSource(release(version="1.8.0\nBACKEND_IMAGE=evil")))
+    out = upgrade(e)
+    assert out.outcome == "refused" and "unsafe value" in out.steps[-1].detail
+    assert not runner.subcommand_calls("up") and not runner.subcommand_calls("run")

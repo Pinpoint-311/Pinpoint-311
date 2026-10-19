@@ -44,7 +44,8 @@ from app.core.auth import get_current_admin  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
-TABLES = ("UpgradeRequest", "UpgradeRequestStep", "UpdaterToken", "UpdaterRelease", "UpdaterSettings", "AuditLog")
+TABLES = ("UpgradeRequest", "UpgradeRequestStep", "UpdaterToken", "UpdaterRelease", "UpdaterSettings", "AuditLog",
+          "User")
 
 ALICE = types.SimpleNamespace(id=1, username="alice", email="alice@town.example", role="admin")
 BOB = types.SimpleNamespace(id=2, username="bob", email="bob@town.example", role="admin")
@@ -90,7 +91,18 @@ async def h(tmp_path, monkeypatch):
         for name in TABLES:
             await conn.run_sync(getattr(models, name).__table__.create)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with factory() as s:
+        # The admins the tests act as: requests are refused once their
+        # requester or approver stops being an active admin.
+        for who in (ALICE, BOB):
+            s.add(models.User(id=who.id, username=who.username, email=who.email, role="admin", is_active=True))
+        await s.commit()
     harness = Harness(factory)
+
+    async def running_version():
+        return "1.7.0"  # what RELEASES["current"] says runs; v1.8.0 is newer
+
+    monkeypatch.setattr(upgrades_api, "_running_version", running_version)
 
     async def fake_notify(kind, request_id=None, actor=None):
         harness.emails.append((kind, request_id) if actor is None else (kind, request_id, actor))
@@ -720,3 +732,154 @@ async def test_a_heartbeat_for_an_expired_finished_or_unclaimed_request_is_refus
         assert (await c.post(f"/api/internal/updater/requests/{pending}/heartbeat", headers=bearer(tok))).status_code == 409
         assert (await c.post("/api/internal/updater/requests/999/heartbeat", headers=bearer(tok))).status_code == 404
         assert (await c.post(f"/api/internal/updater/requests/{rid}/heartbeat")).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Adversarial review, 2026-10-19: races, removed admins, downgrades, headers
+# ---------------------------------------------------------------------------
+
+async def _set_status(h, rid, status):
+    async with h.factory() as s:
+        req = await s.get(models.UpgradeRequest, rid)
+        req.status = status
+        await s.commit()
+
+
+def _race_after_load(monkeypatch, h, status):
+    """Make the admin route's read see the request as it was, then let another
+    actor (the updater's claim, a second admin's cancel) change it before the
+    route writes: the window a read-check-write handler leaves open."""
+    real = upgrades_api._load
+
+    async def racing_load(db, request_id):
+        req = await real(db, request_id)
+        await _set_status(h, request_id, status)
+        return req
+
+    monkeypatch.setattr(upgrades_api, "_load", racing_load)
+
+
+async def test_a_cancel_racing_the_claim_never_overwrites_it(h, monkeypatch):
+    async with h.client() as c:
+        await connect(h, c)
+        rid = (await file_request(h, c, action="restart", target_tag=None)).json()["id"]
+        _race_after_load(monkeypatch, h, "claimed")
+        r = await c.post(f"/api/system/upgrade-requests/{rid}/cancel")
+        assert r.status_code == 409 and "already running" in r.json()["detail"]
+    (req,) = await h.rows(models.UpgradeRequest, models.UpgradeRequest.id == rid)
+    assert req.status == "claimed" and req.cancelled_by is None
+
+
+async def test_an_approval_racing_a_cancel_never_revives_it(h, monkeypatch):
+    async with h.client() as c:
+        tok = await connect(h, c)
+        rid = (await file_request(h, c)).json()["id"]
+        h.admin = BOB
+        _race_after_load(monkeypatch, h, "cancelled")
+        r = await c.post(f"/api/system/upgrade-requests/{rid}/approve")
+        assert r.status_code == 409
+        assert (await c.get("/api/internal/updater/requests", headers=bearer(tok))).json()["requests"] == []
+    (req,) = await h.rows(models.UpgradeRequest, models.UpgradeRequest.id == rid)
+    assert req.status == "cancelled" and req.approved_by is None
+
+
+async def test_a_report_racing_mark_failed_is_not_applied(h, monkeypatch):
+    async with h.client() as c:
+        tok = await connect(h, c)
+        rid = await _claimed_upgrade(h, c, tok)
+        real = internal_api._in_flight
+
+        async def racing(db, request_id, background, token, **kw):
+            req = await real(db, request_id, background, token, **kw)
+            await _set_status(h, request_id, "failed")   # an admin's "mark failed" lands now
+            return req
+
+        monkeypatch.setattr(internal_api, "_in_flight", racing)
+        step = {"name": "backup", "status": "ok", "detail": "x"}
+        assert (await c.post(f"/api/internal/updater/requests/{rid}/steps", json=step, headers=bearer(tok))).status_code == 409
+        assert (await c.post(f"/api/internal/updater/requests/{rid}/heartbeat", headers=bearer(tok))).status_code == 409
+        done = {"outcome": "succeeded", "summary": "done"}
+        assert (await c.post(f"/api/internal/updater/requests/{rid}/outcome", json=done, headers=bearer(tok))).status_code == 409
+    (req,) = await h.rows(models.UpgradeRequest, models.UpgradeRequest.id == rid)
+    assert req.status == "failed" and req.outcome != "succeeded"
+    assert await h.rows(models.UpgradeRequestStep, models.UpgradeRequestStep.request_id == rid) == []
+
+
+async def _demote(h, who, *, role="staff", active=True):
+    async with h.factory() as s:
+        user = await s.get(models.User, who.id)
+        user.role, user.is_active = role, active
+        await s.commit()
+
+
+@pytest.mark.parametrize("change", [{"role": "staff"}, {"role": "admin", "active": False}])
+async def test_a_request_from_a_removed_admin_never_reaches_the_updater(h, change):
+    async with h.client() as c:
+        tok = await connect(h, c)
+        await c.put("/api/system/upgrade-settings", json={"require_two_person_approval": False})
+        rid = (await file_request(h, c)).json()["id"]             # approved as filed, by alice alone
+        await _demote(h, ALICE, **change)
+        assert (await c.get("/api/internal/updater/requests", headers=bearer(tok))).json()["requests"] == []
+        assert (await c.post(f"/api/internal/updater/requests/{rid}/claim", headers=bearer(tok))).status_code == 409
+        got = (await c.get(f"/api/system/upgrade-requests/{rid}")).json()
+        assert got["status"] == "refused" and got["outcome"] == "actor_not_admin"
+        assert "no longer an active admin" in got["outcome_summary"]
+    assert ("finished", rid) in h.emails
+    refused = [a for a in await h.rows(models.AuditLog) if a.event_type == "upgrade_request_refused"]
+    assert refused and refused[-1].details["request_id"] == rid
+
+
+async def test_an_approver_removed_before_the_claim_stops_the_request(h):
+    async with h.client() as c:
+        tok = await connect(h, c)
+        rid = (await file_request(h, c)).json()["id"]
+        h.admin = BOB
+        assert (await c.post(f"/api/system/upgrade-requests/{rid}/approve")).status_code == 200
+        await _demote(h, BOB)
+        assert (await c.post(f"/api/internal/updater/requests/{rid}/claim", headers=bearer(tok))).status_code == 409
+    (req,) = await h.rows(models.UpgradeRequest, models.UpgradeRequest.id == rid)
+    assert req.status == "refused" and req.claimed_at is None
+
+
+async def test_a_pending_request_from_a_removed_admin_cannot_be_approved(h):
+    async with h.client() as c:
+        await connect(h, c)
+        rid = (await file_request(h, c)).json()["id"]
+        await _demote(h, ALICE)
+        h.admin = BOB
+        r = await c.post(f"/api/system/upgrade-requests/{rid}/approve")
+        assert r.status_code == 409 and "no longer an active admin" in r.json()["detail"]
+    (req,) = await h.rows(models.UpgradeRequest, models.UpgradeRequest.id == rid)
+    assert req.status == "pending_approval"
+
+
+async def test_an_older_release_is_not_requestable(h, monkeypatch):
+    async def running_version():
+        return "1.9.0"
+
+    monkeypatch.setattr(upgrades_api, "_running_version", running_version)
+    async with h.client() as c:
+        await connect(h, c)
+        listed = {r["tag"]: r for r in (await c.get("/api/system/releases")).json()["releases"]}
+        assert listed["v1.8.0"]["requestable"] is False and "older than the running" in listed["v1.8.0"]["refusal"]
+        r = await file_request(h, c)
+        assert r.status_code == 422 and "older than the running" in r.json()["detail"]
+    assert U.is_downgrade("v1.9.0-rc3", "1.9.0") and not U.is_downgrade("1.9.0", "1.9.0-rc3")
+    assert not U.is_downgrade("v1.10.0", "1.9.0") and not U.is_downgrade("nightly", "1.9.0")
+
+
+async def test_any_proxy_header_even_empty_is_refused(h):
+    good = await h.token()
+    async with h.client() as c:
+        for header, value in (("X-Forwarded-For", ""), ("X-Forwarded-Host", "town.example"),
+                              ("X-Forwarded-Proto", "https")):
+            r = await c.get("/api/internal/updater/requests", headers={**bearer(good), header: value})
+            assert r.status_code == 404, header
+
+
+async def test_a_reported_tag_outside_the_tag_grammar_is_refused(h):
+    tok = await h.token()
+    async with h.client() as c:
+        bad = {**RELEASES["releases"][0], "tag": "v1.8.0\r\nBcc: someone@example.com"}
+        r = await c.put("/api/internal/updater/releases", json={"releases": [bad]}, headers=bearer(tok))
+        assert r.status_code == 422

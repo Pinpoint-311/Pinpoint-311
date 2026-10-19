@@ -47,9 +47,13 @@ def plain_url(url: str) -> str:
 
 
 def same_database(a: str, b: str) -> bool:
-    pa, pb = urlparse(plain_url(a)), urlparse(plain_url(b))
-    return ((pa.hostname or "localhost"), (pa.port or 5432), pa.path.strip("/")) == \
-           ((pb.hostname or "localhost"), (pb.port or 5432), pb.path.strip("/"))
+    """Best effort on the URL alone (``DB.`` is ``db``). It cannot see that two
+    hostnames reach one server, which is why a provided scratch database must
+    also be empty (run)."""
+    def key(url):
+        p = urlparse(plain_url(url))
+        return ((p.hostname or "localhost").rstrip("."), p.port or 5432, p.path.strip("/"))
+    return key(a) == key(b)
 
 
 def with_database(url: str, name: str) -> str:
@@ -158,7 +162,17 @@ async def run(verify: bool, scratch_url: Optional[str]) -> dict:
                 return {**report, "status": "error", "message": "could not download the backup just uploaded"}
             if not backup_service.decrypt_file(encrypted, decrypted, config["BACKUP_ENCRYPTION_KEY"]):
                 return {**report, "status": "error", "message": "could not decrypt the backup just uploaded"}
-            if not scratch_url:
+            if scratch_url:
+                # pg_restore into a database that has tables appends rows to
+                # them. If an alias, an IP or a second hostname makes the
+                # "scratch" URL the live database, this is what stops the
+                # verification from writing duplicates into production.
+                existing = table_counts(scratch_url)
+                if existing:
+                    return {**report, "status": "error",
+                            "message": f"the scratch database is not empty ({len(existing)} tables); it must be an "
+                                       "empty database, never the live one. Refusing to restore into it"}
+            else:
                 scratch_url, scratch_name = create_scratch(live_url)
             errors = restore_into(decrypted, scratch_url)
             if errors:

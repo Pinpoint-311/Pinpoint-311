@@ -8,7 +8,9 @@ upgrade.
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
+import stat
 from pathlib import Path
 from typing import Literal, Optional
 from urllib.parse import urlparse
@@ -51,9 +53,15 @@ def _read_secret_file(path: Optional[Path]) -> Optional[str]:
     if path is None:
         return None
     try:
+        st = os.stat(path)
         value = Path(path).read_text().strip()
     except OSError as exc:
         raise ConfigError(f"cannot read credential file {path}: {exc.strerror}") from exc
+    if st.st_mode & 0o007:
+        # Group access is how root:pinpoint-updater 0640 works; "other" access
+        # means every account on the host can read (or swap) the credential.
+        raise ConfigError(f"credential file {path} is accessible to every user on the host "
+                          f"(mode {stat.filemode(st.st_mode)}); chmod 600 (or 640 root:pinpoint-updater)")
     register_secret(value)
     return value or None
 
@@ -318,6 +326,11 @@ class UpdaterConfig(_Strict):
         projects = [i.project for i in v.values()]
         if len(set(projects)) != len(projects):
             raise ValueError("two instances name the same compose project")
+        locks = [str(i.lock_path) for i in v.values()]
+        if len(set(locks)) != len(locks):
+            # One release.lock for two instances: upgrading one would rewrite
+            # the images the other starts with.
+            raise ValueError("two instances share a release.lock; give each its own dir or lock_file")
         return v
 
     def instance(self, name: str) -> InstanceConfig:

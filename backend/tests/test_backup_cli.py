@@ -111,3 +111,31 @@ def test_unexpected_errors_do_not_leak_their_message(fake, capsys, monkeypatch):
 def test_same_database_ignores_driver_and_credentials():
     assert cli.same_database(LIVE, "postgresql://x:y@db:5432/township_db")
     assert not cli.same_database(LIVE, "postgresql://x:y@db/township_db_verify")
+    assert cli.same_database(LIVE, "postgresql://x:y@DB.:5432/township_db")
+
+
+def test_a_provided_scratch_database_must_be_empty(fake, capsys, monkeypatch):
+    """An alias the URL check cannot see through (a container IP, a second
+    hostname) would make the "scratch" database the live one, and pg_restore
+    would append every row to production. A non-empty target is refused."""
+    restored = []
+    monkeypatch.setattr(cli, "restore_into", lambda dump, url: restored.append(url))
+    code, report = _run(capsys, ["--verify", "--scratch-url", "postgresql://township:pw@172.18.0.5/township_db"])
+    assert code == 1 and "not empty" in report["message"]
+    assert restored == [] and fake["created"] == [] and fake["dropped"] == []
+
+
+def test_an_empty_provided_scratch_database_is_used(fake, capsys, monkeypatch):
+    scratch = "postgresql://township:pw@db/verify_target"
+    seen = {"calls": 0}
+    real = cli.table_counts
+
+    def counts(url):
+        if url == scratch:
+            seen["calls"] += 1
+            return {} if seen["calls"] == 1 else fake["restored"]
+        return real(url)
+
+    monkeypatch.setattr(cli, "table_counts", counts)
+    code, report = _run(capsys, ["--verify", "--scratch-url", scratch])
+    assert code == 0 and report["verified"] is True and report["scratch"] == "provided"

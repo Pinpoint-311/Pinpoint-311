@@ -80,7 +80,9 @@ Disallow: /
 	# backend also refuses any /api/internal request that carries proxy
 	# headers, so a regenerated site block cannot reopen it. `handle` blocks
 	# are tried most-specific path first, so this wins over /api/* below.
-	handle /api/internal/* {
+	# No slash before the `*`: `/api/internal/*` let `/api/internal`,
+	# `/api/internal./...` and `/api/internal;x/...` through to the backend.
+	handle /api/internal* {
 		respond 404
 	}
 

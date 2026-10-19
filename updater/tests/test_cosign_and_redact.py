@@ -1,7 +1,7 @@
 import io
 import json
 
-from conftest import FakeRunner, OLD, is_cosign
+from conftest import FakeRunner, OLD, is_cosign, write_secret
 from pinpoint_updater.config import TrustConfig
 from pinpoint_updater.cosign import CosignVerifier
 from pinpoint_updater.models import RunContext, RunOutcome, StepResult
@@ -101,8 +101,18 @@ def test_registered_secrets_are_redacted_everywhere(tmp_path):
 
 def test_secret_files_loaded_by_config_are_registered(tmp_path):
     from pinpoint_updater.config import ReleaseSourceConfig
-    (tmp_path / "rt").write_text("deploy-token-value-xyz\n")
+    write_secret(tmp_path / "rt", "deploy-token-value-xyz\n")
     cfg = ReleaseSourceConfig(provider="gitlab", api="https://gitlab.com/api/v4", project="a/b",
                               registry="registry.gitlab.com/a/b", registry_token_file=tmp_path / "rt")
     assert cfg.registry_token() == "deploy-token-value-xyz"
     assert "deploy-token-value-xyz" not in redact("error: deploy-token-value-xyz rejected")
+
+
+def test_the_runner_drops_every_inherited_compose_variable(monkeypatch):
+    from pinpoint_updater.runner import Runner
+    monkeypatch.setenv("COMPOSE_FILE", "/tmp/evil.yml")
+    monkeypatch.setenv("COMPOSE_REMOVE_ORPHANS", "1")
+    monkeypatch.setenv("BACKEND_IMAGE", "evil@sha256:" + "0" * 64)
+    monkeypatch.setenv("KEEP_ME", "yes")
+    out = Runner().run(["env"], timeout=10).stdout
+    assert "COMPOSE_" not in out and "BACKEND_IMAGE" not in out and "KEEP_ME=yes" in out

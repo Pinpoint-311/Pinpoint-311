@@ -10,6 +10,7 @@ import pytest
 from pinpoint_updater.config import ReleaseSourceConfig
 from pinpoint_updater.registry import RegistryClient, RegistryError
 from pinpoint_updater.sources import GitHubSource, GitLabSource, SourceError
+from conftest import write_secret
 
 GITHUB_RELEASES = [
     {"tag_name": "v1.8.0", "name": "1.8.0", "published_at": "2026-10-10T12:00:00Z", "body": "## Fixes\n- a",
@@ -58,7 +59,7 @@ def test_github_release_parsing_skips_drafts_prereleases_and_bad_tags():
 
 
 def test_github_includes_prereleases_when_asked_and_sends_token(tmp_path):
-    (tmp_path / "t").write_text("ghp_" + "a" * 36 + "\n")
+    write_secret(tmp_path / "t", "ghp_" + "a" * 36 + "\n")
     seen = {}
 
     def handler(request):
@@ -72,7 +73,7 @@ def test_github_includes_prereleases_when_asked_and_sends_token(tmp_path):
 
 
 def test_gitlab_release_parsing_and_url_encoded_project(tmp_path):
-    (tmp_path / "t").write_text("glpat-" + "b" * 20)
+    write_secret(tmp_path / "t", "glpat-" + "b" * 20)
     seen = {}
 
     def handler(request):
@@ -170,7 +171,7 @@ def test_resolve_ghcr_anonymous_reads_digests_and_labels():
 
 
 def test_resolve_gitlab_registry_with_deploy_token(tmp_path):
-    (tmp_path / "rt").write_text("gldt-" + "c" * 20)
+    write_secret(tmp_path / "rt", "gldt-" + "c" * 20)
     basic = "Basic " + base64.b64encode(("deploy-user:gldt-" + "c" * 20).encode()).decode()
     handler, _ = fake_registry(
         "registry.example.gov", "https://gitlab.example.gov/jwt/auth", "container_registry",
@@ -216,3 +217,48 @@ def test_non_https_token_realm_is_refused():
     client = RegistryClient(transport=httpx.MockTransport(handler))
     with pytest.raises(RegistryError, match="non-https"):
         client.resolve_digest("ghcr.io/a/b", "1.0")
+
+
+# -- adversarial review 2026-10-19: the tag must name the release the image is ---------
+
+def test_a_tag_moved_to_another_signed_release_is_refused():
+    """cosign verifies a digest, not a tag. Someone with registry push can
+    point 1.8.0 at the (validly signed) 1.7.0 digest; the signed version
+    label says so, and the release is refused."""
+    old = {**LABELS, "org.pinpoint311.app.version": "1.7.0"}
+    handler, _ = fake_registry(
+        "ghcr.io", "https://ghcr.io/token", "ghcr.io",
+        {"pinpoint-311/pinpoint-311-backend": old,
+         "pinpoint-311/pinpoint-311-frontend": {"org.pinpoint311.app.version": "1.8.0"}})
+    src = GitHubSource(gh_config(), transport=httpx.MockTransport(handler))
+    with pytest.raises(SourceError, match="stamped version '1.7.0', not v1.8.0"):
+        src.resolve("v1.8.0")
+
+
+def test_a_frontend_tag_moved_to_another_release_is_refused():
+    handler, _ = fake_registry(
+        "ghcr.io", "https://ghcr.io/token", "ghcr.io",
+        {"pinpoint-311/pinpoint-311-backend": LABELS,
+         "pinpoint-311/pinpoint-311-frontend": {"org.pinpoint311.app.version": "1.6.2"}})
+    src = GitHubSource(gh_config(), transport=httpx.MockTransport(handler))
+    with pytest.raises(SourceError, match="frontend image"):
+        src.resolve("v1.8.0")
+
+
+def test_a_malformed_index_is_a_source_error_not_a_crash():
+    """Valid JSON in the wrong shape (an index entry without a digest) must
+    refuse the release, not raise KeyError out of the whole poll."""
+    index = {"schemaVersion": 2, "mediaType": "application/vnd.oci.image.index.v1+json",
+             "manifests": [{"platform": {"os": "linux"}}]}
+    raw = json.dumps(index).encode()
+    digest = "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    def handler(request):
+        if request.url.path == "/v2/":
+            return httpx.Response(200)
+        return httpx.Response(200, content=raw, headers={"Docker-Content-Digest": digest,
+                                                        "Content-Type": index["mediaType"]})
+
+    src = GitHubSource(gh_config(), transport=httpx.MockTransport(handler))
+    with pytest.raises(SourceError, match="malformed manifest"):
+        src.resolve("v1.8.0")

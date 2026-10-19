@@ -90,3 +90,24 @@ def test_example_config_is_valid():
     example = Path(__file__).resolve().parents[1] / "deploy" / "instances.example.yml"
     cfg = load_config(example)
     assert cfg.instances
+
+
+def test_two_instances_cannot_share_a_release_lock(tmp_path):
+    from conftest import base_config
+    data = base_config(tmp_path)
+    data["instances"]["twin"] = {**data["instances"]["town"], "project": "pinpoint-twin"}
+    with pytest.raises(ConfigError, match="share a release.lock"):
+        parse_config(data)
+
+
+def test_a_credential_file_every_user_can_read_is_refused(tmp_path):
+    from conftest import base_config, make_instance_dir
+    make_instance_dir(tmp_path)
+    token = tmp_path / "pinpoint-town" / "updater.token"
+    token.write_text("ppu_" + "x" * 40)
+    token.chmod(0o644)
+    cfg = parse_config(base_config(tmp_path, token_file="updater.token"))
+    with pytest.raises(ConfigError, match="every user on the host"):
+        cfg.instance("town").updater_token()
+    token.chmod(0o640)
+    assert cfg.instance("town").updater_token().startswith("ppu_")

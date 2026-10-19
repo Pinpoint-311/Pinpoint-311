@@ -39,7 +39,7 @@ class Compose:
 
     def run(self, args: Sequence[str], *, images: ImageSet, timeout: float,
             extra_env: Optional[dict[str, str]] = None) -> CommandResult:
-        # Runner scrubs inherited COMPOSE_*/DOCKER_HOST and image variables.
+        # Runner scrubs inherited COMPOSE_* and image variables.
         env = images.to_env()
         if extra_env:
             env.update(extra_env)

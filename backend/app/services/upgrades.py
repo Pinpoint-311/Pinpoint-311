@@ -26,6 +26,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import re
 import secrets
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -203,6 +204,26 @@ def _norm_version(v: Optional[str]) -> Optional[str]:
     return v[1:] if v[:1] in ("v", "V") and v[1:2].isdigit() else v
 
 
+_SEMVER = re.compile(r"^[vV]?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def version_key(v: Optional[str]) -> Optional[tuple]:
+    """Sortable key for a semantic version (``v1.9.0-rc3`` < ``1.9.0``), None
+    for anything else. The updater's steps.version_key, kept in step."""
+    m = _SEMVER.match(str(v or "").strip())
+    if not m:
+        return None
+    major, minor, patch, pre = m.groups()
+    pre_key: tuple = (1,) if pre is None else (
+        0, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")))
+    return (int(major), int(minor), int(patch), pre_key)
+
+
+def is_downgrade(target: Optional[str], current: Optional[str]) -> bool:
+    t, c = version_key(target), version_key(current)
+    return t is not None and c is not None and t < c
+
+
 def release_refusal(release, *, live_revision: Optional[str], running_version: Optional[str]) -> Optional[str]:
     """Why this reported release cannot be requested, or None when it can."""
     if release is None:
@@ -219,6 +240,11 @@ def release_refusal(release, *, live_revision: Optional[str], running_version: O
                 f"but this database is at {live_revision}.")
     if running_version and _norm_version(running_version) in {_norm_version(release.tag), _norm_version(release.version)}:
         return f"This instance already runs {release.tag}."
+    if running_version and is_downgrade(release.version or release.tag, running_version):
+        # The updater refuses this too (engine: a console request cannot
+        # downgrade). Going back is "Roll back", to the previous release only.
+        return (f"{release.tag} is older than the running {running_version}. To go back, roll back to the "
+                "previous release; an older release than that needs the server operator.")
     return None
 
 
@@ -228,6 +254,26 @@ def approval_block(req, user, *, two_person: bool) -> Optional[str]:
         return f"This request is {req.status.replace('_', ' ')}, not waiting for approval."
     if two_person and _same_admin(req, user):
         return "You requested this. Two-person approval needs a different admin to approve it."
+    return None
+
+
+async def actor_refusal(db, req) -> Optional[str]:
+    """Why ``req`` may no longer run because the admin who requested it, or
+    the one who approved it, is no longer an active admin; None when both
+    still are. A request outlives the account that filed it otherwise: an
+    admin removed after a compromise could leave behind an approved or
+    scheduled upgrade that still runs. Fails closed on an unknown account."""
+    from app.models import User
+
+    checks = [("requested", req.requested_by_id, req.requested_by)]
+    if req.status != PENDING_APPROVAL:
+        checks.append(("approved", req.approved_by_id, req.approved_by))
+    for verb, uid, name in checks:
+        if uid is None:
+            return f"the admin who {verb} it cannot be identified"
+        row = (await db.execute(select(User.role, User.is_active).where(User.id == uid))).first()
+        if row is None or row.role != "admin" or not row.is_active:
+            return f"{name or f'user {uid}'}, who {verb} it, is no longer an active admin"
     return None
 
 
@@ -327,6 +373,7 @@ def describe(req) -> str:
 
 LEASE_EXPIRED = "lease_expired"
 MARKED_FAILED = "marked_failed"
+ACTOR_REVOKED = "actor_not_admin"
 LEASE_SUMMARY = "The updater stopped reporting; check the server"
 
 

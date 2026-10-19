@@ -25,6 +25,12 @@ class SourceError(RuntimeError):
     pass
 
 
+def _norm_version(v: Optional[str]) -> str:
+    """``v1.8.0`` and ``1.8.0`` are the same release (steps.norm_version)."""
+    v = str(v or "").strip()
+    return v[1:] if v[:1] in ("v", "V") and v[1:2].isdigit() else v
+
+
 @dataclass
 class ReleaseInfo:
     tag: str
@@ -145,6 +151,24 @@ class ReleaseSource(ABC):
             f_stamp = stamp_from_labels(self.registry.labels(frontend, f_digest, f_manifest))
         except RegistryError as exc:
             raise SourceError(str(exc)) from None
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            # A manifest, index or config that is valid JSON but not the shape
+            # the distribution spec describes. A SourceError refuses this
+            # release; anything else would escape and stop the whole poll.
+            raise SourceError(f"registry returned a malformed manifest for {tag} ({exc.__class__.__name__})") from None
+        # The signature covers a digest, not a tag: anyone who can push to the
+        # registry (any workflow run with packages: write) can point the
+        # release's tag at another *signed* digest, such as an older release
+        # with a known flaw, and cosign would still pass it. The version label
+        # sits inside the signed image and CI writes it from the release ref,
+        # so it is what binds the digest to the tag an admin approved.
+        for which, stamp in (("backend", b_stamp), ("frontend", f_stamp)):
+            label = stamp["version"]
+            if label and _norm_version(label) != _norm_version(tag):
+                raise SourceError(
+                    f"{which} image at tag {image_tag} is stamped version {label!r}, not {tag}: the registry tag "
+                    "points at a different release. Refusing it."
+                )
         return ResolvedRelease(
             tag=tag,
             version=b_stamp["version"] or tag,
@@ -168,6 +192,8 @@ class ReleaseSource(ABC):
             return stamp_from_labels(self.registry.labels(image, digest))
         except RegistryError as exc:
             raise SourceError(str(exc)) from None
+        except (KeyError, TypeError, AttributeError, ValueError) as exc:
+            raise SourceError(f"registry returned a malformed manifest for {ref} ({exc.__class__.__name__})") from None
 
 
 class GitHubSource(ReleaseSource):

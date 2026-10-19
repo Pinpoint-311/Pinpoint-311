@@ -16,7 +16,7 @@ import pytest
 import yaml
 
 from conftest import (D_NEW_B, FakeProbe, FakeSource, base_config, good_runner, healthy, is_compose, is_cosign,
-                      make_instance_dir)
+                      make_instance_dir, write_secret)
 from pinpoint_updater import cli, exitcodes
 from pinpoint_updater.config import ConfigError, parse_config
 from pinpoint_updater.lockfile import read_lock
@@ -91,7 +91,7 @@ class FakeConsole:
 
 def _cfg(tmp_path, **inst):
     make_instance_dir(tmp_path)
-    (tmp_path / "pinpoint-town" / "updater.token").write_text(TOKEN + "\n")
+    write_secret(tmp_path / "pinpoint-town" / "updater.token", TOKEN + "\n")
     overrides = {"token_file": "updater.token", "api_url": "http://127.0.0.1:58004"}
     overrides.update(inst)
     return base_config(tmp_path, **overrides)
@@ -479,3 +479,68 @@ def test_the_heartbeat_thread_stops_when_the_step_ends_or_raises(tmp_path):
     with src0.heartbeat(req) as hb3:
         pass
     assert hb3.thread is None
+
+
+# -- adversarial review 2026-10-19: the console is not trusted with the host ----------
+
+def test_an_oversized_console_answer_is_refused_not_read(tmp_path):
+    from pinpoint_updater import request_source as rs
+
+    def handler(request):
+        return httpx.Response(200, content=b'{"requests": [' + b" " * (rs.MAX_RESPONSE_BYTES + 10) + b"]}")
+
+    src = HttpRequestSource(parse_config(_cfg(tmp_path)), transport=httpx.MockTransport(handler), sleep=lambda s: None)
+    with pytest.raises(RequestSourceError, match="limit"):
+        src.pending("town")
+
+
+def test_a_console_dripping_its_answer_is_cut_off(tmp_path, monkeypatch):
+    from pinpoint_updater import request_source as rs
+
+    import itertools
+    clock = itertools.count(0, 20)   # every chunk "takes" 20 s
+    monkeypatch.setattr(rs.time, "monotonic", lambda: next(clock))
+
+    class Drip(httpx.SyncByteStream):
+        def __iter__(self):
+            while True:
+                yield b" "
+
+    def handler(request):
+        return httpx.Response(200, stream=Drip())
+
+    src = HttpRequestSource(parse_config(_cfg(tmp_path)), transport=httpx.MockTransport(handler), sleep=lambda s: None)
+    with pytest.raises(RequestSourceError, match="ReadTimeout"):
+        src.pending("town")
+
+
+def test_only_a_few_requests_run_per_pass(tmp_path):
+    from pinpoint_updater import request_source as rs
+
+    console = FakeConsole([{"id": i, "action": "restart", "requested_by": "a", "approvals": ["a"]}
+                           for i in range(1, 20)])
+    reqs = _source(_cfg(tmp_path), console).pending("town")
+    assert [r.id for r in reqs] == [str(i) for i in range(1, rs.MAX_REQUESTS_PER_PASS + 1)]
+
+
+def test_one_instance_failing_unexpectedly_does_not_stop_the_others(tmp_path, capsys, monkeypatch):
+    cfg = _cfg(tmp_path)
+    other = tmp_path / "other"
+    other.mkdir()
+    make_instance_dir(other)
+    cfg["instances"]["other"] = {**cfg["instances"]["town"], "project": "pinpoint-other",
+                                 "dir": str(other / "pinpoint-town"), "token_file": None}
+    seen = []
+    real = cli._poll_instance
+
+    def flaky(args, c, source, hooks, requests, name):
+        seen.append(name)
+        if len(seen) == 1:   # whichever instance the pass reaches first
+            raise KeyError("manifests")
+        return real(args, c, source, hooks, requests, name)
+
+    monkeypatch.setattr(cli, "_poll_instance", flaky)
+    code, _ = _poll(tmp_path, FakeConsole(), cfg=cfg)
+    out = json.loads(capsys.readouterr().out)
+    assert sorted(seen) == ["other", "town"] and code == exitcodes.ERROR
+    assert "KeyError" in out[seen[0]]["error"] and "pending" in out[seen[1]]

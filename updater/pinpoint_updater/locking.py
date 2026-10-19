@@ -26,7 +26,15 @@ class InstanceLock:
         self._fd: int | None = None
 
     def acquire(self) -> "InstanceLock":
-        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o640)
+        # O_NOFOLLOW: whoever owns the instance directory must not be able to
+        # aim this at another file (another instance's release.lock, say) and
+        # have the updater truncate it.
+        try:
+            fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o640)
+        except OSError as exc:
+            if os.path.islink(self.path):
+                raise InstanceLocked(f"{self.path} is a symlink; refusing to use it as the instance lock") from None
+            raise exc
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:

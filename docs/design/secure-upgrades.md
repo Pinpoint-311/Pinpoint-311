@@ -267,9 +267,18 @@ Console behaviour:
   A run held as `needs_approval` is terminal: file a new request with the
   opt-in.
 - Fences on the internal prefix: the bearer token (hashed, constant-time,
-  revocable, `last_used_at` recorded); a Caddy `handle /api/internal/* {
-  respond 404 }` in `pinpoint_site`; the backend answering `404` to anything
-  carrying proxy headers; and `404` in managed mode.
+  revocable, `last_used_at` recorded); a Caddy `handle /api/internal* {
+  respond 404 }` in `pinpoint_site` (no slash before `*`, so `/api/internal`,
+  `/api/internal./…` and `/api/internal;x/…` are covered too); the backend
+  answering `404` to anything carrying a proxy header, even an empty one; and
+  `404` in managed mode.
+- Hardening from the 2026-10-19 adversarial review: approve, cancel and every
+  updater report are conditional UPDATEs, so a cancel never overwrites a claim
+  and a late report never revives a failed request; a request whose requester
+  or approver is no longer an active admin is refused (`actor_not_admin`)
+  instead of claimed; the console refuses, and the updater refuses for
+  console requests, an "upgrade" to an older release; the updater checks the
+  signed version label against the requested tag.
 - Audit events: `upgrade_request_created`, `_refused`, `_approved`,
   `_approval_refused`, `_cancelled`, `_claimed`, `_finished`, `_marked_failed`,
   `_late_report`,

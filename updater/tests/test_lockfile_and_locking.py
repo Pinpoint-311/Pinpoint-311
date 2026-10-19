@@ -5,7 +5,7 @@ import pytest
 from conftest import OLD, OLDER
 from pinpoint_updater import lockfile
 from pinpoint_updater.lockfile import ImageSet, LockFileError, LockState, read_lock, write_lock
-from pinpoint_updater.locking import InstanceLock, InstanceLocked
+from pinpoint_updater.locking import LOCK_NAME, InstanceLock, InstanceLocked
 
 
 def test_round_trip_keeps_previous_and_extra_keys(tmp_path):
@@ -91,3 +91,12 @@ def test_instance_lock_is_exclusive_and_released(tmp_path):
         with pytest.raises(InstanceLocked):
             b.acquire()
     assert b.available()
+
+
+def test_instance_lock_refuses_a_symlink(tmp_path):
+    victim = tmp_path / "other-release.lock"
+    victim.write_text("PINPOINT_VERSION=v1\n")
+    (tmp_path / LOCK_NAME).symlink_to(victim)
+    with pytest.raises(InstanceLocked, match="symlink"):
+        InstanceLock(tmp_path, "town").acquire()
+    assert victim.read_text() == "PINPOINT_VERSION=v1\n"   # not truncated

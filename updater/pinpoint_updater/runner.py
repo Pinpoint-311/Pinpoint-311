@@ -19,11 +19,18 @@ from pinpoint_updater.redact import redact
 # explicitly by the caller, never inherited from whatever environment the
 # updater happened to be started in.
 _SCRUBBED = (
-    "BACKEND_IMAGE", "FRONTEND_IMAGE", "PINPOINT_VERSION",
-    # ...and nothing inherited may change which project or files compose uses.
-    "COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "COMPOSE_PROFILES", "COMPOSE_ENV_FILES",
-    "COMPOSE_PATH_SEPARATOR",
+    "BACKEND_IMAGE", "FRONTEND_IMAGE", "PINPOINT_VERSION", "PINPOINT_APP_VERSION",
 )
+# ...and nothing inherited may change which project, files or behaviour
+# compose uses: every COMPOSE_* variable (COMPOSE_FILE, COMPOSE_PROJECT_NAME,
+# COMPOSE_PROFILES, COMPOSE_ENV_FILES, COMPOSE_REMOVE_ORPHANS, ...). DOCKER_HOST
+# is kept on purpose: it is how an operator points the updater at a rootless
+# daemon or a socket proxy.
+_SCRUBBED_PREFIXES = ("COMPOSE_",)
+
+
+def _scrubbed(name: str) -> bool:
+    return name in _SCRUBBED or name.startswith(_SCRUBBED_PREFIXES)
 
 
 @dataclass
@@ -63,7 +70,7 @@ class Runner:
             raise TypeError("Runner.run takes a list of str arguments, never a shell string")
         argv = list(args)
         self.calls.append(argv)
-        full_env = {k: v for k, v in os.environ.items() if k not in _SCRUBBED}
+        full_env = {k: v for k, v in os.environ.items() if not _scrubbed(k)}
         if env:
             full_env.update(env)
         started = time.monotonic()

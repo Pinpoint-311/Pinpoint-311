@@ -229,18 +229,35 @@ async def approve_upgrade_request(request_id: int, db: AsyncSession = Depends(ge
                                   user=Depends(get_current_admin)):
     """Approve a pending request. While two-person approval is on, the approver
     must be a different admin from the requester."""
+    from sqlalchemy import update
+
+    from app.models import UpgradeRequest
+
     _not_managed()
     req = await _load(db, request_id)
     two_person = await U.two_person_required(db)
     block = U.approval_block(req, user, two_person=two_person)
+    status_code = 403 if req.status == U.PENDING_APPROVAL else 409
+    if block is None:
+        gone = await U.actor_refusal(db, req)
+        if gone:
+            block, status_code = f"This request cannot be approved: {gone}. File a new one.", 409
     if block:
         await record_admin_action(db, event_type="upgrade_request_approval_refused", actor=user, success=False,
                                   failure_reason=block[:255],
                                   details={"request_id": req.id, "action": req.action, "target_tag": req.target_tag})
-        raise HTTPException(status_code=403 if req.status == U.PENDING_APPROVAL else 409, detail=block)
-    req.status = U.APPROVED
-    req.approved_by, req.approved_by_id, req.approved_at = U.actor_name(user), user.id, U.now_utc()
+        raise HTTPException(status_code=status_code, detail=block)
+    # Conditional, like the claim: a cancel that lands between the read above
+    # and this write must win, never be overwritten back to "approved".
+    result = await db.execute(
+        update(UpgradeRequest).where(UpgradeRequest.id == req.id, UpgradeRequest.status == U.PENDING_APPROVAL)
+        .values(status=U.APPROVED, approved_by=U.actor_name(user), approved_by_id=user.id, approved_at=U.now_utc())
+        .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        await db.rollback()  # expires req: use the id from the path
+        raise HTTPException(status_code=409, detail=f"Request #{request_id} changed while you were deciding. Refresh.")
     await db.commit()
+    await db.refresh(req)
     await record_admin_action(db, event_type="upgrade_request_approved", actor=user, details={
         "request_id": req.id, "action": req.action, "target_tag": req.target_tag,
         "requested_by": req.requested_by, "two_person_approval": two_person,
@@ -253,17 +270,34 @@ async def cancel_upgrade_request(request_id: int, db: AsyncSession = Depends(get
                                  user=Depends(get_current_admin)):
     """Cancel a request the updater has not claimed yet. Any admin may cancel:
     stopping a change never needs a second person."""
+    from sqlalchemy import update
+
+    from app.models import UpgradeRequest
+
     _not_managed()
     req = await _load(db, request_id)
-    if req.status not in U.CANCELLABLE:
-        raise HTTPException(status_code=409, detail=(
+
+    def _refused():
+        return HTTPException(status_code=409, detail=(
             f"Request #{req.id} is {req.status.replace('_', ' ')}. "
             + ("The updater is already running it; it cannot be stopped from here."
                if req.status in U.IN_FLIGHT else "Only a request that has not started can be cancelled.")))
-    req.status = U.CANCELLED
-    req.cancelled_by = U.actor_name(user)
-    req.finished_at = U.now_utc()
+
+    if req.status not in U.CANCELLABLE:
+        raise _refused()
+    # Conditional: if the updater claimed it a moment ago, the claim stands
+    # and the admin is told so. Writing "cancelled" over a claimed request
+    # would show it stopped while the updater runs it.
+    result = await db.execute(
+        update(UpgradeRequest).where(UpgradeRequest.id == req.id, UpgradeRequest.status.in_(U.CANCELLABLE))
+        .values(status=U.CANCELLED, cancelled_by=U.actor_name(user), finished_at=U.now_utc())
+        .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        await db.rollback()
+        await db.refresh(req)
+        raise _refused()
     await db.commit()
+    await db.refresh(req)
     await record_admin_action(db, event_type="upgrade_request_cancelled", actor=user, details={
         "request_id": req.id, "action": req.action, "target_tag": req.target_tag,
     })
@@ -298,8 +332,8 @@ async def mark_upgrade_request_failed(request_id: int, background: BackgroundTas
                 finished_at=U.now_utc())
         .execution_options(synchronize_session=False))
     if result.rowcount != 1:
-        await db.rollback()
-        raise HTTPException(status_code=409, detail=f"Request #{req.id} finished while you were deciding.")
+        await db.rollback()  # expires req: use the id from the path
+        raise HTTPException(status_code=409, detail=f"Request #{request_id} finished while you were deciding.")
     await db.commit()
     await db.refresh(req)
     await record_admin_action(db, event_type="upgrade_request_marked_failed", actor=user, details={

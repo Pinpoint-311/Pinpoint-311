@@ -59,6 +59,12 @@ class UpgradeRequest:
     # Set when the console refused a heartbeat or report for this request (its
     # lease ran out there). The run carries on; the outcome says so locally.
     console_lost: bool = False
+    # An "upgrade" to a release older than the one running. Only an operator
+    # on the host may ask for that (CliRequestSource). A console request
+    # cannot: a compromised backend, or one misused admin account, could
+    # otherwise move the town back onto a signed release with a known flaw.
+    # The console's way back is "rollback", to the previous release only.
+    allow_downgrade: bool = False
 
 
 class ApprovalPolicy(ABC):
@@ -154,6 +160,7 @@ class CliRequestSource(RequestSource):
         return UpgradeRequest(
             instance=instance, action=action, tag=tag, requested_by=operator, source=self.name,
             reason=reason, approvals=[operator] if confirmed else [], allow_destructive=allow_destructive,
+            allow_downgrade=True,
         )
 
 
@@ -167,6 +174,15 @@ class ConsoleLostTrack(RequestSourceError):
 
 
 INTERNAL = "/api/internal/updater"
+
+# The console is the internet-facing backend, which the design does not trust
+# with the host. Its answers are small JSON documents; a larger or endless one
+# is refused rather than read into the memory of a process that has the
+# Docker socket.
+MAX_RESPONSE_BYTES = 1024 * 1024
+# Requests run per instance per pass. More wait for the next pass, so one
+# instance's console cannot keep the updater busy and starve the others.
+MAX_REQUESTS_PER_PASS = 3
 
 
 class HttpRequestSource(RequestSource):
@@ -227,7 +243,7 @@ class HttpRequestSource(RequestSource):
               ok: tuple[int, ...] = (200, 201)) -> httpx.Response:
         try:
             with self._lock:
-                resp = self._client(instance).request(method, f"{INTERNAL}{path}", json=json)
+                resp = self._bounded(self._client(instance), method, f"{INTERNAL}{path}", json)
         except httpx.HTTPError as exc:
             raise RequestSourceError(redact(f"{instance}: {method} {INTERNAL}{path} failed "
                                             f"({exc.__class__.__name__}: {exc})")) from None
@@ -242,6 +258,31 @@ class HttpRequestSource(RequestSource):
                 hint = " (is api_url the backend's loopback port, not Caddy?)"
             raise RequestSourceError(f"{instance}: {method} {INTERNAL}{path} answered {resp.status_code}{hint}: {body}")
         return resp
+
+    def _bounded(self, client: httpx.Client, method: str, url: str, json: Any) -> httpx.Response:
+        """One request whose answer is at most MAX_RESPONSE_BYTES and arrives
+        within about twice the timeout in total. httpx's own timeouts are per
+        read, so a console dripping a byte at a time would otherwise hold the
+        updater (and every other instance's upgrades) indefinitely."""
+        request = client.build_request(method, url, json=json)
+        deadline = time.monotonic() + 2 * self.timeout
+        resp = client.send(request, stream=True)
+        try:
+            declared = resp.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > MAX_RESPONSE_BYTES:
+                raise httpx.DecodingError(f"response of {declared} bytes is over the {MAX_RESPONSE_BYTES}-byte limit",
+                                          request=request)
+            chunks, size = [], 0
+            for chunk in resp.iter_bytes():
+                size += len(chunk)
+                if size > MAX_RESPONSE_BYTES:
+                    raise httpx.DecodingError(f"response is over the {MAX_RESPONSE_BYTES}-byte limit", request=request)
+                if time.monotonic() > deadline:
+                    raise httpx.ReadTimeout("response took too long to arrive", request=request)
+                chunks.append(chunk)
+        finally:
+            resp.close()
+        return httpx.Response(resp.status_code, headers=resp.headers, content=b"".join(chunks), request=request)
 
     @staticmethod
     def _log(message: str) -> None:
@@ -269,7 +310,10 @@ class HttpRequestSource(RequestSource):
             req = self._parse(instance, row)
             if req is not None:
                 out.append(req)
-        return out
+        if len(out) > MAX_REQUESTS_PER_PASS:
+            self._log(f"{instance}: {len(out)} requests pending; running the oldest {MAX_REQUESTS_PER_PASS} "
+                      "this pass, the rest on the next")
+        return out[:MAX_REQUESTS_PER_PASS]
 
     def _parse(self, instance: str, row: Any) -> Optional[UpgradeRequest]:
         from pinpoint_updater.config import ConfigError, validate_tag
@@ -277,7 +321,7 @@ class HttpRequestSource(RequestSource):
         if not isinstance(row, dict):
             return None
         rid, action, tag = str(row.get("id") or ""), row.get("action"), row.get("tag")
-        if not rid.isdigit() or action not in ACTIONS:
+        if not (rid.isascii() and rid.isdigit() and len(rid) <= 18) or action not in ACTIONS:
             self._log(f"{instance}: ignoring malformed request {redact(str(row)[:200])}")
             return None
         if action == "upgrade":

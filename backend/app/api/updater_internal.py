@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "via")
+_PROXY_HEADERS = ("x-forwarded-for", "forwarded", "x-real-ip", "via", "x-forwarded-host", "x-forwarded-proto")
 
 
 async def require_updater_token(
@@ -56,7 +56,9 @@ async def require_updater_token(
 
     if get_settings().managed_mode:
         raise HTTPException(status_code=404, detail="Not Found")
-    if any(request.headers.get(h) for h in _PROXY_HEADERS):
+    if any(h in request.headers for h in _PROXY_HEADERS):
+        # Present at all, even empty: a proxy that blanks the value still
+        # marks the request as having come through it.
         # Came through Caddy (or some other proxy): the internet side. The
         # updater talks to the backend directly over loopback.
         raise HTTPException(status_code=404, detail="Not Found")
@@ -122,6 +124,8 @@ async def pending_requests(background: BackgroundTasks, db: AsyncSession = Depen
     )).scalars().all()
     out = []
     for r in rows:
+        if await _refuse_if_actor_gone(db, r, token, background):
+            continue
         approvals = [r.approved_by] if r.approved_by else []
         out.append({
             "id": str(r.id),
@@ -138,6 +142,31 @@ async def pending_requests(background: BackgroundTasks, db: AsyncSession = Depen
     return {"requests": out, "require_two_person_approval": two_person}
 
 
+async def _refuse_if_actor_gone(db, req, token, background: BackgroundTasks) -> bool:
+    """Refuse an approved request whose requester or approver has since been
+    removed, deactivated or demoted (services/upgrades.actor_refusal). True
+    when it was refused (or someone else moved it on first)."""
+    from app.models import UpgradeRequest
+
+    why = await U.actor_refusal(db, req)
+    if why is None:
+        return False
+    summary = f"Not run: {why}. File a new request if it is still wanted."
+    result = await db.execute(
+        update(UpgradeRequest).where(UpgradeRequest.id == req.id, UpgradeRequest.status == U.APPROVED)
+        .values(status=U.REFUSED, outcome=U.ACTOR_REVOKED, outcome_summary=U.clip(summary, U.MAX_SUMMARY),
+                finished_at=U.now_utc())
+        .execution_options(synchronize_session=False))
+    await db.commit()
+    if result.rowcount == 1:
+        logger.warning("[Updater] request %s refused: %s", req.id, why)
+        await _audit(db, "upgrade_request_refused", token, success=False, failure_reason=why[:255],
+                     details={"request_id": req.id, "action": req.action, "target_tag": req.target_tag,
+                              "outcome": U.ACTOR_REVOKED})
+        background.add_task(U.notify_admins, "finished", req.id)
+    return True
+
+
 def _request_id(raw: str) -> int:
     try:
         value = int(raw)
@@ -149,12 +178,17 @@ def _request_id(raw: str) -> int:
 
 
 @router.post("/requests/{request_id}/claim")
-async def claim_request(request_id: str, db: AsyncSession = Depends(get_db), token=Depends(require_updater_token)):
+async def claim_request(request_id: str, background: BackgroundTasks, db: AsyncSession = Depends(get_db),
+                        token=Depends(require_updater_token)):
     """Take an approved, due request. One conditional UPDATE: under concurrency
     exactly one caller sees a row change; everyone else gets 409."""
     from app.models import UpgradeRequest
 
     rid = _request_id(request_id)
+    pending = await db.get(UpgradeRequest, rid)
+    if pending is not None and pending.status == U.APPROVED and await _refuse_if_actor_gone(db, pending, token, background):
+        raise HTTPException(status_code=409, detail=f"Request {rid} was refused: its requester or approver is no "
+                                                    "longer an active admin")
     now = U.now_utc()
     result = await db.execute(
         update(UpgradeRequest)
@@ -218,14 +252,14 @@ async def report_step(request_id: str, body: StepReport, background: BackgroundT
     from app.models import UpgradeRequestStep
 
     rid = _request_id(request_id)
-    req = await _in_flight(db, rid, background, token)
-    req.last_report_at = U.now_utc()
+    await _in_flight(db, rid, background, token)
+    # Conditional on still being in flight: a lease expiry or "mark failed"
+    # that lands after the check above must not be turned back into running.
+    await _renew(db, rid, status=U.RUNNING)
     db.add(UpgradeRequestStep(request_id=rid, step=body.name, status=body.status,
                               detail=U.clip(body.detail, U.MAX_DETAIL), at=U.parse_time(body.at) or U.now_utc()))
-    if req.status == U.CLAIMED:
-        req.status = U.RUNNING
     await db.commit()
-    return {"ok": True, "status": req.status}
+    return {"ok": True, "status": U.RUNNING}
 
 
 @router.post("/requests/{request_id}/heartbeat")
@@ -237,9 +271,25 @@ async def heartbeat(request_id: str, background: BackgroundTasks, db: AsyncSessi
     rid = _request_id(request_id)
     # Not audited when refused either: a revived updater beats every minute.
     req = await _in_flight(db, rid, background, token, audit_late=False)
-    req.last_report_at = U.now_utc()
+    status = req.status
+    await _renew(db, rid)
     await db.commit()
-    return {"ok": True, "status": req.status}
+    return {"ok": True, "status": status}
+
+
+async def _renew(db, rid: int, **values) -> None:
+    """Record a report on an in-flight request: one conditional UPDATE, 409
+    if the request stopped being in flight since _in_flight looked."""
+    from app.models import UpgradeRequest
+
+    result = await db.execute(
+        update(UpgradeRequest).where(UpgradeRequest.id == rid, UpgradeRequest.status.in_(U.IN_FLIGHT))
+        .values(last_report_at=U.now_utc(), **values)
+        .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail=f"Request {rid} finished while this report was in transit; "
+                                                    "it was not applied.")
 
 
 class OutcomeReport(BaseModel):
@@ -257,12 +307,11 @@ async def report_outcome(request_id: str, body: OutcomeReport, background: Backg
     """Record how the run ended; sets the final status, audits it and emails admins."""
     rid = _request_id(request_id)
     req = await _in_flight(db, rid, background, token)
-    req.last_report_at = U.now_utc()
-    req.status = U.status_for_outcome(body.outcome)
-    req.outcome = body.outcome[:32]
-    req.outcome_summary = U.clip(body.summary, U.MAX_SUMMARY)
-    req.finished_at = U.parse_time(body.finished_at) or U.now_utc()
+    await _renew(db, rid, status=U.status_for_outcome(body.outcome), outcome=body.outcome[:32],
+                 outcome_summary=U.clip(body.summary, U.MAX_SUMMARY),
+                 finished_at=U.parse_time(body.finished_at) or U.now_utc())
     await db.commit()
+    await db.refresh(req)
     await _audit(db, "upgrade_request_finished", token, success=req.status == U.SUCCEEDED,
                  failure_reason=None if req.status == U.SUCCEEDED else (req.outcome_summary or req.status)[:255],
                  details={"request_id": rid, "action": req.action, "target_tag": req.target_tag,
@@ -272,7 +321,9 @@ async def report_outcome(request_id: str, body: OutcomeReport, background: Backg
 
 
 class ReleaseReport(BaseModel):
-    tag: str = Field(..., min_length=1, max_length=128)
+    # The updater's own tag grammar (pinpoint_updater.config.TAG_RE). The tag
+    # reaches email subjects and the audit log, so nothing else is accepted.
+    tag: str = Field(..., min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$")
     version: Optional[str] = None
     name: Optional[str] = None
     published_at: Optional[str] = None

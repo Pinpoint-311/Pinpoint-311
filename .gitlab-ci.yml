@@ -165,7 +165,11 @@ release-images:
     # reach GitLab too, and publishing here as well would sign a second,
     # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
     # Settings > CI/CD > Variables to make GitLab the release source instead.
-    - if: $CI_COMMIT_TAG =~ /^v/ && $PINPOINT_RELEASE_FROM_GITLAB == "true"
+    # Protected tags only. A pipeline on an unprotected v* tag would sign with
+    # the same .gitlab-ci.yml@refs/tags/v... identity the updater trusts.
+    # (This file comes from the tagged commit, so tag protection in the
+    # project settings is the real control; this catches a lapse in it.)
+    - if: $CI_COMMIT_TAG =~ /^v/ && $CI_COMMIT_REF_PROTECTED == "true" && $PINPOINT_RELEASE_FROM_GITLAB == "true"
   # needs: the whole gate, by name, so a failure in any of them stops here.
   needs: [backend-tests, frontend-checks, trivy-fs, trivy-image]
   id_tokens:
@@ -256,7 +260,11 @@ release-notes:
     # reach GitLab too, and publishing here as well would sign a second,
     # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
     # Settings > CI/CD > Variables to make GitLab the release source instead.
-    - if: $CI_COMMIT_TAG =~ /^v/ && $PINPOINT_RELEASE_FROM_GITLAB == "true"
+    # Protected tags only. A pipeline on an unprotected v* tag would sign with
+    # the same .gitlab-ci.yml@refs/tags/v... identity the updater trusts.
+    # (This file comes from the tagged commit, so tag protection in the
+    # project settings is the real control; this catches a lapse in it.)
+    - if: $CI_COMMIT_TAG =~ /^v/ && $CI_COMMIT_REF_PROTECTED == "true" && $PINPOINT_RELEASE_FROM_GITLAB == "true"
   needs:
     - job: release-images
       artifacts: true

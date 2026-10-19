@@ -21,7 +21,7 @@ from pinpoint_updater.compose import Compose
 from pinpoint_updater.config import InstanceConfig, UpdaterConfig, validate_tag
 from pinpoint_updater.cosign import CosignVerifier
 from pinpoint_updater.health import AppProbe, ProbeError
-from pinpoint_updater.lockfile import ImageSet, LockFileError, LockState, read_lock, write_lock
+from pinpoint_updater.lockfile import ImageSet, LockFileError, LockState, read_lock, render_lock, write_lock
 from pinpoint_updater.locking import InstanceLock, InstanceLocked
 from pinpoint_updater.models import (
     ERROR, FAILED, GATED, MIGRATION_FAILED, NEEDS_APPROVAL, NOOP, OK, PLANNED_OUTCOME, REFUSED,
@@ -192,6 +192,21 @@ class Engine:
         new = steps.images_for(release)
         if new.same_images(current):
             return self._finish(run, NOOP, f"{self.name} already runs {tag}", out)
+        if not request.allow_downgrade and steps.is_downgrade(release.version, current.expected_version):
+            self._emit(run, out, StepResult(
+                "preflight", FAILED,
+                f"{tag} ({release.version}) is older than the running {current.expected_version}. A console request "
+                "cannot move an instance to an older release; use rollback (to the previous release), or an "
+                "operator can run `pinpoint-updater upgrade` on the host."))
+            return self._finish(run, REFUSED, f"{tag} is older than {current.version}; nothing changed", out)
+        new_state = LockState(current=new, previous=current, extra=state.extra)
+        try:
+            # Values the lock cannot hold would otherwise surface only at the
+            # commit, after the new containers are already serving.
+            render_lock(new_state)
+        except LockFileError as exc:
+            self._emit(run, out, StepResult("preflight", FAILED, str(exc)))
+            return self._finish(run, REFUSED, f"{tag} cannot be recorded in release.lock; nothing changed", out)
 
         # 1. preflight
         health = steps.read_health(self.deps)
@@ -241,9 +256,8 @@ class Engine:
         # 7. commit
         t = Timer()
         try:
-            write_lock(self.instance.lock_path, LockState(current=new, previous=current, extra=state.extra),
-                       header=f"{tag} via run {run.run_id}")
-        except OSError as exc:
+            write_lock(self.instance.lock_path, new_state, header=f"{tag} via run {run.run_id}")
+        except (OSError, LockFileError) as exc:
             self._emit(run, out, StepResult("commit", FAILED, f"could not rewrite {self.instance.lock_path}: {exc}. "
                                             f"The containers run {tag} but the lock still names {current.version}; "
                                             "fix the file before anything else recreates the stack.", {}, t.elapsed()))

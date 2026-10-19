@@ -22,6 +22,7 @@ Ordering and semantics are ported from centralizedhosting/orchestrator:
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import time
 from dataclasses import dataclass, field
@@ -73,6 +74,30 @@ def norm_version(v: Optional[str]) -> Optional[str]:
         return None
     v = str(v).strip()
     return v[1:] if v[:1] in ("v", "V") and v[1:2].isdigit() else v
+
+
+_SEMVER = re.compile(r"^[vV]?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def version_key(v: Optional[str]) -> Optional[tuple]:
+    """A sortable key for a semantic version (``v1.9.0-rc3`` < ``1.9.0``), or
+    None for a tag that is not one."""
+    m = _SEMVER.match(str(v or "").strip())
+    if not m:
+        return None
+    major, minor, patch, pre = m.groups()
+    if pre is None:
+        pre_key: tuple = (1,)
+    else:
+        pre_key = (0, tuple((0, int(p), "") if p.isdigit() else (1, 0, p) for p in pre.split(".")))
+    return (int(major), int(minor), int(patch), pre_key)
+
+
+def is_downgrade(target: Optional[str], current: Optional[str]) -> bool:
+    """True when ``target`` is an older version than ``current``. Tags that
+    are not semantic versions are never called a downgrade."""
+    t, c = version_key(target), version_key(current)
+    return t is not None and c is not None and t < c
 
 
 def _check(name: str, ok: bool, detail: str, *, warn: bool = False) -> dict:
