@@ -77,7 +77,7 @@ const PILL: Record<CapabilityState, { cls: string; label: string; Icon: typeof C
      * that. It is also not "not checked yet", which implies somebody could. */
     unverifiable: {
         cls: 'bg-white/[0.07] text-white/70 border-white/15',
-        label: 'Set up · we cannot test this one', Icon: HelpCircle,
+        label: 'Set up · can\u2019t be tested here', Icon: HelpCircle,
     },
     /* Not a fault, and not an omission.
      *
@@ -287,7 +287,10 @@ export function ResultNote({ tone, children }: { tone: 'ok' | 'bad' | 'unknown';
  *
  * Lived in ServiceProviders, which meant the town-system cards drew their own
  * at a different size with a different focus ring — the exact drift this module
- * exists to stop. */
+ * exists to stop.
+ *
+ * Focus is the 3px amber-300 ring the shared Button uses (WCAG 2.4.7 / 1.4.11):
+ * the indigo ring at 50% it had was under 3:1 against the dark panels. */
 export function Switch({ on, busy, disabled, onChange, label, 'aria-describedby': describedBy }: {
     on: boolean; busy?: boolean; disabled?: boolean;
     onChange: () => void; label: string;
@@ -304,7 +307,7 @@ export function Switch({ on, busy, disabled, onChange, label, 'aria-describedby'
             aria-checked={on}
             aria-label={label}
             aria-describedby={describedBy}
-            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 focus:outline-none focus-visible:ring-[3px] focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1B1B3A] disabled:opacity-50 ${on ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
             style={{ width: 44, height: 24, minHeight: 24, maxHeight: 24, padding: 0 }}
         >
             <span

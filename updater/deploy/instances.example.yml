@@ -1,0 +1,54 @@
+# /etc/pinpoint-updater/instances.yml  (root:pinpoint-updater, mode 0640)
+#
+# What pinpoint-updater manages and whose signatures it accepts.
+# Validated strictly at load time: unknown keys are errors.
+
+release_source:
+  provider: github                     # github | gitlab
+  api: https://api.github.com          # GitLab: https://gitlab.com/api/v4 or https://gitlab.example.gov/api/v4
+  project: Pinpoint-311/Pinpoint-311   # GitLab: group/subgroup/project
+  registry: ghcr.io/pinpoint-311       # GitLab: registry.gitlab.com/group/project
+  backend_image: pinpoint-311-backend
+  frontend_image: pinpoint-311-frontend
+  image_tag: version                   # release v1.8.0 -> image tag 1.8.0 (docker/metadata-action semver)
+  # Only for a private registry / API. Read-only credentials, one per file, mode 0600:
+  #   GitHub: a fine-grained or classic token with read:packages
+  #   GitLab: a deploy token with read_registry (+ read_api for a private project);
+  #           set registry_username to the deploy token's username.
+  # registry_token_file: /etc/pinpoint-updater/registry.token
+  # registry_username: gitlab+deploy-token-123
+  # api_token_file: /etc/pinpoint-updater/api.token
+
+trust:
+  # Keyless (Sigstore): both are required, and identity must be anchored with ^.
+  issuer: https://token.actions.githubusercontent.com
+  identity: '^https://github\.com/Pinpoint-311/Pinpoint-311/\.github/workflows/build-publish\.yml@refs/tags/v'
+  # GitLab.com keyless:
+  #   issuer: https://gitlab.com
+  #   identity: '^https://gitlab\.com/group/project//\.gitlab-ci\.yml@refs/tags/v'
+  # Self-managed GitLab: issuer is the instance URL, identity uses the same shape.
+  #
+  # Key-based instead (KMS-backed or a file); remove issuer/identity:
+  #   key: /etc/pinpoint-updater/cosign.pub        # or awskms://..., azurekms://..., gcpkms://...
+  attestation_types: [spdxjson]        # checked only for instances with require_attestations: true
+
+log_dir: /var/log/pinpoint-updater
+disk_path: /var/lib/docker             # filesystem whose free space preflight checks
+
+instances:
+  springfield:
+    project: pinpoint-springfield
+    dir: /srv/pinpoint/springfield
+    compose: [/opt/pinpoint/docker-compose.yml, docker-compose.springfield.yml]
+    env_file: .env.springfield
+    lock_file: release.lock
+    app_url: http://127.0.0.1:58003    # loopback only
+    # Console channel (docs/RELEASES.md, "Connecting the host updater"):
+    token_file: updater.token          # mode 0600; the token from Version Control -> Updater connection
+    api_url: http://127.0.0.1:58004    # the backend's loopback port; never through Caddy
+    # require_two_person_approval: true  # host-side floor for the console's two-person rule
+    require_attestations: false
+    backup:
+      mode: verify                     # verify | create | off
+    health_timeout: 120
+    min_free_gb: 5

@@ -1,18 +1,18 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { ArrowLeft, FileText, AlertTriangle } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
 // Default terms of service based on 311 best practices
 const DEFAULT_TERMS_OF_SERVICE = `
-## ⚠️ NON-EMERGENCY SERVICE ONLY
+## Non-Emergency Service Only
 
-**This is a NON-EMERGENCY service request system.**
+**This is a non-emergency service request system.**
 
 **For emergencies, call 911 immediately.**
 
-This includes but is not limited to:
+Emergencies include, but are not limited to:
 - Medical emergencies
 - Fires
 - Crimes in progress
@@ -20,7 +20,7 @@ This includes but is not limited to:
 - Downed power lines
 - Gas leaks
 
-Do NOT use this system for urgent matters that require immediate response.
+Don't use this system for urgent matters that require an immediate response.
 
 ---
 
@@ -88,7 +88,7 @@ These terms are governed by applicable state and local laws. Any disputes shall 
 
 ## Contact
 
-For questions about this service or these terms, please contact your municipal clerk or the appropriate department.
+For questions about this service or these terms, contact your municipal clerk or the appropriate department.
 
 ---
 
@@ -180,13 +180,12 @@ export default function TermsOfService() {
             {/* Header */}
             <header className="glass-sidebar border-b border-white/10">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-                    <Link
-                        to="/"
+                    <BackLink
                         className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-                        aria-label="Back to home"
+                        label="Go back"
                     >
-                        <ArrowLeft className="w-5 h-5 text-white/70" />
-                    </Link>
+                        <ArrowLeft className="w-5 h-5 text-white/70" aria-hidden="true" />
+                    </BackLink>
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
                             <FileText className="w-5 h-5 text-amber-400" />
@@ -204,7 +203,7 @@ export default function TermsOfService() {
                 <div className="max-w-4xl mx-auto px-4 py-3 flex items-center gap-3">
                     <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
                     <p className="text-red-200 text-sm">
-                        <strong>This is NOT for emergencies.</strong> For police, fire, or medical emergencies, call <strong>911</strong> immediately.
+                        <strong>This portal is not for emergencies.</strong> For police, fire, or medical emergencies, call <strong>911</strong> immediately.
                     </p>
                 </div>
             </div>

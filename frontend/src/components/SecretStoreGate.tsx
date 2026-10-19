@@ -36,7 +36,7 @@ const STORES: { id: string; name: string; blurb: string }[] = [
     {
         id: 'azure',
         name: 'Azure Key Vault',
-        blurb: 'The natural choice if the town already runs on Microsoft 365 or Azure.',
+        blurb: 'Best if the town already uses Microsoft 365 or Azure.',
     },
     {
         id: 'aws',
@@ -112,8 +112,8 @@ export default function SecretStoreGate({ onChosen, onState }: {
                 </strong>
                 {choice.store !== 'database' && !choice.reachable && (
                     <span className="text-white/50">
-                        · not reachable yet, so anything saved now waits in the encrypted
-                        database and moves across on its own
+                        · not reachable yet; anything saved now is held in the encrypted
+                        database and moves automatically
                     </span>
                 )}
             </p>
@@ -130,10 +130,8 @@ export default function SecretStoreGate({ onChosen, onState }: {
                         First: where should this town’s credentials be kept?
                     </p>
                     <p className="text-xs text-white/60 leading-relaxed mt-1">
-                        Nothing below will accept a key until this is answered. Every password and
-                        API key on this page goes to whichever of these you pick, and moving them
-                        afterwards is not something a click can do — so it is asked once, first,
-                        rather than assumed.
+                        Nothing below accepts a key until you choose. Every password and API key on
+                        this page is stored there, and moving them later is not a one-click change.
                     </p>
                 </div>
             </div>
@@ -187,15 +185,13 @@ export default function SecretStoreGate({ onChosen, onState }: {
                 <div className="mt-3 rounded-lg border border-white/15 bg-black/25 px-3.5 py-3">
                     <p className="text-xs text-amber-100/85 leading-relaxed">
                         <strong className="text-amber-100">What this means.</strong> Your credentials
-                        are encrypted in this deployment’s own PostgreSQL database. They are also in
-                        every <strong>backup</strong> of it — and backups are copied off this server.
-                        Anyone who can read a backup file can read the keys, so treat those backups
-                        the way the town treats its other secrets: encrypted, access-controlled, and
-                        not sitting in a shared drive.
+                        are encrypted in this deployment’s PostgreSQL database and included in every{' '}
+                        <strong>backup</strong>, which is copied off this server. Anyone who can read a
+                        backup can read the keys, so keep backups encrypted and access-controlled.
                     </p>
                     <p className="text-xs text-white/50 leading-relaxed mt-2">
-                        This is a supported choice and a reasonable one for a small install. You can
-                        move to a cloud vault later; the credentials migrate across when you do.
+                        This is a supported choice for smaller installs. If you move to a cloud vault
+                        later, the credentials migrate automatically.
                     </p>
                 </div>
             )}
@@ -228,7 +224,7 @@ export default function SecretStoreGate({ onChosen, onState }: {
                 </button>
                 <span className="inline-flex items-center gap-1.5 text-[11px] text-white/45">
                     <AlertCircle className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                    Picking a cloud vault here does not require it to be working yet.
+                    You can choose a cloud vault before it is set up.
                 </span>
             </div>
         </div>

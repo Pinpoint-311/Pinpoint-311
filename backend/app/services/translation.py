@@ -8,7 +8,7 @@ Flow:
 2. If not found, call Google Translate API via service account auth
 3. Store result in database for future use (persistent cache)
 """
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 import logging
 import json
 from sqlalchemy import select, and_
@@ -87,9 +87,13 @@ async def get_cached_translation(text: str, target_lang: str) -> Optional[str]:
                         Translation.source_text == text,
                         Translation.target_lang == target_lang
                     )
-                )
+                ).order_by(Translation.id).limit(1)
             )
-            cached = result.scalar_one_or_none()
+            # first(), not scalar_one_or_none(): the table has no unique key, so
+            # two concurrent batches can both cache the same string, and from
+            # then on every lookup raised "Multiple rows were found", was read
+            # as a miss, and paid the translation API again.
+            cached = result.scalars().first()
             
             if cached:
                 from app.core.sanitize import sanitize_for_log
@@ -115,9 +119,9 @@ async def save_translation_to_cache(text: str, target_lang: str, translated: str
                         Translation.source_text == text,
                         Translation.target_lang == target_lang
                     )
-                )
+                ).order_by(Translation.id).limit(1)
             )
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
             
             if not existing:
                 translation = Translation(
@@ -134,39 +138,72 @@ async def save_translation_to_cache(text: str, target_lang: str, translated: str
         logger.error(f"Failed to save translation to cache: {e}")
 
 
-async def translate_text(
+async def _resolve_target(provider, target_lang: str) -> Optional[str]:
+    """The provider's spelling of `target_lang`, or None if it cannot do it.
+
+    Checked here as well as at the API, because not every caller is the API:
+    the service catalog takes the language from a browser's Accept-Language
+    header, and the notification path from a stored preference. A code the
+    provider does not support is not sent -- it would be billed and answered
+    with an error, or with the source echoed back as if translated.
+    """
+    from app.services.translation_providers import (
+        canonical_language, provider_language_code, supported_languages,
+    )
+    name = getattr(provider, "provider", None)
+    canonical = canonical_language(target_lang)
+    if canonical is None or canonical not in supported_languages(name):
+        from app.core.sanitize import sanitize_for_log
+        logger.info("Translation skipped: %s does not support %s",
+                    sanitize_for_log(str(name)), sanitize_for_log(str(target_lang)))
+        return None
+    return provider_language_code(name, canonical)
+
+
+async def translate_text_detailed(
     text: str,
     source_lang: str = "en",
-    target_lang: str = "es"
-) -> Optional[str]:
-    """
-    Translate text using Google Cloud Translation API with database caching.
-    1. Check database cache first
-    2. If miss, call Google Translate API
-    3. Store result in database
+    target_lang: str = "es",
+) -> Tuple[Optional[str], bool]:
+    """`translate_text`, plus whether the spend budget is what stopped it.
+
+    Returns (translated or None, budget_exhausted).
     """
     if not text or not text.strip():
-        return text
-        
+        return text, False
+
     if source_lang == target_lang:
-        return text
-    
-    # 1. Check database cache first
+        return text, False
+
+    # 1. Check database cache first -- free, so never counted against the budget
     cached = await get_cached_translation(text, target_lang)
     if cached:
-        return cached
-    
+        return cached, False
+
     # 2. Call the configured translation provider (Google default, or Azure)
-    from app.services.translation_providers import get_translation_provider
+    from app.services.translation_providers import get_translation_provider, provider_language_code
     provider = await get_translation_provider()
     if not provider:
         logger.warning("Translation not configured (no provider credentials)")
-        return None
+        return None, False
+
+    target_code = await _resolve_target(provider, target_lang)
+    if target_code is None:
+        return None, False
+
+    # 3. Reserve the characters before they are sent; refuse past the budget.
+    from app.services import translation_budget
+    reservation = await translation_budget.reserve(len(text))
+    if reservation is None:
+        return None, True
 
     try:
-        out = await provider.translate([text], source_lang, target_lang)
+        out = await provider.translate(
+            [text], provider_language_code(provider.provider, source_lang), target_code)
         if not out:
-            return None
+            # Not configured after all (no auth): nothing was billed.
+            await translation_budget.refund(reservation)
+            return None, False
         translated = out[0]
 
         # Track API usage for cost estimation
@@ -183,11 +220,12 @@ async def translate_text(
         except Exception as e:
             logger.warning(f"Failed to track translation usage: {e}")
 
-        # 3. Save to database cache
+        # 4. Save to database cache
         await save_translation_to_cache(text, target_lang, translated)
 
-        return translated
+        return translated, False
     except Exception as e:
+        await translation_budget.refund(reservation)
         from app.core.sanitize import sanitize_for_log
         logger.error(f"Translation failed ({sanitize_for_log(source_lang)} -> {sanitize_for_log(target_lang)}): {e}")
         # Returning None already keeps the caller (and the resident) whole;
@@ -196,53 +234,97 @@ async def translate_text(
         from app.services import connector_health
         await connector_health.note_quota_failure(
             "translation", e, provider=getattr(provider, "provider", None))
-        return None
+        return None, False
 
 
-async def translate_batch(
-    texts: List[str],
+async def translate_text(
+    text: str,
     source_lang: str = "en",
     target_lang: str = "es"
-) -> Dict[str, str]:
+) -> Optional[str]:
     """
-    Translate multiple texts with database caching.
-    Returns dict of {original_text: translated_text}.
+    Translate text using the configured provider with database caching.
+    1. Check database cache first
+    2. If miss, reserve the characters against the spend budget
+    3. Call the provider, store the result in the database
+
+    None when translation is unavailable, unsupported for this language, or
+    over budget -- every caller already falls back to the source text.
+    """
+    translated, _exhausted = await translate_text_detailed(text, source_lang, target_lang)
+    return translated
+
+
+async def translate_batch_detailed(
+    texts: List[str],
+    source_lang: str = "en",
+    target_lang: str = "es",
+) -> Tuple[Dict[str, str], bool]:
+    """`translate_batch`, plus whether the spend budget stopped any of it.
+
+    Returns ({original: translated}, budget_exhausted). Strings the budget
+    refused come back as their originals; cached strings are still served
+    translated, because a cache hit costs nothing.
     """
     if not texts:
-        return {}
-        
+        return {}, False
+
     if source_lang == target_lang:
-        return {t: t for t in texts}
-    
+        return {t: t for t in texts}, False
+
     results = {}
     uncached = []
-    
+
     # 1. Check database cache for each text
     for text in texts:
         if not text or not text.strip():
             results[text] = text
             continue
-            
+
         cached = await get_cached_translation(text, target_lang)
         if cached:
             results[text] = cached
-        else:
+        elif text not in uncached:
             uncached.append(text)
-    
+
     if not uncached:
-        return results
-    
+        return results, False
+
     # 2. Call the configured translation provider (Google default, or Azure)
-    from app.services.translation_providers import get_translation_provider
+    from app.services.translation_providers import get_translation_provider, provider_language_code
     provider = await get_translation_provider()
     if not provider:
         logger.warning("Translation not configured (no provider credentials)")
         for t in uncached:
             results[t] = t
-        return results
+        return results, False
+
+    target_code = await _resolve_target(provider, target_lang)
+    if target_code is None:
+        for t in uncached:
+            results[t] = t
+        return results, False
+
+    # 3. Reserve what is about to be sent. All or nothing: a batch is one
+    # provider call, and a page half in one language is worse than one in
+    # English with a notice.
+    from app.services import translation_budget
+    chars = sum(len(t) for t in uncached)
+    reservation = await translation_budget.reserve(chars)
+    if reservation is None:
+        for t in uncached:
+            results[t] = t
+        return results, True
 
     try:
-        out = await provider.translate(uncached, source_lang, target_lang)
+        out = await provider.translate(
+            uncached, provider_language_code(provider.provider, source_lang), target_code)
+        if out is None:
+            # The provider was not configured after all; nothing was billed.
+            await translation_budget.refund(reservation)
+            for t in uncached:
+                results[t] = t
+            return results, False
         # Recorded here as well as in translate_text, because this path bills
         # too and did not say so. Everything the admin's usage page knew came
         # from the single-string path, so the resident-facing catalog
@@ -257,22 +339,19 @@ async def translate_batch(
                     db=db,
                     service_name="translation",
                     operation="translate_batch",
-                    characters=sum(len(t) for t in uncached),
+                    characters=chars,
                 )
         except Exception:  # noqa: BLE001 -- accounting must not fail a request
             logger.warning("could not record batch translation usage", exc_info=True)
-        if out is None:
-            for t in uncached:
-                results[t] = t
-            return results
         for i, text in enumerate(uncached):
             translated = out[i] if i < len(out) else text
             results[text] = translated
             if translated != text:
-                # 3. Save each to database
+                # 4. Save each to database
                 await save_translation_to_cache(text, target_lang, translated)
-        return results
+        return results, False
     except Exception as e:
+        await translation_budget.refund(reservation)
         logger.error(f"Batch translation failed: {e}")
         # Originals below keep /translate/batch a 200 whatever the provider
         # said; the health note is the only place a rate-limit surfaces.
@@ -281,7 +360,20 @@ async def translate_batch(
             "translation", e, provider=getattr(provider, "provider", None))
         for t in uncached:
             results[t] = t
-        return results
+        return results, False
+
+
+async def translate_batch(
+    texts: List[str],
+    source_lang: str = "en",
+    target_lang: str = "es"
+) -> Dict[str, str]:
+    """
+    Translate multiple texts with database caching.
+    Returns dict of {original_text: translated_text}.
+    """
+    results, _exhausted = await translate_batch_detailed(texts, source_lang, target_lang)
+    return results
 
 
 async def translate_service_response(service_dict: dict, target_lang: str) -> dict:
@@ -309,16 +401,9 @@ async def translate_service_response(service_dict: dict, target_lang: str) -> di
     return result
 
 
-def get_supported_languages() -> Dict[str, str]:
-    """Get list of supported language codes and names."""
-    return {
-        "en": "English",
-        "es": "Español", 
-        "zh": "中文",
-        "fr": "Français",
-        "hi": "हिन्दी",
-        "ar": "العربية"
-    }
+# Supported languages: see translation_providers.SUPPORTED_LANGUAGES -- the
+# one list, per provider. (A six-entry dict here used to answer
+# /translate/languages while the picker offered over a hundred.)
 
 
 async def check_translation_service() -> bool:

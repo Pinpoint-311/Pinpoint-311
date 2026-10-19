@@ -10,14 +10,14 @@ form-encoded create whose response is a one-element array carrying
 
 Two spec details drive most of what is asserted:
 
-  * the create is `application/x-www-form-urlencoded`, not JSON, and the
-    cross-reference back to Pinpoint rides as `attribute[external_id]`;
+  * the create is `application/x-www-form-urlencoded`, not JSON, and
+    `attribute[code]` fields are sent only for codes the service defines;
   * `api_key` and `jurisdiction_id` are query/form parameters, not headers.
 
-What is NOT asserted, because the spec does not settle it: which of
-`updated_after` (a widespread extension) and `start_date` (in the base spec) a
-given server honours. The connector sends both, and the tests below check that
-both are sent rather than pretending to know which one a Tyler endpoint reads.
+Status changes on records we filed are read with `service_request_id=a,b,c`
+(the spec's multi-get, which overrides the date filters); the `start_date`
+window is only for discovering new records to import, because it filters on
+when a request was filed.
 """
 
 from datetime import datetime, timezone
@@ -196,8 +196,8 @@ async def test_a_report_is_filed_as_a_form_post_with_the_spec_field_names(server
     assert form["lat"] == "40.7301" and form["long"] == "-74.1724"
     assert form["address_string"] == "12 Main St"
     assert form["media_url"] == "https://cdn.example.test/photo1.jpg"
-    # Cross-reference home, so a record pulled back is recognisably ours.
-    assert form["attribute[external_id]"] == "REQ-20260805-a1b2c3d4"
+    # The service defines no attributes (metadata=false), so none are sent.
+    assert not [k for k in form if k.startswith("attribute[")]
 
 
 @pytest.mark.asyncio
@@ -229,13 +229,37 @@ async def test_a_report_with_no_coordinates_is_filed_by_address(server):
 
 
 @pytest.mark.asyncio
-async def test_a_server_that_answers_with_a_token_is_understood(server):
-    """A batch-mode endpoint returns a token rather than an id; the spec allows
-    either, and taking only the first would drop the record on the floor."""
-    seen = server({"/requests.json": json_response([{"token": "220e17f8-3d3f"}])})
+async def test_a_token_is_resolved_to_the_real_id_when_the_server_has_one(server):
+    """A batch-mode endpoint returns a token; GET tokens/{token}.json gives the
+    real service_request_id. The token itself is never the record id."""
+    seen = server({
+        "/requests.json": json_response([{"token": "220e17f8-3d3f"}]),
+        "/tokens/220e17f8-3d3f.json": json_response(
+            [{"service_request_id": "638399", "token": "220e17f8-3d3f"}]),
+    })
     record = await tyler().push_request(PAYLOAD)
-    assert record.external_id == "220e17f8-3d3f"
-    assert seen.last.method == "POST"
+    assert record.external_id == "638399"
+    assert any(r.url.path.endswith("/tokens/220e17f8-3d3f.json") for r in seen.requests)
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_token_is_kept_as_a_pending_placeholder(server):
+    """Until the server assigns an id, the link holds `token:<token>` so the
+    pull knows to resolve it rather than poll a record that does not exist."""
+    server({
+        "/requests.json": json_response([{"token": "220e17f8-3d3f"}]),
+        "/tokens/220e17f8-3d3f.json": json_response([{"token": "220e17f8-3d3f"}]),
+    })
+    record = await tyler().push_request(PAYLOAD)
+    assert record.external_id == "token:220e17f8-3d3f"
+
+
+@pytest.mark.asyncio
+async def test_a_pending_token_resolves_on_a_later_pull(server):
+    server({"/tokens/abc.json": json_response([{"service_request_id": "77", "token": "abc"}])})
+    assert await tyler().resolve_pending_id("token:abc") == "77"
+    server({"/tokens/abc.json": json_response([{"token": "abc"}])})
+    assert await tyler().resolve_pending_id("token:abc") is None
 
 
 @pytest.mark.asyncio
@@ -247,10 +271,82 @@ async def test_a_create_that_returns_neither_is_a_failure_not_a_silent_success(s
 
 
 @pytest.mark.asyncio
-async def test_a_default_service_code_overrides_the_local_category(server):
+async def test_a_mapped_service_code_is_what_gets_sent(server):
     seen = server({"/requests.json": json_response([{"service_request_id": "4"}])})
-    await tyler({"default_service_code": "GENERAL"}).push_request(PAYLOAD)
+    await tyler({"service_code_map_out": {"001": "PTH-9"},
+                 "default_service_code": "GENERAL"}).push_request(PAYLOAD)
+    assert seen.form()["service_code"] == "PTH-9"
+
+
+@pytest.mark.asyncio
+async def test_the_default_service_code_is_only_a_fallback(server):
+    """It used to override every request, filing a pothole and a streetlight
+    under one code. Now it applies only to a category with no mapping."""
+    seen = server({"/requests.json": json_response([{"service_request_id": "4"}])})
+    await tyler({"service_code_map_out": {"002": "LIGHT"},
+                 "default_service_code": "GENERAL"}).push_request(PAYLOAD)
     assert seen.form()["service_code"] == "GENERAL"
+
+
+@pytest.mark.asyncio
+async def test_the_legacy_service_code_map_key_means_outbound(server):
+    seen = server({"/requests.json": json_response([{"service_request_id": "4"}])})
+    await tyler({"service_code_map": {"001": "PTH-LEGACY"}}).push_request(PAYLOAD)
+    assert seen.form()["service_code"] == "PTH-LEGACY"
+
+
+@pytest.mark.asyncio
+async def test_with_no_mapping_and_no_default_our_own_code_is_sent(server):
+    seen = server({"/requests.json": json_response([{"service_request_id": "4"}])})
+    await tyler().push_request(PAYLOAD)
+    assert seen.form()["service_code"] == "001"
+
+
+DEFINITION = {
+    "service_code": "001",
+    "attributes": [
+        {"variable": True, "code": "WHERE", "datatype": "string", "required": True,
+         "description": "Where on the road?", "order": 1},
+        {"variable": True, "code": "external_id", "datatype": "string", "required": False,
+         "description": "Your reference", "order": 2},
+        {"variable": False, "code": "NOTE", "datatype": "text", "required": False,
+         "description": "Informational", "order": 3},
+        {"variable": True, "code": "DEPTH", "datatype": "string", "required": True,
+         "description": "How deep?", "order": 4},
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_only_attributes_the_service_defines_are_sent(server):
+    """attribute[code] for codes in services/{code}.json -- mapped values for
+    required ones, our reference only when the service asks for it, nothing
+    for informational entries, and a warning for a required one we cannot fill."""
+    seen = server({
+        "/services/001.json": json_response(DEFINITION),
+        "/requests.json": json_response([{"service_request_id": "5"}]),
+    })
+    connector = tyler({"attribute_map": {"WHERE": "address"}})
+    await connector.push_request({**PAYLOAD, "custom_fields": {"unrelated": "x"}})
+    form = seen.form()
+    assert form["attribute[WHERE]"] == "12 Main St"
+    assert form["attribute[external_id]"] == "REQ-20260805-a1b2c3d4"
+    assert "attribute[NOTE]" not in form
+    assert "attribute[DEPTH]" not in form
+    assert "attribute[unrelated]" not in form
+    assert any("DEPTH" in w for w in connector.take_warnings())
+
+
+@pytest.mark.asyncio
+async def test_a_custom_answer_with_the_attribute_code_is_sent(server):
+    seen = server({
+        "/services/001.json": json_response(DEFINITION),
+        "/requests.json": json_response([{"service_request_id": "6"}]),
+    })
+    await tyler().push_request({**PAYLOAD, "custom_fields": {"DEPTH": "4 in", "WHERE": "lane 2"}})
+    form = seen.form()
+    assert form["attribute[DEPTH]"] == "4 in"
+    assert form["attribute[WHERE]"] == "lane 2"
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +410,39 @@ async def test_a_vendor_side_status_change_comes_back_on_the_poll(server):
     assert query["start_date"] == since.isoformat()
     assert query["updated_after"] == since.isoformat()
     assert query["jurisdiction_id"] == "springfield.gov"
+
+
+@pytest.mark.asyncio
+async def test_the_import_window_never_spans_more_than_ninety_days(server):
+    seen = server({"/requests.json": json_response([])})
+    await tyler().pull_updates(since=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    sent = datetime.fromisoformat(seen.query()["start_date"])
+    assert (datetime.now(timezone.utc) - sent).days <= 90
+
+
+@pytest.mark.asyncio
+async def test_linked_records_are_polled_by_id_in_batches(server):
+    """Status changes on older requests are outside any start_date window, so
+    they are read with service_request_id=a,b,c -- which the spec says
+    overrides every other filter."""
+    def answer(request):
+        ids = dict(request.url.params)["service_request_id"].split(",")
+        return httpx.Response(200, json=[
+            {**REMOTE_RECORD, "service_request_id": i} for i in ids], request=request)
+
+    seen = server({"/requests.json": answer})
+    ids = [str(n) for n in range(120)] + ["token:pending"]
+    records = await tyler().pull_linked(ids)
+    assert len(records) == 120
+    assert len(seen.requests) == 3, "batches of 50"
+    first = seen.query(0)
+    assert "start_date" not in first and "updated_after" not in first
+    assert first["api_key"] == "tyler-key-abc123"
+    assert all("token:" not in dict(r.url.params)["service_request_id"] for r in seen.requests)
+
+
+def test_open311_polls_linked_records_rather_than_a_change_feed():
+    assert "pull_linked" in tyler().capabilities
 
 
 @pytest.mark.asyncio
@@ -407,7 +536,8 @@ async def test_a_create_is_not_retried_on_a_server_error(server, monkeypatch):
     seen = server({"/requests.json": lambda r: httpx.Response(500, text="boom", request=r)})
     with pytest.raises(ConnectorError):
         await tyler().push_request(PAYLOAD)
-    assert len(seen.requests) == 1
+    # One POST. (The GET before it reads the service's attribute definition.)
+    assert [r.method for r in seen.requests].count("POST") == 1
 
 
 # ---------------------------------------------------------------------------

@@ -75,7 +75,10 @@ export function useContentTranslation(
                     }
                     if (data.translations && data.translations[0]) {
                         const translated = data.translations[0];
-                        contentCache.set(cacheKey, translated);
+                        // Past the town's translation budget the source comes
+                        // back unchanged; caching it would keep serving English
+                        // for the session after the budget resets.
+                        if (!data.budget_exhausted) contentCache.set(cacheKey, translated);
                         setTranslatedText(translated);
                     } else {
                         setTranslatedText(originalText);

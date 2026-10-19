@@ -8,7 +8,7 @@ import {
     ShieldCheck, LogIn, KeyRound,
 } from 'lucide-react';
 
-import { Button, Modal, CollapsibleSection } from './ui';
+import { Button, Modal, CollapsibleSection, Chip } from './ui';
 import SecretField from './SecretField';
 import { useDialog } from './DialogProvider';
 import { useOptionalAnnounce } from './liveAnnounce';
@@ -36,6 +36,12 @@ import {
 import {
     StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert,
 } from './capabilityUI';
+// Per-connection mapping and the failed-sync backlog. The endpoints behind
+// these existed with no screen at all, so a town could connect a system and
+// never be asked which of its categories was which on the other side.
+import {
+    MappingPanel, FailedSyncsPanel, operationLabel, type MappedIntegration, type MappedPlatform,
+} from './IntegrationMapping';
 
 const MODE_LABELS: Record<string, { label: string; className: string }> = {
     public_api: { label: 'Works with your account login', className: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' },
@@ -96,6 +102,10 @@ export default function GovtechIntegrations() {
     const [muting, setMuting] = useState<string | null>(null);
     const [logs, setLogs] = useState<Record<string, IntegrationSyncLog[]>>({});
     const [logsOpen, setLogsOpen] = useState<string | null>(null);
+    // Which of a card's two working panels is open: Mapping or Failed syncs.
+    const [panelOpen, setPanelOpen] = useState<Record<string, 'mapping' | 'failed' | undefined>>({});
+    const togglePanel = (platform: string, panel: 'mapping' | 'failed') =>
+        setPanelOpen(prev => ({ ...prev, [platform]: prev[platform] === panel ? undefined : panel }));
     const [copied, setCopied] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [query, setQuery] = useState('');
@@ -261,7 +271,7 @@ export default function GovtechIntegrations() {
             setCleared(new Set());
             return saved;
         } catch (err: any) {
-            setWizardError(err?.message || 'Could not save. Please try again.');
+            setWizardError(err?.message || 'Could not save. Try again.');
             return null;
         } finally {
             setSaving(false);
@@ -296,7 +306,7 @@ export default function GovtechIntegrations() {
                 setConfigs(prev => [...prev.filter(c => c.platform !== platform.platform), updated]);
             }
         } catch (err: any) {
-            setTestResult({ ok: false, detail: err?.message || 'Test failed', friendly: 'Something went wrong running the check. Please try again.' });
+            setTestResult({ ok: false, detail: err?.message || 'Test failed', friendly: 'The check couldn\u2019t run. Try again.' });
         } finally {
             setTesting(false);
         }
@@ -322,7 +332,7 @@ export default function GovtechIntegrations() {
             oauthPopup.current = popup;
         } catch (err: any) {
             setOauthBusy(false);
-            setOauthError(err?.message || 'Could not start the sign-in. Please try again.');
+            setOauthError(err?.message || 'Could not start the sign-in. Try again.');
         }
     };
 
@@ -407,9 +417,8 @@ export default function GovtechIntegrations() {
                 const confirmed = await dialog.confirm({
                     title: `Turn on ${name} anyway?`,
                     message: `The last check on this connection failed${detail ? `:\n\n${truncate(detail, 300)}` : '.'}\n\n`
-                        + 'Reports sent while it is broken are not queued and retried — they '
-                        + 'are logged as failed. Run "Check connection" first unless you know '
-                        + 'the problem is already fixed.',
+                        + 'Reports sent while it is failing are logged as failed, not retried. '
+                        + 'Run "Check connection" first unless the problem is fixed.',
                     variant: 'warning',
                     confirmText: 'Turn it on anyway',
                 });
@@ -531,10 +540,10 @@ export default function GovtechIntegrations() {
     const handleRegenerateToken = async (existing: IntegrationConfig, name: string) => {
         const confirmed = await dialog.confirm({
             title: `Issue a new address for ${name}?`,
-            message: 'The current address stops working immediately. Anything the vendor '
-                + 'sends to it will be refused until you give them the new one.\n\n'
-                + 'Do this if the address may have been shared or logged somewhere it '
-                + 'should not have been.',
+            message: 'The current address stops working immediately, and the vendor must '
+                + 'use the new one.\n\n'
+                + 'Use this if the address was shared or logged somewhere it '
+                + 'shouldn\u2019t be.',
             variant: 'warning',
             confirmText: 'Issue a new address',
         });
@@ -555,7 +564,7 @@ export default function GovtechIntegrations() {
         const confirmed = await dialog.confirm({
             title: `Disconnect ${name}?`,
             message: 'Reports already sent will stay in both systems, but nothing new will '
-                + 'sync. The credentials are removed from your Secret Manager too, so '
+                + 'sync. The credentials are removed from your secret store too, so '
                 + 'reconnecting means entering them again.',
             variant: 'danger',
             confirmText: 'Disconnect',
@@ -628,7 +637,7 @@ export default function GovtechIntegrations() {
                     ) : (
                         <button
                             type="button"
-                            className="text-[11px] text-white/55 hover:text-white/85 mt-1 underline underline-offset-2 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                            className="btn-outline mt-1.5"
                             onClick={() => {
                                 setValues(p => ({ ...p, [field.key]: '' }));
                                 setCleared(prev => new Set(prev).add(field.key));
@@ -932,13 +941,13 @@ export default function GovtechIntegrations() {
                                        deployment is relying on the claim. */
                                     <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-amber-300/80">
                                         <AlertCircle className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                        Some credentials are in your Secret Manager and some are stored
+                                        Some credentials are in your secret store and some are stored
                                         encrypted in this app's database. Re-save them to move the rest.
                                     </p>
                                 ) : (
                                     <p className="relative text-[11px] mt-2 flex items-center gap-1.5 text-emerald-300/80">
                                         <ShieldCheck className="w-3 h-3 shrink-0" aria-hidden="true" />
-                                        Credentials stored in your Secret Manager — not in this app's database.
+                                        Credentials stored in your secret store — not in this app's database.
                                     </p>
                                 )
                             )}
@@ -1003,7 +1012,7 @@ export default function GovtechIntegrations() {
                                                     type="button"
                                                     onClick={() => handleRegenerateToken(existing, platform.name)}
                                                     disabled={busyOf(existing) !== null}
-                                                    className="text-[11px] text-white/55 hover:text-white/85 underline underline-offset-2 mt-1.5 disabled:opacity-50 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                                    className="btn-outline mt-1.5"
                                                 >
                                                     {busyOf(existing) === 'rotate' ? 'Issuing…' : 'Issue a new address'}
                                                 </button>
@@ -1075,6 +1084,22 @@ export default function GovtechIntegrations() {
                                             aria-controls={`conn-logs-${platform.platform}`}>
                                             Activity
                                         </Action>
+                                        <Action size="sm" onClick={() => togglePanel(platform.platform, 'mapping')} chevron
+                                            expanded={panelOpen[platform.platform] === 'mapping'}
+                                            aria-controls={`conn-mapping-${platform.platform}`}>
+                                            Mapping
+                                        </Action>
+                                        {(() => {
+                                            const owed = (existing as MappedIntegration).backlog_open || 0;
+                                            return (
+                                                <Action size="sm" onClick={() => togglePanel(platform.platform, 'failed')} chevron
+                                                    expanded={panelOpen[platform.platform] === 'failed'}
+                                                    aria-controls={`conn-failed-${platform.platform}`}
+                                                    className={owed ? 'border-amber-400/40 text-amber-100' : ''}>
+                                                    {owed ? `Failed syncs (${owed})` : 'Failed syncs'}
+                                                </Action>
+                                            );
+                                        })()}
                                         {/* Not a <label> any more. A label whose
                                             content is a button labels nothing --
                                             clicking the word "On" did not reach
@@ -1126,11 +1151,36 @@ export default function GovtechIntegrations() {
                                                 ? <CheckCircle className="w-3.5 h-3.5 text-green-400 mt-0.5 shrink-0" />
                                                 : <AlertCircle className="w-3.5 h-3.5 text-amber-400 mt-0.5 shrink-0" />}
                                             <div className="min-w-0">
-                                                <p className="text-white/70 text-xs">{entry.detail || entry.operation}</p>
+                                                <p className="text-white/70 text-xs flex flex-wrap items-center gap-1.5">
+                                                    <Chip tone={entry.status === 'success' ? 'success' : 'warning'}>{operationLabel(entry.operation)}</Chip>
+                                                    {entry.detail && <span className="break-words">{entry.detail}</span>}
+                                                </p>
                                                 <p className="text-white/60 text-[10px]">{entry.created_at ? new Date(entry.created_at).toLocaleString() : ''}</p>
                                             </div>
                                         </div>
                                     ))}
+                                </div>
+                            )}
+
+                            {existing && panelOpen[platform.platform] === 'mapping' && (
+                                <div id={`conn-mapping-${platform.platform}`}>
+                                    <MappingPanel
+                                        integration={existing as MappedIntegration}
+                                        platform={platform as MappedPlatform}
+                                        onSaved={(updated) => setConfigs(prev => prev.map(c =>
+                                            c.id === updated.id ? { ...c, ...updated } : c))}
+                                    />
+                                </div>
+                            )}
+
+                            {existing && panelOpen[platform.platform] === 'failed' && (
+                                <div id={`conn-failed-${platform.platform}`}>
+                                    <FailedSyncsPanel
+                                        integration={existing as MappedIntegration}
+                                        platformName={platform.name}
+                                        enabled={existing.enabled}
+                                        onChanged={load}
+                                    />
                                 </div>
                             )}
                             </div>
@@ -1213,7 +1263,7 @@ export default function GovtechIntegrations() {
                                         {copied === 'email' ? 'Copied — paste it into an email' : 'Copy this email'}
                                     </Button>
                                     <p className="text-white/60 text-xs mt-2">
-                                        You can close this window and come back once they reply — nothing is lost.
+                                        You can close this window and come back when they reply. Your progress is saved.
                                     </p>
                                 </div>
                             )}
@@ -1232,7 +1282,7 @@ export default function GovtechIntegrations() {
                     {step === 'details' && (
                         <div className="space-y-4">
                             <p className="text-white/50 text-sm">
-                                Copy and paste each item exactly as it was sent to you. Watch out for extra spaces at the start or end.
+                                Paste each item exactly as it was sent to you, without extra spaces.
                             </p>
 
                             <div className="space-y-3">
@@ -1268,9 +1318,16 @@ export default function GovtechIntegrations() {
                                                 <AlertCircle className="w-4 h-4 shrink-0" /> {wizard.name} sign-in isn't set up on this system
                                             </p>
                                             <p className="text-amber-100/70 text-xs mt-1">
-                                                Whoever runs this Pinpoint installation needs to register its {wizard.name} app
-                                                first. Until then, use the username and password option below.
+                                                Whoever runs this Pinpoint installation needs to register an app at
+                                                developer.accela.com and save its Client ID and Secret here
+                                                (ACCELA_CLIENT_ID and ACCELA_CLIENT_SECRET). Until then, use the
+                                                username and password option below.
                                             </p>
+                                            {oauthStatus.redirect_uri && (
+                                                <p className="text-amber-100/70 text-xs mt-2 break-all">
+                                                    Redirect URI to register: <code className="text-amber-50">{oauthStatus.redirect_uri}</code>
+                                                </p>
+                                            )}
                                         </div>
                                     ) : (
                                         <div className="rounded-xl border border-indigo-500/25 bg-indigo-500/[0.06] p-4">
@@ -1310,7 +1367,7 @@ export default function GovtechIntegrations() {
                                             onClick={() => setShowPasswordFallback(v => !v)}
                                             aria-expanded={showPasswordFallback}
                                             aria-controls="wizard-password-fallback"
-                                            className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                            className="btn-outline"
                                         >
                                             {showPasswordFallback
                                                 ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
@@ -1320,9 +1377,9 @@ export default function GovtechIntegrations() {
                                         {showPasswordFallback && (
                                             <div id="wizard-password-fallback" className="space-y-3 mt-3">
                                                 <p className="text-white/50 text-xs leading-relaxed">
-                                                    Only if your {wizard.name} administrator would rather issue a service
-                                                    account. This stores that account's password in your credential vault,
-                                                    and it keeps working until someone changes it.
+                                                    Use this if your {wizard.name} administrator issues a service account
+                                                    instead. Its password is stored in your credential vault and works until
+                                                    someone changes it.
                                                 </p>
                                                 {wizard.credential_fields.map(f => renderField(wizard, f, true))}
                                             </div>
@@ -1338,7 +1395,7 @@ export default function GovtechIntegrations() {
                                         onClick={() => setShowAdvanced(v => !v)}
                                         aria-expanded={showAdvanced}
                                         aria-controls="wizard-optional-settings"
-                                        className="text-white/70 text-xs hover:text-white inline-flex items-center gap-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60"
+                                        className="btn-outline"
                                     >
                                         {showAdvanced
                                             ? <ChevronUp className="w-3 h-3" aria-hidden="true" />
@@ -1442,7 +1499,7 @@ export default function GovtechIntegrations() {
                                 <div className="flex flex-col items-center py-8 text-center">
                                     <Loader2 className="w-8 h-8 text-indigo-300 animate-spin mb-3" />
                                     <p className="text-white/70 text-sm">Checking the connection to {wizard.name}…</p>
-                                    <p className="text-white/60 text-xs mt-1">This usually takes a few seconds.</p>
+                                    <p className="text-white/60 text-xs mt-1">This takes a few seconds.</p>
                                 </div>
                             )}
 

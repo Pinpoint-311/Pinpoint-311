@@ -433,6 +433,10 @@ BY_ID_STAFF_ENDPOINTS = [
     (open311, "accept_ai_priority"),
     (open311, "get_audit_log"),
     (open311, "verify_audit_log"),
+    # Missed by the original sweep: it used the public tracking-link rule, so any
+    # staffer could release or discard another department's withheld photo and
+    # got that report's full staff detail back.
+    (open311, "review_withheld_photo"),
     (comments_api, "get_comments"),
     (comments_api, "create_comment"),
     (integrations_api, "refresh_request_work_order"),

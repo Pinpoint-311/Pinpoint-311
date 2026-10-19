@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings
 from functools import lru_cache
 from typing import Optional
@@ -48,10 +49,6 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "Township 311"
     debug: bool = False
-    # Build/version stamp (set by the image build; surfaced on /health for the
-    # orchestrator to detect drift and gate rollouts).
-    app_version: str = "dev"
-    git_sha: str = "unknown"
 
     # Deployment registration form, if the operator hosts one (e.g. a Microsoft
     # Form). When set, the admin console offers it instead of the built-in
@@ -73,16 +70,41 @@ class Settings(BaseSettings):
     # The endpoints are inert unless this is set.
     provisioning_token: Optional[str] = None
 
-    # Build/version stamp exposed on health for rollout gating (A3). Set via
-    # image build args / env by the orchestrator.
-    app_version: Optional[str] = None
-    git_sha: Optional[str] = None
+    # Build/version stamp exposed on /api/health/quick for rollout gating (A3).
+    #
+    # The image carries it: backend/Dockerfile turns the PINPOINT_VERSION,
+    # GIT_SHA, DB_REVISION and MIN_DB_REVISION build args into OCI labels and
+    # into these environment variables, so the running code reports exactly
+    # what the signed artifact says -- no `git rev-parse` against a mounted
+    # checkout (production images have neither git nor a checkout). APP_VERSION
+    # is still honoured first because the orchestrator's compose template sets
+    # it explicitly. Unset or empty reads as None ("not stamped"), never "dev".
+    app_version: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("APP_VERSION", "PINPOINT_VERSION")
+    )
+    git_sha: Optional[str] = Field(default=None, validation_alias=AliasChoices("GIT_SHA"))
+    # The Alembic head this build ships (the schema it migrates the DB to).
+    build_db_revision: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("DB_REVISION")
+    )
     # Oldest Alembic revision this build can run against (expand/contract rule).
-    min_db_revision: Optional[str] = None
+    min_db_revision: Optional[str] = Field(
+        default=None, validation_alias=AliasChoices("MIN_DB_REVISION")
+    )
+
+    @field_validator("app_version", "git_sha", "build_db_revision", "min_db_revision", mode="before")
+    @classmethod
+    def _blank_stamp_is_unset(cls, value):
+        # A build without the args still has the ENV lines, set to "".
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value.strip() if isinstance(value, str) else value
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        # Settings(app_version=...) keeps working alongside the env aliases.
+        populate_by_name = True
 
 
     def validate_security(self) -> list[str]:

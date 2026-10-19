@@ -79,7 +79,7 @@ describe('capabilities the town switched off', () => {
         });
 
         expect(text).toContain('Switched off — credentials still saved');
-        expect(text).toMatch(/Nothing was deleted/);
+        expect(text).toMatch(/Its settings are kept/);
     });
 
     it('does not claim credentials for one that never had any', async () => {
@@ -88,7 +88,7 @@ describe('capabilities the town switched off', () => {
         });
 
         expect(text).toContain('Not switched on');
-        expect(text).not.toMatch(/Nothing was deleted/);
+        expect(text).not.toMatch(/Its settings are kept/);
     });
 
     it('does not claim credentials for a provider the town has since left', async () => {
@@ -99,7 +99,7 @@ describe('capabilities the town switched off', () => {
             sms: { current_provider: 'http', configured: { twilio: true }, enabled: false },
         });
 
-        expect(text).not.toMatch(/Nothing was deleted/);
+        expect(text).not.toMatch(/Its settings are kept/);
     });
 
     it('never lists sign-in or maps, which cannot be switched off', async () => {

@@ -14,17 +14,20 @@ This document outlines procedures for backup, recovery, and disaster response fo
 ## Backup Overview
 
 ### Automated Backups
-- **Frequency**: Configurable via Admin Console
-- **Storage**: S3-compatible storage (AWS S3, Backblaze B2, etc.)
-- **Retention**: Based on state retention policy (default: 7 years for NJ)
+- **Setup**: Admin Console → Setup & Integration → Automatic backups (endpoint, bucket, keys, encryption passphrase; **Save & Test** checks them)
+- **Frequency**: Daily at 02:00 UTC, run by the worker
+- **Format**: `pg_dump -Fc`, encrypted with GPG (AES-256), uploaded to the bucket root as `db_backup_YYYYMMDD_HHMMSS.sql.gpg`
+- **Storage**: S3-compatible storage (AWS S3, Backblaze B2, Oracle Object Storage, etc.)
+- **Retention**: Old backups are removed weekly according to the town's records-retention setting. If retention is not configured, every backup is kept.
 
 ### What's Backed Up
 | Component | Backed Up | Method |
 |-----------|-----------|--------|
-| PostgreSQL Database | ✅ | `pg_dump` compressed |
-| Uploaded Files (S3) | ✅ | Separate S3 bucket backup |
-| Configuration | ✅ | Environment variables in Secret Manager |
-| Docker Images | ✅ | GHCR (versioned with SHA) |
+| PostgreSQL Database | Yes | Encrypted `pg_dump -Fc` to S3-compatible storage |
+| Files uploaded through the console (`uploads_data` volume) | No | Back up the Docker volume separately |
+| Credentials | Depends | Kept in the chosen secret store; in the database store they are inside the database backup |
+| `.env` (`SECRET_KEY`, `DB_PASSWORD`, ...) | No | Keep a copy off the server; `SECRET_KEY` is needed to read database-stored credentials and locally wrapped PII |
+| Docker Images | Yes | GHCR (versioned with SHA) |
 
 ### Deployment-Triggered Backups
 
@@ -37,17 +40,19 @@ The **Version Switcher** in the Admin Console automatically creates a database b
 
 These backups provide an additional recovery point specifically tied to version changes, enabling rollback to the exact database state before a deployment.
 
+Separately, the container entrypoint takes an unencrypted `pg_dump` into the `migration_backups` volume before applying any schema migration, and keeps the newest three.
+
 ### What's NOT Backed Up (Ephemeral)
 - Redis cache (rebuilds automatically)
 - Session tokens (users re-login)
-- Celery task queue (tasks re-queue)
+- Celery task queue (persisted to the `redis_data` volume, but not included in off-site backups)
 
 ---
 
 ## Manual Backup Procedure
 
 ### Via Admin Console
-1. Navigate to **Admin Console → System → Backups**
+1. Navigate to **Admin Console → Compliance → Database Backups**
 2. Click **"Create Backup Now"**
 3. Wait for confirmation (typically 1-5 minutes)
 4. Verify backup appears in backup list
@@ -68,14 +73,13 @@ curl https://<YOUR_DOMAIN>/api/system/backups \
 # SSH to production server
 ssh ubuntu@<YOUR_SERVER_IP>
 
-# Enter the backend container
-docker exec -it pinpoint-311-backend-1 bash
+# From the directory holding docker-compose.yml. DB_USER and DB_NAME default to
+# township and township_db; use the values from your .env if you changed them.
+docker compose exec -T db pg_dump -U township -Fc township_db \
+  > emergency_backup_$(date +%Y%m%d_%H%M%S).dump
 
-# Manual pg_dump
-pg_dump -h db -U postgres pinpoint311 | gzip > /tmp/emergency_backup_$(date +%Y%m%d_%H%M%S).sql.gz
-
-# Copy out of container
-docker cp pinpoint-311-backend-1:/tmp/emergency_backup_*.sql.gz ./
+# This file is NOT encrypted. Encrypt it before it leaves the server, e.g.:
+gpg --symmetric --cipher-algo AES256 emergency_backup_*.dump
 ```
 
 ---
@@ -106,35 +110,42 @@ curl -X POST https://<YOUR_DOMAIN>/api/system/backups/create \
 git clone https://github.com/Pinpoint-311/Pinpoint-311.git
 cd Pinpoint-311
 
-# Copy production .env (with different DB name)
+# Copy production .env (same SECRET_KEY, so database-stored credentials and
+# locally wrapped PII stay readable), but keep the test server off the
+# production hostname
 cp /path/to/production/.env .env
-sed -i 's/pinpoint311/pinpoint311_dr_test/' .env
+sed -i 's/^DOMAIN=.*/DOMAIN=localhost/' .env
 
 # Start services
-docker compose up -d
+docker compose up -d --build
 ```
 
 #### Step 3: Download Backup from S3 (5 min)
 ```bash
-# List available backups
-aws s3 ls s3://your-backup-bucket/backups/
+# List available backups (add --endpoint-url for non-AWS providers such as Backblaze B2)
+aws s3 ls s3://your-backup-bucket/
 
-# Download latest backup
-aws s3 cp s3://your-backup-bucket/backups/latest.sql.gz ./restore.sql.gz
+# Download the newest one
+aws s3 cp s3://your-backup-bucket/db_backup_YYYYMMDD_HHMMSS.sql.gpg ./restore.sql.gpg
+
+# Decrypt with the backup encryption passphrase
+gpg --decrypt --output restore.dump restore.sql.gpg
 ```
 
 #### Step 4: Restore Database (10 min)
 ```bash
-# Stop backend to prevent writes
-docker compose stop backend celery_worker
+# Stop the API and worker to prevent writes
+docker compose stop backend worker
 
-# Restore to test database
-gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 \
-  psql -U postgres -d pinpoint311_dr_test
+# Restore (custom-format dump, so pg_restore rather than psql)
+docker compose exec -T db pg_restore -U township -d township_db --clean --if-exists < restore.dump
 
 # Restart services
 docker compose up -d
 ```
+
+Alternatively, once the test instance has the same backup settings, restore from
+**Admin Console → Compliance → Database Backups**.
 
 #### Step 5: Verify Data Integrity (15 min)
 - [ ] Login to Staff Dashboard works
@@ -188,25 +199,25 @@ cd /path/to/app
 # 2. Stop all services
 docker compose down
 
-# 3. Download latest backup
-aws s3 cp s3://your-backup-bucket/backups/latest.sql.gz ./restore.sql.gz
+# 3. Download and decrypt the latest backup
+aws s3 cp s3://your-backup-bucket/db_backup_YYYYMMDD_HHMMSS.sql.gpg ./restore.sql.gpg
+gpg --decrypt --output restore.dump restore.sql.gpg
 
-# 4. Start only database
+# 4. Start only the database
 docker compose up -d db
-sleep 30
 
-# 5. Drop and recreate database (DESTRUCTIVE)
-docker exec -i pinpoint-311-db-1 psql -U postgres -c "DROP DATABASE IF EXISTS pinpoint311;"
-docker exec -i pinpoint-311-db-1 psql -U postgres -c "CREATE DATABASE pinpoint311;"
+# 5. Drop and recreate the database (DESTRUCTIVE). Defaults shown; use your .env values.
+docker compose exec -T db psql -U township -d postgres -c "DROP DATABASE IF EXISTS township_db;"
+docker compose exec -T db psql -U township -d postgres -c "CREATE DATABASE township_db;"
 
-# 6. Restore backup
-gunzip -c restore.sql.gz | docker exec -i pinpoint-311-db-1 psql -U postgres -d pinpoint311
+# 6. Restore the backup
+docker compose exec -T db pg_restore -U township -d township_db < restore.dump
 
-# 7. Start all services
+# 7. Start all services (the entrypoint brings the schema up to the image's version)
 docker compose up -d
 
 # 8. Verify system health
-curl https://<YOUR_DOMAIN>/api/health
+curl https://<YOUR_DOMAIN>/api/health/quick
 ```
 
 #### Post-Recovery
@@ -321,7 +332,7 @@ quiet ones:
 
 | Path | What happens | Window |
 |---|---|---|
-| Azure subscription cancelled | Subscription deleted, resources with it | ~90 days after cancellation |
+| Azure subscription canceled | Subscription deleted, resources with it | ~90 days after cancellation |
 | AWS account closed | Resources deleted after the post-closure period | 90 days |
 | Google project deleted | Takes the key ring; material erased | 30-day destruction window, erased within 45 days |
 
@@ -372,12 +383,55 @@ failure is recoverable but only if somebody knows it is happening.
    lapses, decryption stops and nothing about the failure points at a date.
 4. **Do not confuse rotation with deletion.** Rotating is safe — old versions
    are retained and keep decrypting old rows — and worth doing. Destroying is
-   final. They sit next to each other in every console.
+   final. They sit next to each other in every console. On Azure, keep an old
+   version *enabled* until the setup page shows no records on it (see "Key
+   custody and rotation" below); disabling it early makes those rows
+   unreadable until it is re-enabled.
+
+### Key custody and rotation
+
+**Who holds the key.** The key belongs to whoever owns the cloud account it
+lives in. Pinpoint's templates create the vault or key in the *town's* (or
+county's) own subscription, and the application is given only the right to
+wrap and unwrap data keys with it — it cannot read, export, delete or rotate
+the key. The town can therefore revoke the application's access at any time,
+and nobody outside the town's account holds the key. A pilot whose vault sits
+in someone else's account (a vendor's or a contractor's) has handed that
+party the key: move it to the town's subscription before real residents' data
+is stored, or set the expectation in writing.
+
+**Rotation.** Rotate on whatever schedule the town's policy sets; nothing in
+Pinpoint breaks.
+
+- Google Cloud KMS and AWS KMS record the key version inside their own
+  ciphertext and decrypt across versions automatically.
+- Azure Key Vault does not, so Pinpoint records the version that wrapped each
+  data key and unwraps with that version. New data keys move to the new
+  version within ten minutes. The nightly re-wrap (`rewrap_pii`) moves
+  existing records across, and the setup page counts what is still on an older
+  version. When that count is zero, the old version can be disabled.
+- Data is never re-encrypted in bulk for a rotation: only the small wrapped
+  data keys change.
+
+**Protection against losing it** (cryptographic shredding). Every encrypted
+value, and every backup of it, is unreadable without the key, so the key's
+survival is the data's survival:
+
+- Azure: soft delete with **purge protection** (recovery level `Recoverable`,
+  not `Recoverable+Purgeable`), a `CanNotDelete` lock on the vault, and no
+  expiry date set on the key. The proactive health scan reads the first and
+  last of these from the key itself every fifteen minutes and alerts if
+  purge protection is off or an expiry is near.
+- Key Vault keeps keys zone-redundant and replicated to the paired region;
+  AWS KMS and Google Cloud KMS are regional and multi-zone. Multi-region
+  redundancy is the provider's job, which is why the key lives there.
+- The account that holds the key is the single point of failure no setting
+  covers (previous section): town-owned, town-billed, more than one admin.
 
 ### If it has already happened
 
 Check whether the deletion is still pending. On AWS a scheduled deletion can be
-cancelled with `CancelKeyDeletion` any time inside the waiting period; on Azure
+canceled with `CancelKeyDeletion` any time inside the waiting period; on Azure
 a soft-deleted key can be recovered within the retention period; on Google a
 destroy-scheduled key version can be restored before its scheduled time. In all
 three the key stops working at the *start* of that period, so the system being

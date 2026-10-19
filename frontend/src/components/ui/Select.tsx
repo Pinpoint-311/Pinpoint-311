@@ -17,7 +17,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(
         const generatedId = useId();
         const selectId = providedId || `select-${generatedId}`;
         const errorId = error ? `${selectId}-error` : undefined;
-        const helperId = helperText ? `${selectId}-helper` : undefined;
+        // Only when the helper is on screen: it is hidden while an error shows.
+        const helperId = helperText && !error ? `${selectId}-helper` : undefined;
 
         // Combine IDs for aria-describedby
         const describedBy = [errorId, helperId].filter(Boolean).join(' ') || undefined;

@@ -21,10 +21,6 @@
       "    That is a directory object, outside the scope of resource templates. Use",
       "    a managed identity instead where the server runs on Azure - then there",
       "    is no credential at all - or create the app registration by hand.",
-      "  * an AI Face resource. Microsoft gates Face behind a Limited Access review.",
-      "    The multi-service account below serves the Face endpoint once your",
-      "    subscription is approved; until then it answers 403, which is a provider",
-      "    gate and not a fault in this template.",
       "  * email and SMS. Both need DNS you control or carrier registration that",
       "    takes weeks. No template shortens either."
     ]
@@ -172,7 +168,7 @@
       "type": "bool",
       "defaultValue": false,
       "metadata": {
-        "description": "Create one multi-service AI Services account. A single key and endpoint from it covers Translator (with the region above), image reading for licence plates, and face detection once Microsoft's Limited Access review has approved your subscription."
+        "description": "Create one multi-service AI Services account. A single key and endpoint from it covers Translator (with the region above), image reading for license plates, and face detection (no Limited Access approval is needed for detection)."
       }
     },
     "cognitiveAccountName": {
@@ -279,7 +275,7 @@
       }
     },
     {
-      "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it. NO rotationPolicy, on purpose: Azure will only auto-rotate a key that carries an expiry time, an expired version refuses unwrap, and every resident record already wrapped under an earlier version would become permanently unreadable the day that version expired - Pinpoint has no background job that re-wraps stored data. Rotate this key deliberately instead; the README says what has to happen alongside it.",
+      "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it. NO rotationPolicy by default: Azure will only auto-rotate a key that carries an expiry time, and an expired version refuses unwrap. Pinpoint records the version that wrapped each data key and re-wraps stored data nightly, so rotating is safe; an auto-rotation policy needs its expiry set far longer than its interval. See the README, 'Key rotation'.",
       "condition": "[parameters('deployKeyVault')]",
       "type": "Microsoft.KeyVault/vaults/keys",
       "apiVersion": "2023-07-01",
@@ -506,7 +502,7 @@
       "type": "string",
       "value": "[parameters('location')]",
       "metadata": {
-        "description": "Pinpoint box: Region. On the Translation card; leave its Endpoint box empty."
+        "description": "Pinpoint box: Region. On the Translation card. Leave its Endpoint box empty, unless you set Allowed IP address: then paste the AI Services endpoint (https://NAME.cognitiveservices.azure.com/) there, because the firewall blocks the global endpoint."
       }
     }
   }

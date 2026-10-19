@@ -95,7 +95,7 @@ describe('choosing where credentials are kept', () => {
     it('asks before anything below can be filled in', async () => {
         const text = await mount();
         expect(text).toContain('where should this town’s credentials be kept');
-        expect(text).toMatch(/will accept a key until this is answered/i);
+        expect(text).toMatch(/accepts a key until you choose/i);
     });
 
     it('offers the encrypted database as a real answer', async () => {

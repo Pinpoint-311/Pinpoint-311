@@ -5,6 +5,12 @@ Flow:
     to every enabled integration whose sync direction includes push.
   - push_status_to_integrations: fired after a status change; propagates the
     new status to every platform the request is linked to.
+  - push_priority_to_integrations: fired when a report's priority changes
+    (staff accept the AI's score or set their own); updates it on every linked
+    platform whose connection can take a priority change.
+  - sync_after_triage: fired when AI triage finishes. Sends the report to any
+    platform it has not reached yet -- so the first push carries the triaged
+    priority -- and updates the priority on those it already reached.
   - pull_integration_updates: Celery Beat job; polls pull-enabled platforms
     for changed records and mirrors status changes onto linked local requests.
 
@@ -12,6 +18,7 @@ Sync failures are logged to integration_sync_logs and never block the core
 request lifecycle.
 """
 
+from app.services.priority import effective_priority
 import base64
 import hashlib
 import logging
@@ -19,7 +26,9 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import select, update
+from contextlib import asynccontextmanager
+
+from sqlalchemy import select, text, update
 
 from app.core.celery_app import celery_app
 from app.db.session import SessionLocal
@@ -34,12 +43,23 @@ from app.models import (
     ServiceDefinition,
     ServiceRequest,
 )
+from app.integrations.base import PENDING_ID_PREFIX
+from app.integrations.mapping import (
+    clip_external_status, decide_inbound_status, local_code_for,
+)
 from app.services import connector_health
 from app.services.circuit_breaker import CircuitOpen, guard
 from app.services.connector_verification import health_key
+from app.services.enqueue import enqueue
 from app.tasks.service_requests import run_async
 
 logger = logging.getLogger(__name__)
+
+# How long a new report waits for AI triage before it is pushed anyway. Triage
+# normally finishes in seconds and sends it itself (sync_after_triage); this is
+# the ceiling a slow or failing AI provider can add to a report reaching the
+# town's system.
+TRIAGE_GRACE_SECONDS = 90
 
 def _comment_fp(content: str) -> str:
     """Stable content fingerprint used as a fallback echo-dedup marker for
@@ -187,6 +207,83 @@ async def _clear_dead_letter(db, integration_id: int, operation: str,
                      connector_health.clean_error(exc))
 
 
+UNQUEUED_ERROR = ("The background worker could not be reached, so this was not sent. "
+                  "It is retried automatically once the worker is back.")
+
+
+async def record_unqueued_push(operation: str, *, request_id: Optional[int] = None,
+                               comment_id: Optional[int] = None,
+                               notes: Optional[str] = None) -> int:
+    """A push that never reached the queue, written to the backlog.
+
+    `enqueue()` swallows a broker error so the resident's write still succeeds
+    -- correct for the record, but for a govtech push it meant the report was
+    simply never sent, with no trace outside a worker log line. This records a
+    backlog row per integration the push was owed to, so it shows in Failed
+    syncs and the retry beat sends it once the worker is back. Never raises.
+    Returns how many rows it recorded.
+    """
+    recorded = 0
+    try:
+        async with SessionLocal() as db:
+            targets = []  # (integration_id, service_request_id, comment_id)
+            if operation == "push" and request_id:
+                sr = (await db.execute(
+                    select(ServiceRequest).where(ServiceRequest.id == request_id)
+                )).scalar_one_or_none()
+                if not sr:
+                    return 0
+                integrations = (await db.execute(
+                    select(IntegrationConfig).where(
+                        IntegrationConfig.enabled == True,  # noqa: E712
+                        IntegrationConfig.sync_direction.in_(["push", "bidirectional"]),
+                    )
+                )).scalars().all()
+                for integration in integrations:
+                    if _retired(integration) or sr.source == f"integration_{integration.platform}":
+                        continue
+                    targets.append((integration.id, sr.id, None))
+            elif operation in ("push_status", "push_comment", "push_priority"):
+                subject = request_id
+                if operation == "push_comment":
+                    comment = (await db.execute(
+                        select(RequestComment).where(RequestComment.id == comment_id)
+                    )).scalar_one_or_none()
+                    if not comment or comment.visibility != "external" or comment.external_ref:
+                        return 0
+                    subject = comment.service_request_id
+                if not subject:
+                    return 0
+                rows = (await db.execute(
+                    select(IntegrationLink.integration_id, IntegrationConfig.platform)
+                    .join(IntegrationConfig, IntegrationLink.integration_id == IntegrationConfig.id)
+                    .where(IntegrationLink.service_request_id == subject,
+                           IntegrationConfig.enabled == True)  # noqa: E712
+                )).all()
+                from app.integrations.registry import PLATFORM_CATALOG
+                needed = {"push_status": "push_status", "push_priority": None}.get(operation, "comments")
+                for integration_id, platform in rows:
+                    # push_priority is claimed per connection (a mapped column,
+                    # an update path), not per platform, so the catalog cannot
+                    # say; the replay re-checks the real connector and skips
+                    # the ones that cannot take it.
+                    if needed is None or needed in PLATFORM_CATALOG.get(platform, {}).get("capabilities", []):
+                        targets.append((integration_id, subject,
+                                        comment_id if operation == "push_comment" else None))
+            for integration_id, sr_id, c_id in targets:
+                await _log(db, integration_id, operation, "error", UNQUEUED_ERROR)
+                await _record_dead_letter(
+                    db, integration_id, operation, UNQUEUED_ERROR,
+                    service_request_id=sr_id, comment_id=c_id,
+                    payload={"notes": notes} if notes else {},
+                )
+                recorded += 1
+    except Exception as exc:
+        logger.warning("[Integrations] could not record an unqueued %s: %s",
+                       operation, connector_health.clean_error(exc))
+    return recorded
+
+
 def _retired(integration) -> bool:
     """Whether this stored row names a platform Pinpoint no longer connects.
 
@@ -281,7 +378,8 @@ def _build_payload(sr: ServiceRequest, config: dict, dept_name: Optional[str] = 
         "matched_asset": sr.matched_asset,
         "custom_fields": sr.custom_fields,
         # Work-order routing fields
-        "priority": sr.manual_priority_score if sr.manual_priority_score is not None else sr.priority,
+        # Same priority the staff screens and the printed work order show.
+        "priority": effective_priority(sr),
         "assigned_to": sr.assigned_to,
         "assigned_department": dept_name,
         # How and when it was resolved. A work order that syncs the request but
@@ -497,10 +595,10 @@ async def _push_documents(db, connector, integration, link, sr):
 async def _import_external_record(db, integration, record):
     """Create a local service request from a platform-originated record."""
     config = integration.config or {}
-    service_code_map = config.get("service_code_map") or {}
-    local_code = None
-    if record.service_name and record.service_name in service_code_map:
-        local_code = service_code_map[record.service_name]
+    # service_code_map_in: the vendor's code or name -> ours. The vendor's code
+    # is tried first (it is what a mapping screen lists), then its name.
+    raw = record.raw if isinstance(record.raw, dict) else {}
+    local_code = local_code_for(config, raw.get("service_code"), record.service_name)
     local_code = local_code or config.get("default_local_service_code")
 
     service = None
@@ -518,19 +616,26 @@ async def _import_external_record(db, integration, record):
     if not service:
         return None
 
+    # Same location rule as every other intake path; see location_policy.
+    from app.services import location_policy
+    address, lat, lng = location_policy.apply(
+        getattr(service, "location_mode", None), record.address, record.lat, record.long,
+        enforce_required=False)
+
     from app.api.open311 import generate_request_id
     sr = ServiceRequest(
         service_request_id=generate_request_id(),
         service_code=service.service_code,
         service_name=service.service_name,
         description=record.description or f"Imported from {integration.display_name} (#{record.external_id})",
-        address=record.address,
-        lat=record.lat,
-        long=record.long,
+        address=address,
+        lat=lat,
+        long=lng,
         email=f"integration-{integration.platform}@intake.local",
         source=f"integration_{integration.platform}",
         status=record.status or "open",
         assigned_department_id=service.assigned_department_id,
+        gis_context=await _gis_context(db, lat, lng, service.service_code),
     )
     db.add(sr)
     await db.flush()
@@ -538,7 +643,7 @@ async def _import_external_record(db, integration, record):
         integration_id=integration.id,
         service_request_id=sr.id,
         external_id=record.external_id,
-        external_status=record.raw_status,
+        external_status=clip_external_status(record.raw_status),
         direction="pulled",
         last_pulled_at=datetime.now(timezone.utc),
     ))
@@ -550,6 +655,179 @@ async def _import_external_record(db, integration, record):
         actor_name=integration.display_name,
     ))
     return sr
+
+
+async def _gis_context(db, lat, lng, service_code):
+    """The imported report's location context, as every intake path records it."""
+    from app.services import gis_layers
+    return await gis_layers.context_for_point(db, lat, lng, service_code)
+
+
+# A pull can surface many old changes at once -- the first poll after a
+# connection is set up, or after this code first polled every linked record.
+# Changes the vendor made more than this long ago are applied quietly, and at
+# most this many residents are emailed per pull; the rest are applied without
+# a message rather than sending a burst of "your report was closed" emails
+# about reports closed months ago.
+NOTIFY_MAX_AGE = timedelta(hours=48)
+NOTIFY_MAX_PER_RUN = 25
+
+
+def _fresh_enough_to_notify(record) -> bool:
+    when = getattr(record, "updated_at", None)
+    if when is None:
+        return True
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - when <= NOTIFY_MAX_AGE
+
+
+def notify_external_status_change(request_id: int, old_status: Optional[str],
+                                  completion_message: Optional[str], actor: Optional[str]) -> None:
+    """Tell the resident (and assigned staff) about a status the vendor set.
+
+    The same two tasks a staff status change enqueues in api/open311.py. A
+    pothole closed by the county crew in Accela is closed for the resident too,
+    and they used to find out only by checking. Call only after the change is
+    committed. Never raises: enqueue() swallows broker errors.
+    """
+    from app.tasks.service_requests import notify_staff_of_activity, send_branded_notification
+    enqueue(send_branded_notification, request_id, "status_update",
+            old_status=old_status, completion_message=completion_message)
+    enqueue(notify_staff_of_activity, request_id, "status_changes", actor=actor)
+
+
+async def _apply_inbound_status(db, sr, link, record, connector, integration):
+    """Mirror a vendor status onto the local request when the vendor moved.
+
+    Records the vendor's raw word on the link every time, and changes the local
+    status only when `decide_inbound_status` says the vendor genuinely changed
+    it since we last saw or sent it. Returns ``(request id, old status,
+    completion message)`` for the notification, or None when nothing changed.
+    """
+    previous_raw = link.external_status
+    current_raw = record.raw_status if record.raw_status is not None else record.status
+    new_status = decide_inbound_status(
+        previous_raw=previous_raw, current_raw=current_raw,
+        inbound_status=record.status, local_status=sr.status,
+        map_in=connector.map_status_in,
+    )
+    if current_raw is not None:
+        link.external_status = clip_external_status(current_raw)
+    if not new_status:
+        return None
+    old_status = sr.status
+    now = datetime.now(timezone.utc)
+    sr.status = new_status
+    sr.updated_datetime = now
+    if new_status == "closed":
+        sr.closed_datetime = now
+        if record.resolution and not sr.completion_message:
+            sr.completion_message = record.resolution
+        elif record.status_notes and not sr.completion_message:
+            sr.completion_message = record.status_notes
+        if not sr.closed_substatus:
+            sr.closed_substatus = "resolved"
+    db.add(RequestAuditLog(
+        service_request_id=sr.id,
+        action="status_change",
+        old_value=old_status,
+        new_value=new_status,
+        actor_type="integration",
+        actor_name=integration.display_name,
+    ))
+    return (sr.id, old_status, sr.completion_message, _fresh_enough_to_notify(record))
+
+
+PENDING_ID_NOTE = ("Waiting for the vendor to assign a record number. "
+                   "Status updates start once it does.")
+
+
+async def _resolve_pending_links(db, connector, integration) -> int:
+    """Swap ``token:`` placeholders for the vendor's real record ids.
+
+    A GeoReport v2 server may answer a create with a token and assign the id
+    later. Tried on every pull until the id arrives; a token that never resolves
+    stays visible on the link as a sync error rather than silently polling a
+    record id that does not exist.
+    """
+    links = (await db.execute(
+        select(IntegrationLink).where(
+            IntegrationLink.integration_id == integration.id,
+            IntegrationLink.external_id.like(f"{PENDING_ID_PREFIX}%"),
+        ).limit(200)
+    )).scalars().all()
+    resolved = 0
+    for link in links:
+        try:
+            real = await connector.resolve_pending_id(link.external_id)
+        except Exception as exc:  # one bad token must not stop the poll
+            link.sync_error = f"Waiting for the vendor to assign a record number: {_safe_error(exc)}"[:1000]
+            continue
+        if real and not str(real).startswith(PENDING_ID_PREFIX):
+            link.external_id = str(real)[:200]
+            link.sync_error = None
+            resolved += 1
+        else:
+            link.sync_error = PENDING_ID_NOTE
+    if links:
+        await db.flush()
+    return resolved
+
+
+# Linked records polled per run: every open one, plus anything closed in the
+# last month (a vendor reopening a closed record is rare but real).
+LINKED_POLL_LIMIT = 2000
+LINKED_POLL_RECENT_CLOSED = timedelta(days=30)
+
+
+async def _linked_external_ids(db, integration_id: int):
+    from sqlalchemy import or_
+    cutoff = datetime.now(timezone.utc) - LINKED_POLL_RECENT_CLOSED
+    rows = (await db.execute(
+        select(IntegrationLink.external_id)
+        .join(ServiceRequest, IntegrationLink.service_request_id == ServiceRequest.id)
+        .where(
+            IntegrationLink.integration_id == integration_id,
+            ~IntegrationLink.external_id.like(f"{PENDING_ID_PREFIX}%"),
+            ServiceRequest.deleted_at.is_(None),
+            or_(ServiceRequest.status != "closed", ServiceRequest.closed_datetime >= cutoff,
+                ServiceRequest.closed_datetime.is_(None)),
+        )
+        .order_by(IntegrationLink.id.desc())
+        .limit(LINKED_POLL_LIMIT)
+    )).scalars().all()
+    return [r for r in rows if r]
+
+
+async def _collect_pull_records(db, connector, integration):
+    """What a poll brings back from this vendor.
+
+    Most vendors expose a change feed (`pull_updates(since)`). A vendor with
+    capability "pull_linked" (Open311) does not: its only date filter is on when
+    a request was filed, so status changes are read by asking for the records we
+    are linked to by id, and the date window is used only to discover new
+    records when the town has asked to import them.
+    """
+    if "pull_linked" not in connector.capabilities:
+        return await connector.pull_updates(since=_pull_since(integration))
+    await _resolve_pending_links(db, connector, integration)
+    records = list(await connector.pull_linked(await _linked_external_ids(db, integration.id)))
+    if _flag(integration.config, "import_new_records"):
+        seen = {r.external_id for r in records}
+        for record in await connector.pull_updates(since=_pull_since(integration)):
+            if record.external_id not in seen:
+                records.append(record)
+    return records
+
+
+async def _log_connector_warnings(db, integration_id: int, operation: str, connector, context: str = "") -> None:
+    """Write what a connector left off or changed to the sync log as warnings,
+    where the Activity drawer and the Failed syncs panel show them."""
+    take = getattr(connector, "take_warnings", None)
+    for message in (take() if callable(take) else []):
+        await _log(db, integration_id, operation, "warning",
+                   f"{context}: {message}" if context else message)
 
 
 async def _log(db, integration_id: int, operation: str, status: str, detail: str = "", count: int = 0):
@@ -577,12 +855,44 @@ async def _log(db, integration_id: int, operation: str, status: str, detail: str
 #     call, and only where a retry cannot duplicate a record;
 #   * the circuit breaker stops hammering a vendor that is genuinely down, and
 #     each loop records its own failure per integration and carries on.
+@asynccontextmanager
+async def _request_push_lock(request_id: int):
+    """Serialise create-pushes of one report across workers.
+
+    A report is pushed from two places now -- triage finishing, and the delayed
+    safety-net push queued at intake -- and the "already linked?" check alone
+    cannot stop two runs that start together from both filing it. A Postgres
+    session advisory lock keyed on the report makes the second run wait, then
+    find the link and skip. Held on its own session so the push's commits do not
+    release it; anything but Postgres (the test suite's SQLite) runs unlocked.
+    """
+    async with SessionLocal() as lock_session:
+        conn = await lock_session.connection()
+        locked = conn.dialect.name == "postgresql"
+        if locked:
+            await conn.execute(text("SELECT pg_advisory_lock(hashtext('pinpoint-integration-push'), :rid)"),
+                               {"rid": int(request_id)})
+        try:
+            yield
+        finally:
+            if locked:
+                await conn.execute(text("SELECT pg_advisory_unlock(hashtext('pinpoint-integration-push'), :rid)"),
+                                   {"rid": int(request_id)})
+
+
 @celery_app.task
 def push_request_to_integrations(request_id: int):
     """Push a newly created request to all enabled push integrations."""
+    run_async(_push_new_request(request_id))
+
+
+async def _push_new_request(request_id: int) -> set:
+    """Create the report on every push integration it is not linked to yet.
+    Returns the ids of the integrations it was newly linked to."""
     from app.integrations import build_connector_for
 
-    async def _push():
+    created: set = set()
+    async with _request_push_lock(request_id):
         async with SessionLocal() as db:
             sr = (await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -608,6 +918,10 @@ def push_request_to_integrations(request_id: int):
                     )
                 )).scalar_one_or_none()
                 if existing:
+                    # Already pushed (a queued retry, or a push whose enqueue
+                    # "failed" but was delivered): clear any backlog row so it
+                    # isn't replayed every beat and left in Failed syncs.
+                    await _clear_dead_letter(db, integration.id, "push", service_request_id=sr.id)
                     continue
                 # Never echo a request back to the platform it came from
                 if sr.source == f"integration_{integration.platform}":
@@ -634,14 +948,17 @@ def push_request_to_integrations(request_id: int):
                         db=db,
                         provider=integration.platform,
                     )
+                    pending = str(record.external_id).startswith(PENDING_ID_PREFIX)
                     link = IntegrationLink(
                         integration_id=integration.id,
                         service_request_id=sr.id,
                         external_id=record.external_id,
-                        external_status=record.raw_status,
+                        external_status=clip_external_status(record.raw_status),
                         direction="pushed",
                         last_pushed_at=datetime.now(timezone.utc),
                     )
+                    if pending:
+                        link.sync_error = PENDING_ID_NOTE
                     db.add(link)
                     # Committed here, before anything else in this iteration can
                     # fail. The vendor's record exists as of the line above; if
@@ -654,12 +971,21 @@ def push_request_to_integrations(request_id: int):
                     await db.commit()
                     await _log(db, integration.id, "push", "success",
                                f"{sr.service_request_id} -> {record.external_id}", 1)
+                    await _log_connector_warnings(db, integration.id, "push", connector,
+                                                  sr.service_request_id)
                     await _clear_dead_letter(db, integration.id, "push",
                                              service_request_id=sr.id)
                     logger.info(f"[Integrations] Pushed {sr.service_request_id} to {integration.platform} as {record.external_id}")
+                    created.add(integration.id)
                     # Attach embedded photos to the newly created external record
                     await _push_documents(db, connector, integration, link, sr)
                     await db.commit()
+                    # Triage may have finished while this push was in flight; if
+                    # the priority moved since the payload was built, follow up.
+                    await db.refresh(sr)
+                    if (effective_priority(sr) != payload.get("priority")
+                            and "push_priority" in connector.capabilities):
+                        await _send_priority(db, connector, integration, link, sr)
                 except Exception as e:
                     # Without this a DB-level failure leaves the session in
                     # PendingRollbackError, so `_log`'s own commit raises too and
@@ -675,7 +1001,7 @@ def push_request_to_integrations(request_id: int):
                                               service_request_id=sr.id)
                     logger.warning(f"[Integrations] Push to {integration.platform} failed: {e}")
 
-    run_async(_push())
+    return created
 
 
 @celery_app.task  # not retrying -- see push_request_to_integrations
@@ -718,11 +1044,15 @@ def push_status_to_integrations(request_id: int, notes: str = None):
                         db=db,
                         provider=integration.platform,
                     )
-                    link.external_status = connector.map_status_out(sr.status)
+                    # What we sent becomes the baseline the next pull compares
+                    # against, so our own change is never read back as theirs.
+                    link.external_status = clip_external_status(connector.map_status_out(sr.status))
                     link.last_pushed_at = datetime.now(timezone.utc)
                     link.sync_error = None
                     await _log(db, integration.id, "push_status", "success",
                                f"{sr.service_request_id} -> {sr.status}", 1)
+                    await _log_connector_warnings(db, integration.id, "push_status", connector,
+                                                  sr.service_request_id)
                     await _clear_dead_letter(db, integration.id, "push_status",
                                              service_request_id=sr.id)
                     # Attach any photos added since the last push (idempotent).
@@ -750,6 +1080,131 @@ def push_status_to_integrations(request_id: int, notes: str = None):
             await db.commit()
 
     run_async(_push_status())
+
+
+async def _send_priority(db, connector, integration, link, sr) -> bool:
+    """Send the report's current priority to one linked platform. Never raises:
+    a failure is logged and kept in Failed syncs to be retried, the same as a
+    status the vendor never received."""
+    # Read out first: after a rollback these instances are expired, and reading
+    # them then would need a lazy load the async engine refuses.
+    integration_id, platform = integration.id, integration.platform
+    sr_id, sr_code = sr.id, sr.service_request_id
+    external_id = link.external_id
+    score = effective_priority(sr)
+    if str(external_id).startswith(PENDING_ID_PREFIX):
+        # No real record id to address yet. Only Open311-style platforms issue
+        # placeholders, and those cannot take a priority change anyway.
+        return False
+    try:
+        await guard(
+            health_key(platform),
+            lambda: connector.push_priority(external_id, score),
+            db=db,
+            provider=platform,
+        )
+        await _log(db, integration_id, "push_priority", "success",
+                   f"{sr_code} -> priority {score:g}", 1)
+        await _log_connector_warnings(db, integration_id, "push_priority", connector, sr_code)
+        await _clear_dead_letter(db, integration_id, "push_priority", service_request_id=sr_id)
+        return True
+    except Exception as e:
+        await db.rollback()
+        await _log(db, integration_id, "push_priority", "error", f"{sr_code}: {_safe_error(e)}")
+        # A work order the crew sorts by priority, still showing the score from
+        # before staff changed it, is the disagreement this exists to prevent.
+        await _record_dead_letter(db, integration_id, "push_priority", e, service_request_id=sr_id)
+        logger.warning(f"[Integrations] Priority push to {platform} failed: {e}")
+        return False
+
+
+async def _push_priority(request_id: int, only_integrations: Optional[set] = None) -> int:
+    """Update the priority on every linked platform that can take it.
+    Returns how many updates landed."""
+    from app.integrations import build_connector_for
+
+    sent = 0
+    async with SessionLocal() as db:
+        sr = (await db.execute(
+            select(ServiceRequest).where(ServiceRequest.id == request_id)
+        )).scalar_one_or_none()
+        if not sr:
+            return 0
+        links = (await db.execute(
+            select(IntegrationLink, IntegrationConfig)
+            .join(IntegrationConfig, IntegrationLink.integration_id == IntegrationConfig.id)
+            .where(
+                IntegrationLink.service_request_id == sr.id,
+                IntegrationConfig.enabled == True,  # noqa: E712
+            )
+        )).all()
+        for link, integration in links:
+            if _retired(integration):
+                continue
+            if only_integrations is not None and integration.id not in only_integrations:
+                continue
+            try:
+                connector = await build_connector_for(integration)
+            except Exception as e:
+                await _log(db, integration.id, "push_priority", "error",
+                           f"{sr.service_request_id}: {_safe_error(e)}")
+                continue
+            if "push_priority" not in connector.capabilities:
+                # Nothing to send here. Clear a backlog row recorded while the
+                # worker was unreachable (it cannot tell which connections take
+                # priority), or it would wait in Failed syncs forever.
+                await _clear_dead_letter(db, integration.id, "push_priority", service_request_id=sr.id)
+                continue
+            if await _send_priority(db, connector, integration, link, sr):
+                sent += 1
+            # _send_priority may have rolled back; reload for the next link.
+            await db.refresh(sr)
+    return sent
+
+
+@celery_app.task  # not retrying -- failures go to Failed syncs, like push_status
+def push_priority_to_integrations(request_id: int):
+    """Propagate a priority change (staff accepted the AI's score, or set
+    their own) to every linked platform whose connection supports it."""
+    return run_async(_push_priority(request_id))
+
+
+@celery_app.task
+def sync_after_triage(request_id: int):
+    """AI triage has finished: get the triaged priority to the town's systems.
+
+    Reports not yet sent anywhere are sent now, carrying the triaged priority.
+    The intake path also queues a delayed push as a safety net for a slow or
+    failing AI provider; the per-report lock and the already-linked check make
+    whichever runs second a no-op. Platforms that got the report before triage
+    finished get a priority update instead -- but only when the AI's score is
+    what the report's priority now is (no staff override, which would already
+    have been sent when staff set it).
+    """
+    async def _sync():
+        async with SessionLocal() as db:
+            already = set((await db.execute(
+                select(IntegrationLink.integration_id)
+                .where(IntegrationLink.service_request_id == request_id)
+            )).scalars().all())
+            sr = (await db.execute(
+                select(ServiceRequest).where(ServiceRequest.id == request_id)
+            )).scalar_one_or_none()
+            if not sr:
+                return {"created": 0, "updated": 0}
+            if (sr.source or "").startswith("integration_"):
+                # Imported from a vendor: it was never pushed onward before,
+                # and the vendor's own priority is not ours to overwrite with
+                # an AI suggestion. Explicit staff changes still sync.
+                return {"created": 0, "updated": 0}
+            ai = sr.ai_analysis if isinstance(sr.ai_analysis, dict) else {}
+            triaged = (sr.manual_priority_score is None
+                       and isinstance(ai.get("priority_score"), (int, float)))
+        created = await _push_new_request(request_id)
+        updated = await _push_priority(request_id, only_integrations=already) if (triaged and already) else 0
+        return {"created": len(created), "updated": updated}
+
+    return run_async(_sync())
 
 
 @celery_app.task
@@ -810,12 +1265,13 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                     # ran the badge was green while nothing came back.
                     records = await guard(
                         health_key(platform),
-                        lambda: connector.pull_updates(since=_pull_since(integration)),
+                        lambda: _collect_pull_records(db, connector, integration),
                         db=db,
                         provider=platform,
                     )
                     updated = 0
                     imported = 0
+                    notifications = []
                     for record in records:
                         link = (await db.execute(
                             select(IntegrationLink).where(
@@ -832,8 +1288,6 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                                     imported += 1
                             continue
                         link.last_pulled_at = datetime.now(timezone.utc)
-                        if record.raw_status and record.raw_status != link.external_status:
-                            link.external_status = record.raw_status
                         sr = (await db.execute(
                             select(ServiceRequest).where(ServiceRequest.id == link.service_request_id)
                         )).scalar_one_or_none()
@@ -846,29 +1300,14 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                         if await _apply_work_order_fields(db, sr, record, integration):
                             updated += 1
 
-                        # Status change (if any)
-                        if not record.status or sr.status == record.status:
-                            continue
-                        old_status = sr.status
-                        sr.status = record.status
-                        sr.updated_datetime = datetime.now(timezone.utc)
-                        if record.status == "closed":
-                            sr.closed_datetime = datetime.now(timezone.utc)
-                            if record.resolution and not sr.completion_message:
-                                sr.completion_message = record.resolution
-                            elif record.status_notes:
-                                sr.completion_message = record.status_notes
-                            if not sr.closed_substatus:
-                                sr.closed_substatus = "resolved"
-                        db.add(RequestAuditLog(
-                            service_request_id=sr.id,
-                            action="status_change",
-                            old_value=old_status,
-                            new_value=record.status,
-                            actor_type="integration",
-                            actor_name=integration.display_name,
-                        ))
-                        updated += 1
+                        # Status: applied only when the vendor actually moved.
+                        # Comparing the mapped status with ours on every poll
+                        # undid staff work wherever the vendor's vocabulary is
+                        # coarser than ours (Open311 has no "in progress").
+                        change = await _apply_inbound_status(db, sr, link, record, connector, integration)
+                        if change:
+                            notifications.append(change)
+                            updated += 1
 
                     integration.last_sync_at = started_at
                     integration.last_sync_status = "success"
@@ -879,6 +1318,19 @@ def pull_integration_updates(integration_id: Optional[int] = None):
                                f"{imported} new request(s) imported"
                                + (f", newest change {newest.isoformat()}" if newest else ""),
                                len(records))
+                    # After the commit in _log, so a resident is never told about
+                    # a change that then rolled back.
+                    sent = 0
+                    for request_pk, old_status, message, fresh in notifications:
+                        if not fresh or sent >= NOTIFY_MAX_PER_RUN:
+                            continue
+                        notify_external_status_change(request_pk, old_status, message,
+                                                      integration.display_name)
+                        sent += 1
+                    if len(notifications) > sent:
+                        logger.info("[Integrations] %s: %d status change(s) applied without a resident "
+                                    "message (older than %s or over the per-pull cap)",
+                                    integration.platform, len(notifications) - sent, NOTIFY_MAX_AGE)
                 except CircuitOpen as e:
                     # Already known to be down; `guard` declined the call rather
                     # than making it. Not recorded as a new failure -- the
@@ -924,6 +1376,7 @@ def refresh_request_from_integrations(request_id: int):
 
     async def _refresh():
         applied = 0
+        notifications = []
         async with SessionLocal() as db:
             sr = (await db.execute(
                 select(ServiceRequest).where(ServiceRequest.id == request_id)
@@ -945,33 +1398,28 @@ def refresh_request_from_integrations(request_id: int):
                     continue
                 try:
                     connector = await build_connector_for(integration)
+                    if str(link.external_id).startswith(PENDING_ID_PREFIX):
+                        real = await connector.resolve_pending_id(link.external_id)
+                        if not real or str(real).startswith(PENDING_ID_PREFIX):
+                            continue
+                        link.external_id = str(real)[:200]
+                        link.sync_error = None
                     record = await connector.fetch_record(link.external_id)
                     if not record:
                         continue
-                    if record.raw_status and record.raw_status != link.external_status:
-                        link.external_status = record.raw_status
                     link.last_pulled_at = datetime.now(timezone.utc)
                     if await _apply_work_order_fields(db, sr, record, integration):
                         applied += 1
-                    if record.status and record.status != sr.status:
-                        old = sr.status
-                        sr.status = record.status
-                        sr.updated_datetime = datetime.now(timezone.utc)
-                        if record.status == "closed":
-                            sr.closed_datetime = datetime.now(timezone.utc)
-                            if record.resolution and not sr.completion_message:
-                                sr.completion_message = record.resolution
-                            if not sr.closed_substatus:
-                                sr.closed_substatus = "resolved"
-                        db.add(RequestAuditLog(
-                            service_request_id=sr.id, action="status_change",
-                            old_value=old, new_value=record.status,
-                            actor_type="integration", actor_name=integration.display_name,
-                        ))
+                    change = await _apply_inbound_status(db, sr, link, record, connector, integration)
+                    if change:
+                        notifications.append((*change, integration.display_name))
                         applied += 1
                 except Exception as e:
                     logger.warning(f"[Integrations] Refresh from {integration.platform} failed: {e}")
             await db.commit()
+        for request_pk, old_status, message, fresh, actor in notifications[:NOTIFY_MAX_PER_RUN]:
+            if fresh:
+                notify_external_status_change(request_pk, old_status, message, actor)
         return {"ok": True, "applied": applied}
 
     return run_async(_refresh())
@@ -1186,6 +1634,8 @@ def retry_integration_dead_letters(limit: int = 50):
                 push_request_to_integrations(service_request_id)
             elif operation == "push_status" and service_request_id:
                 push_status_to_integrations(service_request_id)
+            elif operation == "push_priority" and service_request_id:
+                push_priority_to_integrations(service_request_id)
             elif operation == "push_comment" and comment_id:
                 push_comment_to_integrations(comment_id)
             else:

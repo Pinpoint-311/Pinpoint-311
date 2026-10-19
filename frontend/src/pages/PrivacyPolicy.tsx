@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { ArrowLeft, Shield } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
@@ -11,7 +11,7 @@ const DEFAULT_PRIVACY_POLICY = `
 When you submit a service request, we collect only the information necessary to process and respond to your request:
 
 - **Contact Information**: Name, email address, and/or phone number (email is required for all submissions)
-- **Location Data**: Address or geographic coordinates related to your service request
+- **Location Data**: Address or geographic coordinates related to your service request. Request types that don't need a location don't ask for one, and none is stored for them
 - **Request Details**: Description of the issue, photos, and any additional context you provide
 - **Technical Data**: Browser type, device information, and IP address for security purposes
 
@@ -29,6 +29,7 @@ Your information is used exclusively for municipal service purposes:
 
 - Processing and tracking your service requests
 - Routing requests to the appropriate department
+- Handling related reports consistently: if your municipality turns this on, staff handling a request can see a list of your other requests filed with the same email address, and can look up requests by your full email address or full name (see "Staff Access to Your Other Requests" below)
 - Communicating with you about your request status
 - Improving our services based on aggregate data
 - Complying with public records laws
@@ -37,6 +38,17 @@ Your information is used exclusively for municipal service purposes:
 - Sell your personal information
 - Use your information for marketing purposes
 - Share your information with third parties for commercial purposes
+
+## Staff Access to Your Other Requests
+
+This applies only if your municipality has turned on the Resident History feature. It is off unless they do.
+
+When it is on, municipal staff working on one of your requests can see a short list of your other requests that were filed with the same email address, and can search for requests by an exact full email address or full name. This helps them recognize a recurring problem or follow up on an earlier report. Safeguards:
+
+- Staff see only requests their own department can already access, and only each request's number, category, status and date — not its description, location or your contact details
+- Matching uses a one-way, keyed fingerprint of your email address or name. Your contact details remain encrypted, and the fingerprint cannot be turned back into your email or name
+- Every lookup is recorded in the municipality's audit log: who looked, when, and how many requests matched. The email address or name that was searched for is not recorded
+- Fingerprints exist only while the feature is on, and are deleted if it is turned off. When your contact details are removed under the retention schedule, the fingerprint is removed with them, so older requests can no longer be linked to you
 
 ## Information Sharing
 
@@ -55,7 +67,6 @@ Your service request data is retained in accordance with applicable state public
 You have the right to:
 - Request access to your personal information
 - Request correction of inaccurate information
-- Submit requests anonymously (for most request types)
 - Contact us with privacy concerns
 
 ## Security
@@ -64,7 +75,7 @@ We implement appropriate technical and organizational measures to protect your p
 
 ## Administrator Registration with Pinpoint 311
 
-This section does not concern residents and no resident data is involved. It is here because the platform's privacy claim is that it makes no automatic calls to its maintainers, and the one voluntary exception belongs in the same document as the claim.
+This section involves no resident data. It describes the one voluntary exception to the platform's practice of making no automatic calls to its maintainers.
 
 The admin console offers municipal staff an optional form for sharing a contact address with Pinpoint 311, so that security advisories and release notes can reach this deployment. It is never filled in automatically and nothing is sent unless a member of staff completes it and presses Submit.
 
@@ -72,11 +83,11 @@ If submitted, Pinpoint 311 stores what was entered — organization, contact nam
 
 ## Contact Us
 
-For privacy-related questions or concerns, please contact your municipal clerk or the department of administration.
+For privacy-related questions or concerns, contact your municipal clerk or the department of administration.
 
 ---
 
-*This privacy policy applies to service requests submitted through the 311 portal. For the municipality's general privacy policy, please visit the main municipal website.*
+*This privacy policy applies to service requests submitted through the 311 portal. For the municipality's general privacy policy, visit the main municipal website.*
 `;
 
 /* Consecutive "- " lines become one <ul>.
@@ -153,13 +164,12 @@ export default function PrivacyPolicy() {
             {/* Header */}
             <header className="glass-sidebar border-b border-white/10">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-                    <Link
-                        to="/"
+                    <BackLink
                         className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-                        aria-label="Back to home"
+                        label="Go back"
                     >
-                        <ArrowLeft className="w-5 h-5 text-white/70" />
-                    </Link>
+                        <ArrowLeft className="w-5 h-5 text-white/70" aria-hidden="true" />
+                    </BackLink>
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-primary-500/20 flex items-center justify-center">
                             <Shield className="w-5 h-5 text-primary-400" />

@@ -42,11 +42,12 @@ export function StorageStatusLine() {
      * add here. */
     if (!status.secrets.store) return null;
 
-    const storeName = {
+    const storeName = ({
+        google: 'Google Secret Manager',
         azure: 'Azure Key Vault',
         aws: 'AWS Secrets Manager',
         database: "this deployment's own encrypted database",
-    }[status.secrets.store] ?? 'Google Secret Manager';
+    } as Record<string, string>)[status.secrets.store] ?? 'your secret store';
 
     const pending: string[] = [];
     if (status.secrets.count && status.secrets.reachable) {
@@ -81,7 +82,7 @@ export function StorageStatusLine() {
     const unreadableNote = unreadable ? (
         <p className="mt-1 text-amber-200/75">
             {unreadable} saved {unreadable === 1 ? 'credential' : 'credentials'} cannot be decrypted
-            with this deployment's current SECRET_KEY — almost always because that key was replaced.
+            with this deployment's current SECRET_KEY, typically because that key was replaced.
             {unreadable === 1 ? ' It shows' : ' They show'} as blank on the cards below. Enter{' '}
             {unreadable === 1 ? 'it' : 'them'} again, or restore the previous SECRET_KEY.
             {status.secrets.unreadable_keys?.length ? (
@@ -97,10 +98,9 @@ export function StorageStatusLine() {
     const legacy = status.pii.legacy ? (
         <p className="mt-1 text-amber-200/75">
             {status.pii.legacy.toLocaleString()} older{' '}
-            {status.pii.legacy === 1 ? 'record is' : 'records are'} encrypted with a key that no
-            longer exists — from before a key rotation — so their contact details cannot be read
-            or re-encrypted. They can only be restored from a pre-rotation backup, or have those
-            fields cleared.
+            {status.pii.legacy === 1 ? 'record is' : 'records are'} encrypted with a key retired
+            in an earlier rotation, so their contact details can't be read or re-encrypted. Restore
+            them from a pre-rotation backup, or clear those fields.
         </p>
     ) : null;
 
@@ -138,8 +138,8 @@ export function StorageStatusLine() {
             <RefreshCw className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary-300" />
             <div>
                 <p>
-                    {pending.join(', and ')}. This happens automatically overnight — everything stays
-                    encrypted and readable in the meantime, and there is nothing for you to do.
+                    {pending.join(', and ')}. This happens automatically overnight. Everything stays
+                    encrypted and readable until then, and no action is needed.
                 </p>
                 {unreadableNote}
                 {legacy}

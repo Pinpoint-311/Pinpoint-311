@@ -1,10 +1,27 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, Shield, LogIn } from 'lucide-react';
+import { AlertCircle, Shield, LogIn, Sparkles } from 'lucide-react';
 import { Button, Card } from '../components/ui';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { api } from '../services/api';
+
+/** Remove sign-in credentials from the address bar without a navigation, so
+ *  neither the back button nor a copied link carries them. */
+function stripLoginParamsFromUrl() {
+    const url = new URL(window.location.href);
+    let changed = false;
+    for (const key of ['login_code', 'token']) {
+        if (url.searchParams.has(key)) {
+            url.searchParams.delete(key);
+            changed = true;
+        }
+    }
+    if (changed) {
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+    }
+}
 
 export default function Login() {
     const navigate = useNavigate();
@@ -48,21 +65,38 @@ export default function Login() {
         checkAuth();
     }, []);
 
-    // Handle callback with token or error from Auth0
+    /* The SSO callback lands here with ?login_code=<single-use code>, never a
+     * token. Strip it from the URL at once (it must not survive in history
+     * even if the exchange fails), then trade it for the session token over
+     * POST. The ref keeps a re-run of this effect -- StrictMode, or the stale
+     * router location after replaceState -- from spending the code twice;
+     * the second attempt would be refused anyway. A `?token=` from an old
+     * link is stripped and ignored: a session is never taken from a URL. */
+    const exchangeStarted = useRef(false);
     useEffect(() => {
-        const token = searchParams.get('token');
+        const loginCode = searchParams.get('login_code');
         const urlError = searchParams.get('error');
-        
-        if (token) {
-            setToken(token);
-            // Remove token from URL
-            navigate('/login', { replace: true });
+
+        if (loginCode || searchParams.has('token')) {
+            stripLoginParamsFromUrl();
+        }
+
+        if (loginCode) {
+            if (exchangeStarted.current) return;
+            exchangeStarted.current = true;
+            setIsLoading(true);
+            api.exchangeLoginCode(loginCode)
+                .then(({ access_token }) => setToken(access_token))
+                .catch((err: Error) => {
+                    setError(err?.message || 'Sign-in did not finish. Sign in again.');
+                })
+                .finally(() => setIsLoading(false));
         } else if (urlError) {
             // Keep the error in the URL so it's resilient to refreshes, 
             // and simply display it in the UI.
             setError(decodeURIComponent(urlError.replace(/\+/g, ' ')));
         }
-    }, [searchParams, setToken, navigate]);
+    }, [searchParams, setToken]);
 
     // Redirect if already logged in
     useEffect(() => {
@@ -76,21 +110,21 @@ export default function Login() {
         setIsLoading(true);
 
         try {
-            // Get Auth0 login URL from backend
+            // Get the identity provider login URL from backend
             const redirectUri = `${window.location.origin}/login`;
             const response = await fetch(`/api/auth/login?redirect_uri=${encodeURIComponent(redirectUri)}`);
 
             if (!response.ok) {
                 const errorData = await response.json();
-                throw new Error(errorData.detail || 'Failed to initiate login');
+                throw new Error(errorData.detail || "Sign-in didn't start. Try again.");
             }
 
             const data = await response.json();
 
-            // Redirect to Auth0
+            // Redirect to the identity provider
             window.location.href = data.auth_url;
         } catch (err) {
-            setError((err as Error).message || 'Failed to start login');
+            setError((err as Error).message || "Sign-in didn't start. Try again.");
             setIsLoading(false);
         }
     };
@@ -149,7 +183,7 @@ export default function Login() {
                         {authStatus && !authStatus.auth0_configured ? (
                             <div className="space-y-4">
                                 <div className="bg-primary-500/10 border border-primary-500/30 rounded-xl p-5 text-center">
-                                    <div className="text-2xl mb-2">✦</div>
+                                    <Sparkles className="w-6 h-6 mx-auto mb-2 text-primary-300" aria-hidden="true" />
                                     <p className="text-primary-300 font-semibold text-lg">Welcome to Pinpoint 311</p>
                                     <p className="text-white/50 text-sm mt-2">
                                         Your system is ready for initial setup. Enter the Admin Console to configure your municipality, maps, AI, and authentication.
@@ -163,7 +197,7 @@ export default function Login() {
                                     Enter Admin Console
                                 </a>
                                 <p className="text-white/30 text-xs text-center">
-                                    This button is only available during initial setup
+                                    Available only during initial setup
                                 </p>
                             </div>
                         ) : (
@@ -177,7 +211,7 @@ export default function Login() {
                                         disabled={isLoading}
                                         isLoading={isLoading}
                                         leftIcon={<LogIn className="w-5 h-5" />}
-                                        aria-label={isLoading ? 'Signing in, please wait' : 'Sign in with your organization account'}
+                                        aria-label={isLoading ? 'Signing in' : 'Sign in with your organization account'}
                                     >
                                         Sign In with SSO
                                     </Button>

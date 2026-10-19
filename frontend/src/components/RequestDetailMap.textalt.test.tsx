@@ -106,8 +106,8 @@ describe('RequestDetailMap text equivalent', () => {
         expect(screen.getByText('Asset ID: HYD-77')).toBeTruthy();
         // The staff panel below this map drops purely numeric properties, so
         // this row has no other home on the page.
-        expect(screen.getByText('flow_rate: 1200')).toBeTruthy();
-        expect(screen.getByText('last_inspected: 2026-03-02')).toBeTruthy();
+        expect(screen.getByText('Flow rate: 1200')).toBeTruthy();
+        expect(screen.getByText('Last inspected: 2026-03-02')).toBeTruthy();
         // Same trimming as the popup: id and name are already said above.
         expect(screen.queryByText(/^name:/)).toBeNull();
 

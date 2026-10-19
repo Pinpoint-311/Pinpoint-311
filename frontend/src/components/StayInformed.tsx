@@ -296,9 +296,8 @@ function RegisterPanel({ url, embedUrl, startEmbedded, onShowForm, onDone }: {
     return (
         <div className="space-y-5">
             <p className="text-white/65 text-sm leading-relaxed">
-                Pinpoint 311 is open source and self-hosted, so we have no way to reach you about
-                security fixes, releases, or anything affecting your instance. Registering takes
-                two minutes: who to reach, and where this runs.
+                Pinpoint 311 is self-hosted, so we can only reach you about security fixes and
+                releases if you register. It takes two minutes: who to contact, and where this runs.
             </p>
             {linkOut ? (
                 <a
@@ -406,8 +405,7 @@ function StayInformedForm({ onDone, onDirtyChange, onStatus }: {
                 </div>
                 <p className="text-white/80 mt-4">Thank you — we have your details.</p>
                 <p className="text-white/45 text-sm mt-1.5">
-                    You'll hear from us when there is a security advisory or a release worth knowing about,
-                    and not otherwise.
+                    We'll contact you only about security advisories and notable releases.
                 </p>
                 <Button className="mt-6" onClick={() => onDone('submitted')}>Close</Button>
             </div>
@@ -419,9 +417,8 @@ function StayInformedForm({ onDone, onDirtyChange, onStatus }: {
             <div className="text-center py-6">
                 <p className="text-white/80">We couldn't reach pinpoint311.org from this browser.</p>
                 <p className="text-white/45 text-sm mt-1.5 max-w-sm mx-auto">
-                    That is often just a municipal network blocking outbound traffic, which is a perfectly
-                    sensible thing for it to do. The same form is on our website if you'd like to use it
-                    from somewhere else.
+                    Municipal networks often block outbound traffic. The same form is on our website if
+                    you'd like to use it from another device.
                 </p>
                 <a
                     href={REGISTRATION_FORM_URL}
@@ -449,14 +446,12 @@ function StayInformedForm({ onDone, onDirtyChange, onStatus }: {
         <form onSubmit={submit} className="space-y-5">
             <div className="space-y-3">
                 <p className="text-white/65 text-sm leading-relaxed">
-                    Pinpoint 311 is open source and self-hosted, so we have no way to reach you when a
-                    security fix or important update is released. If you share your contact information,
-                    we will send security advisories and release notes, and we are glad to help where we
-                    can.
+                    Pinpoint 311 is self-hosted, so we can only reach you about security fixes and
+                    important updates if you share a contact. We'll send security advisories and release
+                    notes, and we're glad to help where we can.
                 </p>
                 <p className="text-white/40 text-xs leading-relaxed">
-                    This is entirely optional. Nothing is sent automatically — only what you enter below
-                    is submitted.
+                    This is optional. Only what you enter below is sent.
                 </p>
             </div>
 
@@ -832,8 +827,8 @@ export function StayInformedHost({ ready, prefill }: { ready: boolean; prefill?:
                                     data-testid="discard-warning"
                                 >
                                     <span>
-                                        You have entered details that will be discarded. Press Escape
-                                        again, or click outside again, to close without saving them.
+                                        Your entries will be discarded. Press Escape or click outside
+                                        again to close.
                                     </span>
                                 </div>
                             )}
@@ -888,7 +883,7 @@ function StayInformedBanner({ onDismiss }: { onDismiss: () => void }) {
             >
                 <Bell className="w-4 h-4 text-primary-300 mt-0.5 shrink-0" />
                 <p className="text-xs text-white/60 leading-snug flex-1">
-                    We have no way to reach you about security fixes or updates.{' '}
+                    We can't reach you about security fixes or updates until you register.{' '}
                     <button
                         type="button"
                         onClick={() => openStayInformed({ immediate: true })}

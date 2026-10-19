@@ -20,6 +20,21 @@
 # whole file from a template in the API handler, which dropped the headers, the
 # tenant import and the panel block, and pointed the frontend at the Vite dev
 # server.
+# Keep a site out of search engines: a robots.txt that disallows everything,
+# and X-Robots-Tag on every response (pages, API, files) so even a link found
+# elsewhere is not indexed, followed or cached. Imported by every demo and
+# pilot site on this server. Not part of pinpoint_site, so a real town's site
+# stays indexable unless it opts in.
+(noindex) {
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+	handle /robots.txt {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "User-agent: *
+Disallow: /
+" 200
+	}
+}
+
 (pinpoint_site) {
 
 	# Access logging, to the caddy_data volume rather than to stdout.
@@ -57,6 +72,18 @@
 	# bypassed by anything already on the compose network.
 	request_body {
 		max_size 13MB
+	}
+
+	# The host updater's channel (docs/design/secure-upgrades.md, Phase 3).
+	# The updater calls the backend's loopback port directly and never comes
+	# through here, so from the internet this prefix does not exist. The
+	# backend also refuses any /api/internal request that carries proxy
+	# headers, so a regenerated site block cannot reopen it. `handle` blocks
+	# are tried most-specific path first, so this wins over /api/* below.
+	# No slash before the `*`: `/api/internal/*` let `/api/internal`,
+	# `/api/internal./...` and `/api/internal;x/...` through to the backend.
+	handle /api/internal* {
+		respond 404
 	}
 
 	handle /api/* {
@@ -146,12 +173,14 @@
 # Dynamic domain from DOMAIN environment variable
 # Set DOMAIN=your.domain.com in .env or docker-compose
 {$DOMAIN:localhost} {
+	import noindex
 	import pinpoint_site backend:8000 frontend:80
 }
 
 
 # Centralized Hosting Orchestrator Control Panel
 centraldemo.pinpoint311.org {
+	import noindex
     encode gzip
     # Same log, same file. The panel provisions towns and holds the host's
     # shared credentials, so it is the site where "who called this, and when"
@@ -180,6 +209,7 @@ import /etc/caddy/tenants/*.caddy
 # instead of an SSO account. Same snippet as the demo so the headers, CSP and
 # routing under test are the ones the real site ships.
 noauthdemo.pinpoint311.org {
+	import noindex
 	import pinpoint_site pinpoint-a11y-backend-1:8000 pinpoint-a11y-frontend-1:80
 }
 
@@ -187,5 +217,6 @@ noauthdemo.pinpoint311.org {
 # noauthdemo: own database seeded from it, no reports, no identity provider so
 # the bootstrap gate stays open.
 demomunicipality-hawthorne.pinpoint311.org {
+	import noindex
 	import pinpoint_site pinpoint-passaic-backend-1:8000 pinpoint-passaic-frontend-1:80
 }

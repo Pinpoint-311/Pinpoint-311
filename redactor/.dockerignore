@@ -1,0 +1,8 @@
+tests/
+scripts/
+__pycache__/
+*.pyc
+*.onnx
+*.jit
+*.pt
+README.md

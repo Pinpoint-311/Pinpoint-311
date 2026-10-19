@@ -276,7 +276,7 @@ export default function RoadListInput({
             {dataAvailable === false && (
                 <p className="text-xs text-amber-300/80">
                     Road data hasn&apos;t been loaded for this town yet, so names can&apos;t be
-                    checked. They&apos;ll still work once it loads — spelling just isn&apos;t verified.
+                    checked. They&apos;ll work once it loads, but spelling isn&apos;t checked.
                 </p>
             )}
             {roads.some(isUnverified) && (

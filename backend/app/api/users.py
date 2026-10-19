@@ -1,13 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from typing import List
 
 from app.db.session import get_db
 from app.models import User, Department
 from app.schemas import UserCreate, UserResponse, UserUpdate
-from app.core.auth import get_password_hash, get_current_admin, get_current_staff
+from app.core.auth import (
+    get_current_admin,
+    get_current_staff,
+    get_password_hash,
+    revoke_user_sessions,
+)
 from app.services.admin_audit import record_admin_action
 
 router = APIRouter()
@@ -173,18 +178,51 @@ async def update_user(
     _: User = Depends(get_current_admin)
 ):
     """Update user (admin only)"""
-    result = await db.execute(select(User).where(User.id == user_id))
+    # Departments loaded up front: assigning `user.departments` makes SQLAlchemy
+    # read the old collection to diff it, and a lazy load inside an async
+    # session raises (MissingGreenlet) -- every edit that touched departments,
+    # which the edit form always sends, came back as a 500 "Request failed".
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(selectinload(User.departments))
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     update_data = user_data.model_dump(exclude_unset=True)
 
+    # Never leave the town without an active admin. Once an identity provider
+    # is configured the bootstrap route is closed, so demoting or deactivating
+    # the last admin -- yourself included -- locks everyone out of the admin
+    # console with no way back short of editing the database.
+    new_role = update_data.get("role")
+    demoting = new_role is not None and getattr(new_role, "value", new_role) != "admin"
+    deactivating = update_data.get("is_active") is False
+    if user.role == "admin" and user.is_active and (demoting or deactivating):
+        other_admins = await db.execute(
+            select(func.count(User.id)).where(
+                User.role == "admin", User.is_active == True, User.id != user.id  # noqa: E712
+            )
+        )
+        if not other_admins.scalar():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote or deactivate the last active admin",
+            )
+
     # Departments are a many-to-many relationship, not a column. The loop below
     # used to setattr "department_ids" straight onto the ORM object, which binds
     # a stray Python attribute and never touches the join table -- the request
     # returned 200 with the user's old departments and the edit silently
     # vanished. create_user always did this correctly; update_user did not.
+    # Anything that narrows or removes access ends the account's open
+    # sessions, so the change takes effect now rather than when the tokens the
+    # user already holds run out (up to eight hours later). Decided before the
+    # fields below are written, while the old values are still on the row.
+    old_department_ids = {d.id for d in (user.departments or [])}
+    role_changed = new_role is not None and getattr(new_role, "value", new_role) != user.role
+    revoke = deactivating or role_changed
+
     department_ids = update_data.pop("department_ids", None)
     if department_ids is not None:
         result = await db.execute(
@@ -195,13 +233,18 @@ async def update_user(
             raise HTTPException(status_code=400, detail="One or more departments do not exist")
         # Assigned wholesale, so an empty list genuinely clears them.
         user.departments = found
+        if not old_department_ids <= {d.id for d in found}:
+            revoke = True  # removed from a department
 
     for field, value in update_data.items():
         if value is not None:
             if field == "role":
                 value = value.value
             setattr(user, field, value)
-    
+
+    if revoke:
+        revoke_user_sessions(user)
+
     await db.commit()
     await db.refresh(user)
 
@@ -218,7 +261,13 @@ async def update_user(
             **({"department_ids": department_ids} if department_ids is not None else {}),
         },
     )
-    return user
+
+    # Reloaded for the response, as create_user does: the commits above expire
+    # the departments, and serialising them would lazy-load in async again.
+    result = await db.execute(
+        select(User).where(User.id == user.id).options(selectinload(User.departments))
+    )
+    return result.scalar_one()
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -282,6 +331,8 @@ async def reset_password_json(
         raise HTTPException(status_code=404, detail="User not found")
     
     user.hashed_password = get_password_hash(data.new_password)
+    # A reset is what an admin does when an account may be compromised.
+    revoke_user_sessions(user)
     await db.commit()
     await db.refresh(user)
 
@@ -292,6 +343,31 @@ async def reset_password_json(
         details={"target_username": user.username},
     )
     return user
+
+
+@router.post("/{user_id}/revoke-sessions", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_sessions(
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Sign a user out everywhere (admin only).
+
+    Every token the account holds stops working on its next request; the user
+    signs in again to continue. For a lost device or a suspected compromise
+    where the account itself should stay active.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    target_username = user.username
+    revoke_user_sessions(user)
+    await db.commit()
+    await record_admin_action(
+        db, event_type="user_sessions_revoked", actor=current_user,
+        details={"target_username": target_username},
+    )
 
 
 # ============ Notification Preferences ============

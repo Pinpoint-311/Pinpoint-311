@@ -9,16 +9,24 @@ import logging
 import os
 import urllib.parse
 
+from pydantic import BaseModel, Field
+
 from app.db.session import get_db
 from app.models import User
 import secrets as pysecrets
 
-from app.core.auth import create_access_token, decode_token, get_current_user
+from app.core.auth import (
+    create_session_token,
+    decode_token,
+    get_current_user,
+    revoke_user_sessions,
+)
 from app.services.auth0_service import Auth0Service
 from app.services.audit_service import AuditService
 # Login state tokens live in Redis (app/services/login_state.py) so that a
 # backend restart mid-login does not invalidate the round-trip already in flight.
 from app.services import login_state
+from app.services import one_time
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -45,7 +53,7 @@ def _sanitize_redirect_uri(redirect_uri: str) -> str:
     return redirect_uri
 
 
-# One-time bootstrap tokens (only work until Auth0 is configured)
+# One-time bootstrap tokens (only work until staff sign-in is configured)
 _bootstrap_tokens: dict = {}
 
 
@@ -254,11 +262,11 @@ async def generate_bootstrap_token(
     matches it.
     """
     client = await _guard_bootstrap_attempt(request)
-    # Fail-closed: only when Auth0 has never been configured
+    # Fail-closed: only when no staff sign-in provider has ever been configured
     if not await _bootstrap_gate_open(db):
         raise HTTPException(
             status_code=403,
-            detail="Bootstrap access disabled - Auth0 is already configured. Use SSO to log in."
+            detail="Bootstrap access is off because staff sign-in is set up. Sign in with your sign-in provider."
         )
     try:
         _verify_bootstrap_password(password)
@@ -291,7 +299,7 @@ async def generate_bootstrap_token(
         "token": token,
         "expires_in_seconds": 3600,
         "login_url": f"/api/auth/bootstrap/{token}",
-        "warning": "This token will be invalidated once Auth0 is configured"
+        "warning": "This token stops working once staff sign-in is set up"
     }
 
 
@@ -319,7 +327,7 @@ async def auto_bootstrap(
     if not await _bootstrap_gate_open(db):
         return _bootstrap_html_message(
             "Setup Complete",
-            '<h2>Auth0 is already configured</h2><p>Use SSO to log in.</p>'
+            '<h2>Staff sign-in is already set up</h2><p>Sign in with your sign-in provider.</p>'
             '<a href="/login" style="color:#6366f1">Go to Login</a>',
             403,
         )
@@ -331,7 +339,7 @@ async def auto_bootstrap(
     <head><title>First-run setup</title></head>
     <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
         <form method="POST" action="/api/auth/bootstrap/verify" style="max-width:22rem">
-            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <div style="margin-bottom:1rem;color:#a5b4fc"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg></div>
             <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
             <p style="color:rgba(255,255,255,.6);margin-bottom:1rem">Enter the setup password (<code>INITIAL_ADMIN_PASSWORD</code>) to create your admin session.</p>
             <input type="password" name="password" required autofocus placeholder="Setup password"
@@ -363,7 +371,7 @@ async def verify_bootstrap(
     if not await _bootstrap_gate_open(db):
         return _bootstrap_html_message(
             "Setup Complete",
-            '<h2>Auth0 is already configured</h2><a href="/login" style="color:#6366f1">Go to Login</a>',
+            '<h2>Staff sign-in is already set up</h2><a href="/login" style="color:#6366f1">Go to sign-in</a>',
             403,
         )
     try:
@@ -385,11 +393,11 @@ async def verify_bootstrap(
     if not admin:
         return _bootstrap_html_message(
             "Setup Error",
-            '<h2>No admin user found</h2><p>The database may not be initialized yet.</p>',
+            '<h2>No admin user found</h2><p>Check that the database has been initialized.</p>',
             404,
         )
 
-    access_token = create_access_token(data={"sub": admin.username, "role": admin.role})
+    access_token = create_session_token(admin)
     logger.info(f"Bootstrap login successful for: {admin.username}")
 
     import json as _json
@@ -400,7 +408,7 @@ async def verify_bootstrap(
     <head><title>Setting up...</title></head>
     <body style="font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#151929;color:white;text-align:center">
         <div>
-            <div style="font-size:2rem;margin-bottom:1rem">✦</div>
+            <div style="margin-bottom:1rem;color:#a5b4fc"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/></svg></div>
             <h2 style="margin:0 0 .5rem">Welcome to Pinpoint 311</h2>
             <p style="color:rgba(255,255,255,.5)">Setting up your admin console...</p>
         </div>
@@ -424,13 +432,13 @@ async def use_bootstrap_token(
     """
     import time as time_module
     
-    # Fail-closed: only when Auth0 has never been configured
+    # Fail-closed: only when no staff sign-in provider has ever been configured
     if not await _bootstrap_gate_open(db):
-        # Clear all bootstrap tokens since Auth0 is now configured
+        # Clear all bootstrap tokens: staff sign-in is now configured
         _bootstrap_tokens.clear()
         raise HTTPException(
             status_code=403,
-            detail="Bootstrap access disabled - Auth0 is configured. Use SSO to log in."
+            detail="Bootstrap access is off because staff sign-in is set up. Sign in with your sign-in provider."
         )
     
     # Verify token
@@ -449,8 +457,8 @@ async def use_bootstrap_token(
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="User not found or inactive")
     
-    # Create JWT
-    access_token = create_access_token(data={"sub": user.username, "role": user.role})
+    # Create JWT. Handed over in the HTML body below, never in a URL.
+    access_token = create_session_token(user)
     
     logger.info(f"Bootstrap login successful for: {user.username}")
     
@@ -493,7 +501,7 @@ async def initiate_login(
     if status_info["status"] != "configured":
         raise HTTPException(
             status_code=503,
-            detail="Authentication not configured. Please configure your identity provider in the Admin Console."
+            detail="Sign-in isn't set up yet. Configure an identity provider in the Admin Console."
         )
     
     # Generate state token for CSRF protection
@@ -505,7 +513,12 @@ async def initiate_login(
     
     auth_url = await Auth0Service.get_authorization_url(callback_url, state, db)
     if not auth_url:
-        raise HTTPException(status_code=503, detail="Failed to generate Auth0 login URL")
+        # Named for the provider actually selected: this is the generic login
+        # path, and an Entra or Okta town was told to check its Auth0 settings.
+        from app.services.identity import IDENTITY_CATALOG
+        provider = await Auth0Service._active_provider()
+        label = IDENTITY_CATALOG.get(provider, {}).get("name", "your sign-in provider")
+        raise HTTPException(status_code=503, detail=f"Couldn't start sign-in with {label}. Check its settings under Setup & Integrations.")
     
     return {"auth_url": auth_url, "state": state}
 
@@ -532,12 +545,12 @@ async def auth0_callback(
     if not redirect_uri:
         raise HTTPException(
             status_code=400,
-            detail="This sign-in link is no longer valid. Please start signing in again."
+            detail="This sign-in link is no longer valid. Start signing in again."
         )
         
     # Handle Auth0 errors (user cancellation, access denied, etc.)
     if error or not code:
-        err_msg = error_description or error or "Authentication cancelled or failed."
+        err_msg = error_description or error or "Sign-in was canceled or didn't complete."
         safe_error = urllib.parse.quote(err_msg)
 
         redirect_uri = _sanitize_redirect_uri(redirect_uri)
@@ -570,7 +583,27 @@ async def auth0_callback(
             )
         
         email = user_info["email"].lower()
-        
+
+        # Accounts are matched by email, so an address the provider itself says
+        # it has NOT verified must not sign anyone in: on a tenant with
+        # self-signup, registering an unverified account under a staff or admin
+        # address would otherwise log the registrant in as that user. Refused
+        # only on an explicit False -- Entra and some OIDC providers omit the
+        # claim for tenant-issued addresses, and those are not self-asserted.
+        if user_info.get("email_verified") is False:
+            await AuditService.log_login_failed(
+                db=db,
+                username=email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                reason="Identity provider reports email not verified"
+            )
+            redirect_uri = _sanitize_redirect_uri(redirect_uri)
+            return RedirectResponse(
+                url=f"{redirect_uri}?error=Verify+your+email+address+with+your+sign-in+provider+first.",
+                status_code=302
+            )
+
         # Find or create user
         result = await db.execute(select(User).where(User.email == email))
         user = result.scalar_one_or_none()
@@ -593,7 +626,7 @@ async def auth0_callback(
             )
             redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
-                url=f"{redirect_uri}?error=Account+not+found.+Please+contact+an+administrator+to+be+added+to+the+system.",
+                url=f"{redirect_uri}?error=Account+not+found.+Ask+an+administrator+to+add+you.",
                 status_code=302
             )
         
@@ -608,7 +641,7 @@ async def auth0_callback(
             )
             redirect_uri = _sanitize_redirect_uri(redirect_uri)
             return RedirectResponse(
-                url=f"{redirect_uri}?error=Account+is+disabled.+Please+contact+an+administrator.",
+                url=f"{redirect_uri}?error=Account+is+disabled.+Contact+an+administrator.",
                 status_code=302
             )
         
@@ -617,9 +650,6 @@ async def auth0_callback(
         # of a token that never carried one, so every login_success row logged
         # session_id="unknown".
         session_id = pysecrets.token_hex(16)
-        access_token = create_access_token(
-            data={"sub": user.username, "role": user.role, "jti": session_id}
-        )
         
         # Log successful login
         await AuditService.log_login_success(
@@ -635,9 +665,19 @@ async def auth0_callback(
         
         redirect_uri = _sanitize_redirect_uri(redirect_uri)
 
-        # Redirect back to frontend with token
+        # Redirect back with a single-use, 60-second code -- never the token.
+        # A token in the query string lands in browser history, the proxy's
+        # access log and the next page's Referer, and stays usable for its
+        # whole lifetime. The login page trades the code for the token over
+        # POST /api/auth/exchange and strips it from the address bar. The
+        # token is minted at the exchange, so it carries the account's session
+        # generation as of that moment.
+        login_code = await one_time.issue_login_code(
+            {"uid": user.id, "jti": session_id}
+        )
+        sep = "&" if "?" in redirect_uri else "?"
         return RedirectResponse(
-            url=f"{redirect_uri}?token={access_token}",
+            url=f"{redirect_uri}{sep}login_code={urllib.parse.quote(login_code)}",
             status_code=302
         )
     
@@ -655,6 +695,35 @@ async def auth0_callback(
             failure_reason=f"Authentication error: {str(e)}"
         )
         raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+class LoginCodeExchange(BaseModel):
+    code: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/exchange")
+@limiter.limit("20/minute")
+async def exchange_login_code(
+    request: Request,
+    body: LoginCodeExchange,
+    db: AsyncSession = Depends(get_db),
+):
+    """Trade the single-use code the SSO callback redirected with for a session
+    token. Each code works once, within 60 seconds of the sign-in."""
+    claims = await one_time.redeem_login_code(body.code)
+    if not claims or not claims.get("uid"):
+        raise HTTPException(
+            status_code=401,
+            detail="This sign-in has expired or was already used. Sign in again.",
+        )
+    result = await db.execute(select(User).where(User.id == claims["uid"]))
+    user = result.scalar_one_or_none()
+    # Re-checked here: the account may have been disabled in the seconds
+    # between the callback and the exchange.
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Account is not available.")
+    access_token = create_session_token(user, jti=claims.get("jti"))
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
 @router.get("/logout")
@@ -684,6 +753,15 @@ async def logout(
         except Exception:
             pass  # Invalid/expired token, session_id stays "unknown"
     
+    # End the session for real. Bumping the account's session generation
+    # invalidates this token and every other one the account holds: a shared
+    # front-desk machine, a lost laptop and a forgotten tab are all signed out
+    # together, which is the safe default for a government system. (Before
+    # this, sign-out only forgot the token in the browser; a copy of it kept
+    # working for the rest of its eight hours.)
+    revoke_user_sessions(current_user)
+    await db.commit()
+
     # Log logout event
     await AuditService.log_logout(
         db=db,
@@ -702,7 +780,10 @@ async def logout(
     
     domain = config["domain"]
     client_id = config["client_id"]
-    logout_url = f"https://{domain}/v2/logout?client_id={client_id}&returnTo={return_to}"
+    logout_url = (
+        f"https://{domain}/v2/logout?"
+        + urllib.parse.urlencode({"client_id": client_id, "returnTo": return_to})
+    )
     
     return {"logout_url": logout_url}
 
@@ -746,7 +827,7 @@ async def redeem_onboarding_token(
                         description="Redeemed onboarding link"))
     await db.commit()
 
-    session_token = create_access_token(data={"sub": user.username})
+    session_token = create_session_token(user)
     await AuditService.log_event(
         db,
         event_type="onboarding_redeemed",

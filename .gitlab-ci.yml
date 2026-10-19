@@ -1,3 +1,26 @@
+# Pinpoint 311 on GitLab: tests, scans, and signed releases.
+#
+# The GitLab twin of .github/workflows/{backend-tests,frontend-checks,
+# build-publish}.yml. A protected tag v* runs everything below; images are
+# pushed and signed only after the test and scan stages have passed for that
+# commit, so a red gate means no release. See docs/RELEASES.md.
+#
+# Every image here is pinned by digest, with its tag kept for readability. A tag
+# can be repointed after review; a digest cannot.
+#
+# Keyless signing: the release job asks GitLab for an OIDC token with audience
+# "sigstore" (id_tokens below) and cosign exchanges it with Fulcio for a
+# short-lived certificate naming this project, this file and the tag. The host
+# updater trusts exactly that identity (docs/RELEASES.md, "GitLab trust policy"):
+#
+#   issuer:   https://gitlab.com            (self-managed: the instance URL, = $CI_SERVER_URL)
+#   identity: https://gitlab.com/<group>/<project>//.gitlab-ci.yml@refs/tags/v<...>
+#             (= $CI_PROJECT_URL//.gitlab-ci.yml@refs/tags/$CI_COMMIT_TAG)
+#
+# Self-managed GitLab works the same way provided the public Sigstore instance
+# can reach the instance's OIDC discovery document; otherwise sign with a key
+# (cosign --key, see docs/design/secure-upgrades.md "Decisions").
+#
 # You can override the included template(s) by including variable overrides
 # SAST customization: https://docs.gitlab.com/user/application_security/sast/#available-cicd-variables
 # Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure/
@@ -5,9 +28,285 @@
 # Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
+
 stages:
-- test
+  - test
+  - scan
+  - release
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+variables:
+  PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
+  NODE_IMAGE: node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
+  TRIVY_IMAGE: aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
+  DOCKER_IMAGE: docker:27.5.1-cli@sha256:851f91d241214e7c6db86513b270d58776379aacc5eb9c4a87e5b47115e3065c
+  DIND_IMAGE: docker:27.5.1-dind@sha256:aa3df78ecf320f5fafdce71c659f1629e96e9de0968305fe1de670e0ca9176ce
+  COSIGN_IMAGE: ghcr.io/sigstore/cosign/cosign:v2.6.1@sha256:68839b7f13dac5a6744a5d8818e984dd39183374e37855c19e14d623d9bc9037
+  BINFMT_IMAGE: tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6
+  # Fail the gate on CRITICAL findings that have a fixed version. One with no
+  # fix available cannot be acted on and would block every release.
+  TRIVY_GATE_ARGS: --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress
+
 sast:
   stage: test
-include:
-- template: Security/SAST.gitlab-ci.yml
+
+# ------------------------------------------------------------------- test ----
+
+backend-tests:
+  stage: test
+  image: $PYTHON_IMAGE
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  cache:
+    key:
+      files: [backend/requirements.txt]
+    paths: [.cache/pip]
+  script:
+    - cd backend
+    # The real dependencies, as in backend-tests.yml: a hand-picked subset
+    # once skipped about six hundred tests silently.
+    - pip install -r requirements.txt
+    - pip install pytest pytest-asyncio aiosqlite
+    - python -m pytest tests/ -q
+
+frontend-checks:
+  stage: test
+  image: $NODE_IMAGE
+  cache:
+    key:
+      files: [frontend/package-lock.json]
+    paths: [.cache/npm]
+  script:
+    - cd frontend
+    - npm ci --no-audit --no-fund --cache "$CI_PROJECT_DIR/.cache/npm"
+    # Same baseline as frontend-checks.yml: fail on any TypeScript error
+    # outside the known Azure renderer file and the unused-symbol warnings.
+    - |
+      npx tsc --noEmit -p tsconfig.json > /tmp/tsc.log 2>&1 || true
+      grep "error TS" /tmp/tsc.log \
+        | grep -v "src/maps/providers/azure/renderer.ts" \
+        | grep -v "error TS6133" \
+        | grep -v "error TS5101" > /tmp/new.log || true
+      if [ -s /tmp/new.log ]; then
+        echo "TypeScript errors outside the known baseline:"
+        cat /tmp/new.log
+        exit 1
+      fi
+    - npx vitest run
+    - npx vite build
+
+# ------------------------------------------------------------------- scan ----
+
+trivy-fs:
+  stage: scan
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  variables:
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.cache/trivy
+  cache:
+    key: trivy-db
+    paths: [.cache/trivy]
+  script:
+    - trivy fs $TRIVY_GATE_ARGS .
+
+# Build each image for amd64 without pushing and scan it, before the release
+# stage pushes anything. Runs for tags and the default branch.
+.docker:
+  image: $DOCKER_IMAGE
+  services:
+    - name: $DIND_IMAGE
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+
+trivy-image:
+  extends: .docker
+  stage: scan
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  parallel:
+    matrix:
+      - COMPONENT: [backend, frontend]
+  script:
+    - |
+      set -eu
+      extra=""
+      [ "$COMPONENT" = backend ] && extra="--build-context deploy-templates=deploy/templates"
+      docker buildx create --use --name scan
+      docker buildx build $extra --platform linux/amd64 \
+        --output type=oci,dest=/tmp/image.tar "$COMPONENT"
+      # The daemon runs in the dind service, so a bind mount would point at
+      # its filesystem, not this job's. Take the binary out of the pinned image.
+      docker create --name trivy "$TRIVY_IMAGE" >/dev/null
+      docker cp trivy:/usr/local/bin/trivy /usr/local/bin/trivy
+      docker rm trivy >/dev/null
+      trivy image $TRIVY_GATE_ARGS --input /tmp/image.tar
+      # The image must be able to do its job, not just pass a scan (1.9.0-rc1
+      # shipped without gpg). Same build, cached, loaded into the daemon.
+      if [ "$COMPONENT" = backend ]; then
+        docker buildx build $extra --platform linux/amd64 --load -t pinpoint-scan/backend "$COMPONENT"
+        docker run --rm --entrypoint python pinpoint-scan/backend -m app.cli.selfcheck --tools-only
+      fi
+
+# ---------------------------------------------------------------- release ----
+
+release-images:
+  extends: .docker
+  stage: release
+  rules:
+    # Opt-in: with GitHub as the primary repo (mirror-to-gitlab.yml), tags
+    # reach GitLab too, and publishing here as well would sign a second,
+    # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
+    # Settings > CI/CD > Variables to make GitLab the release source instead.
+    # Protected tags only. A pipeline on an unprotected v* tag would sign with
+    # the same .gitlab-ci.yml@refs/tags/v... identity the updater trusts.
+    # (This file comes from the tagged commit, so tag protection in the
+    # project settings is the real control; this catches a lapse in it.)
+    - if: $CI_COMMIT_TAG =~ /^v/ && $CI_COMMIT_REF_PROTECTED == "true" && $PINPOINT_RELEASE_FROM_GITLAB == "true"
+  # needs: the whole gate, by name, so a failure in any of them stops here.
+  needs: [backend-tests, frontend-checks, trivy-fs, trivy-image]
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  parallel:
+    matrix:
+      - COMPONENT: [backend, frontend]
+  script:
+    - |
+      set -eu
+      apk add --no-cache git python3 py3-pip >/dev/null
+      VERSION="${CI_COMMIT_TAG#v}"
+      IMAGE="$CI_REGISTRY_IMAGE/$COMPONENT"
+
+      # Schema window, derived exactly as build-publish.yml does it.
+      python3 -m venv /tmp/venv && /tmp/venv/bin/pip install --quiet 'alembic>=1.13'
+      set -- $(cd backend && /tmp/venv/bin/python - <<'PY'
+      from alembic.config import Config
+      from alembic.script import ScriptDirectory
+      script = ScriptDirectory.from_config(Config("alembic.ini"))
+      heads = script.get_heads()
+      if len(heads) != 1:
+          raise SystemExit(f"expected exactly one alembic head, found {heads}")
+      print(heads[0], script.get_revision(heads[0]).down_revision or heads[0])
+      PY
+      )
+      DB_REVISION="$1"; PREV_REVISION="$2"
+      MIN_DB_REVISION="$(grep -v '^[[:space:]]*#' backend/MIN_DB_REVISION 2>/dev/null | tr -d '[:space:]' || true)"
+      MIN_DB_REVISION="${MIN_DB_REVISION:-$PREV_REVISION}"
+      echo "version=$VERSION db_revision=$DB_REVISION min_db_revision=$MIN_DB_REVISION"
+
+      # cosign from its own signed image, pinned by digest.
+      docker create --name cosign "$COSIGN_IMAGE" >/dev/null
+      docker cp cosign:/ko-app/cosign /usr/local/bin/cosign
+      docker rm cosign >/dev/null
+
+      echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+      docker run --privileged --rm "$BINFMT_IMAGE" --install arm64
+      docker buildx create --use --name release
+
+      extra=""
+      [ "$COMPONENT" = backend ] && extra="--build-context deploy-templates=deploy/templates"
+      MINOR="$(echo "$VERSION" | cut -d. -f1,2)"
+      docker buildx build $extra \
+        --platform linux/amd64,linux/arm64 \
+        --provenance=mode=max --sbom=true \
+        --build-arg "PINPOINT_VERSION=$VERSION" \
+        --build-arg "GIT_SHA=$CI_COMMIT_SHA" \
+        --build-arg "DB_REVISION=$DB_REVISION" \
+        --build-arg "MIN_DB_REVISION=$MIN_DB_REVISION" \
+        --label "org.opencontainers.image.source=$CI_PROJECT_URL" \
+        --label "org.opencontainers.image.version=$VERSION" \
+        --label "org.opencontainers.image.revision=$CI_COMMIT_SHA" \
+        --label "org.pinpoint311.app.version=$VERSION" \
+        --label "org.pinpoint311.app.git_sha=$CI_COMMIT_SHA" \
+        --label "org.pinpoint311.app.db_revision=$DB_REVISION" \
+        --label "org.pinpoint311.app.min_db_revision=$MIN_DB_REVISION" \
+        --tag "$IMAGE:$VERSION" --tag "$IMAGE:$MINOR" --tag "$IMAGE:$CI_COMMIT_SHORT_SHA" \
+        --metadata-file /tmp/meta.json \
+        --push "$COMPONENT"
+      DIGEST="$(python3 -c 'import json;print(json.load(open("/tmp/meta.json"))["containerimage.digest"])')"
+      REF="$IMAGE@$DIGEST"
+
+      # Sign the digest, never a tag. cosign reads SIGSTORE_ID_TOKEN itself.
+      cosign sign --yes "$REF"
+
+      # Bind each platform's SPDX SBOM to the same keyless identity.
+      for platform in linux/amd64 linux/arm64; do
+        out="sbom-$COMPONENT-$(echo "$platform" | tr / -).spdx.json"
+        docker buildx imagetools inspect "$REF" --format "{{ json (index .SBOM \"$platform\").SPDX }}" > "$out"
+        [ -s "$out" ] && [ "$(head -c 4 "$out")" != "null" ] || { echo "no SBOM for $platform" >&2; exit 1; }
+        cosign attest --yes --type spdxjson --predicate "$out" "$REF"
+      done
+
+      echo "$REF" > "$COMPONENT.digest"
+  artifacts:
+    paths:
+      - "*.digest"
+      - "sbom-*.spdx.json"
+    expire_in: 90 days
+
+release-notes:
+  stage: release
+  image: $PYTHON_IMAGE
+  rules:
+    # Opt-in: with GitHub as the primary repo (mirror-to-gitlab.yml), tags
+    # reach GitLab too, and publishing here as well would sign a second,
+    # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
+    # Settings > CI/CD > Variables to make GitLab the release source instead.
+    # Protected tags only. A pipeline on an unprotected v* tag would sign with
+    # the same .gitlab-ci.yml@refs/tags/v... identity the updater trusts.
+    # (This file comes from the tagged commit, so tag protection in the
+    # project settings is the real control; this catches a lapse in it.)
+    - if: $CI_COMMIT_TAG =~ /^v/ && $CI_COMMIT_REF_PROTECTED == "true" && $PINPOINT_RELEASE_FROM_GITLAB == "true"
+  needs:
+    - job: release-images
+      artifacts: true
+  variables:
+    GIT_DEPTH: 0   # release-notes.sh needs the previous tag
+  script:
+    - apt-get update -qq && apt-get install -y -qq git >/dev/null
+    - git config --global --add safe.directory "$CI_PROJECT_DIR"
+    - |
+      set -eu
+      {
+        scripts/release-notes.sh "$CI_COMMIT_TAG"
+        echo
+        echo "## Images"
+        echo
+        echo "Signed keylessly by this pipeline. Pin a town to this release with a \`release.lock\` (docs/RELEASES.md):"
+        echo
+        echo '```dotenv'
+        echo "PINPOINT_VERSION=${CI_COMMIT_TAG#v}"
+        echo "BACKEND_IMAGE=$(cat backend.digest)"
+        echo "FRONTEND_IMAGE=$(cat frontend.digest)"
+        echo '```'
+      } > notes.md
+      cat notes.md
+    # Create the release through the API with the job token (no release-cli
+    # image to pin and trust).
+    - |
+      python3 - <<'PY'
+      import json, os, urllib.request
+      body = json.dumps({
+          "tag_name": os.environ["CI_COMMIT_TAG"],
+          "name": os.environ["CI_COMMIT_TAG"],
+          "description": open("notes.md").read(),
+      }).encode()
+      req = urllib.request.Request(
+          f'{os.environ["CI_API_V4_URL"]}/projects/{os.environ["CI_PROJECT_ID"]}/releases',
+          data=body, method="POST",
+          headers={"JOB-TOKEN": os.environ["CI_JOB_TOKEN"], "Content-Type": "application/json"},
+      )
+      with urllib.request.urlopen(req) as resp:
+          print("release created:", resp.status)
+      PY
+  artifacts:
+    paths: [notes.md, "*.digest", "sbom-*.spdx.json"]
+    expire_in: 90 days

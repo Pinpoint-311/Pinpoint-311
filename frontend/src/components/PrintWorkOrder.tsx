@@ -1,4 +1,7 @@
 import { useState } from 'react';
+import { languageLabel } from '../utils/languages';
+import { sourceLabel } from '../utils/requestSource';
+import { humanize } from '../utils/humanize';
 import { ServiceRequestDetail, AuditLogEntry, RequestComment } from '../types';
 import { Printer } from 'lucide-react';
 import { MapProviderConfig, mapSnapshot } from '../maps';
@@ -20,13 +23,61 @@ interface PrintWorkOrderProps {
 }
 
 const POPUP_BLOCKED =
-    'The work order could not open. Your browser blocked the print window — allow pop-ups for this site, then try again.';
+    "The work order didn't open because your browser blocked the print window. Allow pop-ups for this site and try again.";
 
-export default function PrintWorkOrder({ request, auditLog, comments, townshipName, logoUrl, config }: PrintWorkOrderProps) {
+/** HTML-escape one value for the print page. */
+export function escapeHtml(value: unknown): string {
+    return String(value ?? '').replace(/[&<>"'`]/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;',
+    }[c] as string));
+}
+
+/** Escape every string (and object key) in a value, recursively. */
+function escapeDeep<T>(value: T): T {
+    if (typeof value === 'string') return escapeHtml(value) as unknown as T;
+    if (Array.isArray(value)) return value.map(escapeDeep) as unknown as T;
+    if (value && typeof value === 'object') {
+        return Object.fromEntries(
+            Object.entries(value as Record<string, unknown>).map(([k, v]) => [escapeHtml(k), escapeDeep(v)]),
+        ) as T;
+    }
+    return value;
+}
+
+/** Only web and inline-image addresses may appear in an <img src>. */
+function safeImageUrl(url: unknown): string | null {
+    const u = String(url ?? '').trim();
+    return /^(https?:\/\/|data:image\/(png|jpe?g|gif|webp);base64,|\/)/i.test(u) ? u : null;
+}
+
+export default function PrintWorkOrder({
+    request: rawRequest, auditLog: rawAuditLog, comments: rawComments,
+    townshipName: rawTownshipName, logoUrl: rawLogoUrl, config,
+}: PrintWorkOrderProps) {
     const announce = useAnnounce();
     const [blocked, setBlocked] = useState(false);
 
     const handlePrint = () => {
+        /* The print page is assembled as an HTML string and written into a
+         * same-origin window, so every value in it must be escaped: a
+         * resident's description, a public comment, a custom-question answer,
+         * or an asset property containing markup would otherwise run as script
+         * in a signed-in staff session when the work order is printed. Escaped
+         * here, once, at the source -- every interpolation below reads these
+         * copies -- so a new field added to the template later is safe by
+         * default. Markup the code itself builds (icons, QR codes, the map
+         * snapshot) is not user data and is not escaped. */
+        const request = escapeDeep({
+            ...rawRequest,
+            media_urls: (rawRequest.media_urls || []).map(safeImageUrl).filter((u): u is string => !!u),
+            completion_photo_url: safeImageUrl(rawRequest.completion_photo_url) ?? null,
+        }) as typeof rawRequest;
+        const auditLog = escapeDeep(rawAuditLog);
+        const comments = escapeDeep(rawComments);
+        const townshipName = rawTownshipName ? escapeHtml(rawTownshipName) : rawTownshipName;
+        const safeLogo = safeImageUrl(rawLogoUrl);
+        const logoUrl = safeLogo ? escapeHtml(safeLogo) : undefined;
+
         // Create a new window for printing
         const printWindow = window.open('', '_blank', 'width=800,height=600');
         /* A blocked pop-up used to return here in silence: the button did
@@ -96,15 +147,8 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
         };
 
         // Source label
-        const getSourceLabel = (source: string) => {
-            switch (source) {
-                case 'resident_portal': return 'Resident Portal';
-                case 'phone': return 'Phone Call';
-                case 'walk_in': return 'Walk-In';
-                case 'email': return 'Email';
-                default: return source || 'Resident Portal';
-            }
-        };
+        // Same labels as the staff view and the intake "Received by" selector.
+        const getSourceLabel = (source: string) => escapeHtml(sourceLabel(source));
 
         // SVG Icons for formal look
         const icons = {
@@ -154,7 +198,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
         const safetyFlagsHtml = ai?.safety_flags?.length ? `
             <div class="ai-tags safety-tags">
                 <strong>Safety Flags:</strong>
-                ${ai.safety_flags.map((flag: string) => `<span class="tag tag-danger">${flag}</span>`).join('')}
+                ${ai.safety_flags.map((flag: string) => `<span class="tag tag-danger">${humanize(flag)}</span>`).join('')}
             </div>
         ` : '';
 
@@ -165,7 +209,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                 ${ai?.classification || request.ai_classification ? `
                     <div class="ai-tags">
                         <strong>Classification:</strong>
-                        <span class="tag tag-purple">${ai?.classification || request.ai_classification}</span>
+                        <span class="tag tag-purple">${humanize(ai?.classification || request.ai_classification)}</span>
                     </div>
                 ` : ''}
                 ${ai?.root_cause ? `<p><strong>Root Cause:</strong> ${ai.root_cause}</p>` : ''}
@@ -226,6 +270,34 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
+        // Location context: the parcel / zone the report fell in, as recorded
+        // at intake with the layer's staff allowlist only. Already escaped by
+        // escapeDeep above (keys and values), so interpolated as-is.
+        const gisContext = (((request as any).gis_context || []) as Array<{
+            layer_name?: string; label?: string; feature_key?: string; properties?: Record<string, unknown>;
+        }>).filter(e => e && typeof e === 'object');
+        const contextValue = (v: unknown) => (v !== null && typeof v === 'object' ? JSON.stringify(v) : String(v));
+        const contextHtml = gisContext.length ? `
+            <div class="section asset context">
+                <h3>${icons.location} Location Context</h3>
+                ${gisContext.map(e => {
+                    const props = Object.entries(e.properties || {})
+                        .filter(([, v]) => v !== null && v !== undefined && v !== '');
+                    return `
+                    <div class="context-entry">
+                        <div class="asset-header">
+                            <div><strong>Layer:</strong> ${e.layer_name || ''}</div>
+                            <div><strong>${e.label && e.label !== e.feature_key ? 'Feature' : 'ID'}:</strong> ${e.label || e.feature_key || ''}</div>
+                        </div>
+                        ${props.length ? `
+                        <div class="grid asset-grid">
+                            ${props.map(([k, v]) => `<div><span class="prop-label">${formatPropertyLabel(k)}:</span> ${contextValue(v)}</div>`).join('')}
+                        </div>` : ''}
+                    </div>`;
+                }).join('')}
+            </div>
+        ` : '';
+
         // Build timeline HTML
         const timelineHtml = auditLog?.length ? `
             <div class="section timeline">
@@ -235,8 +307,8 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                     ${auditLog.map(entry => `
                         <tr>
                             <td>${formatDate(entry.created_at)}</td>
-                            <td>${entry.action.replace('_', ' ')}</td>
-                            <td>${entry.actor_name || entry.actor_type}</td>
+                            <td>${humanize(entry.action)}</td>
+                            <td>${entry.actor_name || humanize(entry.actor_type)}</td>
                             <td>${entry.new_value || ''}</td>
                         </tr>
                     `).join('')}
@@ -317,13 +389,14 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
             </div>
         ` : '';
 
-        // Legal hold banner. The reason travels with it: "under legal hold"
-        // without saying why leaves whoever picks this up unable to tell
-        // whether it still applies.
-        const legalHoldHtml = request.flagged ? `
+        // Legal hold banner, from `legal_hold` -- the field retention honors.
+        // It used to read the content-screen `flagged` and print the
+        // moderation reason as the hold reason, so any report with mild
+        // profanity printed as "under legal hold". The content flag is an
+        // internal moderation note and does not belong on a crew's sheet.
+        const legalHoldHtml = (request as any).legal_hold ? `
             <div class="legal-hold-banner">
-                ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from retention policy.
-                ${request.flag_reason ? `<div class="legal-hold-reason">Reason: ${request.flag_reason}</div>` : ''}
+                ${icons.flag} <strong>LEGAL HOLD</strong> — This record is under legal hold and exempt from the retention policy.
             </div>
         ` : '';
 
@@ -523,6 +596,15 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         padding: 12px;
                         border-radius: 6px;
                         border-left: 4px solid #10b981;
+                    }
+                    .asset.context {
+                        background: #fffbeb;
+                        border-left-color: #f59e0b;
+                    }
+                    .context-entry + .context-entry {
+                        border-top: 1px solid rgba(245, 158, 11, 0.3);
+                        margin-top: 8px;
+                        padding-top: 8px;
                     }
                     .asset-header {
                         display: grid;
@@ -848,6 +930,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
 
                 ${customFieldsHtml}
                 ${assetHtml}
+                ${contextHtml}
                 ${photosHtml}
                 ${aiHtml}
                 ${staffNotesHtml}
@@ -860,7 +943,7 @@ export default function PrintWorkOrder({ request, auditLog, comments, townshipNa
                         <div><strong>Name:</strong> ${request.first_name || ''} ${request.last_name || ''}</div>
                         <div><strong>Email:</strong> ${request.email}</div>
                         ${request.phone ? `<div><strong>Phone:</strong> ${request.phone}</div>` : ''}
-                        <div><strong>Preferred Language:</strong> ${(request as any).preferred_language || 'en'}</div>
+                        <div><strong>Preferred Language:</strong> ${escapeHtml(languageLabel((request as any).preferred_language))}</div>
                     </div>
                 </div>
 

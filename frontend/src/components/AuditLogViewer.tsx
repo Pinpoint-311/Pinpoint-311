@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useCallback, useId } from 'react';
-import { Shield, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
-import { AccordionSection } from './ui';
+import { Shield, ShieldCheck, ShieldAlert, Download, RefreshCw, AlertCircle, CheckCircle, XCircle, User, ChevronLeft, ChevronRight, ChevronDown, Sparkles } from 'lucide-react';
+import { AccordionSection, Chip } from './ui';
+import { humanize, humanizeTitle } from '../utils/humanize';
 import { useOptionalAnnounce } from './liveAnnounce';
 
 interface AuditLog {
@@ -24,6 +25,22 @@ interface AuditStats {
     recent_failures: number;
 }
 
+/** GET /api/audit/verify-integrity: the hash chain recomputed from stored rows. */
+interface IntegrityReport {
+    integrity_valid: boolean;
+    total_entries: number;
+    legacy_entries: number;
+    verified_entries: number;
+    anchors_checked: number;
+    first_break: {
+        id: number;
+        timestamp: string | null;
+        reason: string;
+        expected_hash_prefix: string | null;
+        stored_hash_prefix: string | null;
+    } | null;
+}
+
 type Details = Record<string, any>;
 
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'}`;
@@ -39,11 +56,11 @@ const listOf = (v: unknown): string => Array.isArray(v) ? v.join(', ') : String(
  * missing the expected keys) falls through to a readable key: value list
  * rather than raw JSON or a dash. */
 const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
-    login_success: d => d.mfa_type ? `Signed in (MFA: ${d.mfa_type})` : 'Signed in',
+    login_success: d => d.mfa_type ? `Signed in (MFA: ${humanize(d.mfa_type)})` : 'Signed in',
     logout: () => 'Signed out',
     session_expired: () => 'Session expired',
     role_changed: d => (d.old_role && d.new_role)
-        ? `Role changed from ${d.old_role} to ${d.new_role}${d.changed_by ? ` by ${d.changed_by}` : ''}`
+        ? `Role changed from ${humanize(d.old_role)} to ${humanize(d.new_role)}${d.changed_by ? ` by ${d.changed_by}` : ''}`
         : null,
     // The backstop middleware already writes its own sentence.
     admin_change: d => typeof d.action === 'string' && d.action
@@ -54,10 +71,10 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
         : null,
     connector_alerts_unmuted: d => d.connector ? `Unmuted alert emails for ${d.connector}` : null,
     'setup.complete': () => 'Marked the setup guide as complete',
-    'secret_store.choose': d => d.store ? `Chose ${d.store} as the secret store` : null,
+    'secret_store.choose': d => d.store ? `Chose ${humanize(d.store)} as the secret store` : null,
     provider_saved: d => {
         if (!d.capability || !d.provider) return null;
-        let s = `Selected ${d.provider} as the ${d.capability} provider`;
+        let s = `Selected ${humanizeTitle(d.provider)} as the ${humanize(d.capability)} provider`;
         if (d.model) s += ` (model ${d.model})`;
         if (Array.isArray(d.settings_updated) && d.settings_updated.length) {
             s += `; updated ${listOf(d.settings_updated)}`;
@@ -78,21 +95,28 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
         return parts.length ? parts.join('; ') : null;
     },
     user_created: d => d.target_username
-        ? `Created account ${d.target_username}${d.role ? ` with role ${d.role}` : ''}`
+        ? `Created account ${d.target_username}${d.role ? ` with role ${humanize(d.role)}` : ''}`
         : null,
     user_updated: d => d.target_username
         ? `Updated account ${d.target_username}`
-            + (d.role ? ` — role set to ${d.role}` : '')
+            + (d.role ? ` — role set to ${humanize(d.role)}` : '')
             + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : '')
         : null,
     user_deleted: d => d.target_username
-        ? `Deleted account ${d.target_username}${d.role ? ` (${d.role})` : ''}`
+        ? `Deleted account ${d.target_username}${d.role ? ` (${humanize(d.role)})` : ''}`
         : null,
     user_password_reset: d => d.target_username ? `Reset the password for ${d.target_username}` : null,
+    user_sessions_revoked: d => d.target_username ? `Signed ${d.target_username} out on every device` : null,
     department_created: d => d.name ? `Created department "${d.name}"` : null,
     department_deleted: d => d.name ? `Deleted department "${d.name}"` : null,
+    department_updated: d => d.name
+        ? `Updated department "${d.name}"` + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : '')
+        : null,
+    service_updated: d => `Updated service category "${d.service_name || d.service_code || '?'}"`
+        + (Array.isArray(d.fields) && d.fields.length ? ` (changed: ${listOf(d.fields)})` : ''),
     service_created: d => `Created service category "${d.service_name || d.service_code || '?'}"`,
     service_deleted: d => `Deleted service category "${d.service_name || d.service_code || '?'}"`,
+    service_public_visibility: d => `${d.hidden_from_public ? 'Hid' : 'Showed'} the "${d.service_name || d.service_code || '?'}" category ${d.hidden_from_public ? 'from' : 'on'} the public map and list`,
     service_toggled: d => d.service_code
         ? `Turned ${d.is_active ? 'on' : 'off'} the ${d.service_code} service category`
         : null,
@@ -102,6 +126,14 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
                 ? ` including sensitive fields (${listOf(d.sensitive_fields)})` : '')
         : null,
     data_export_pii: d => `Exported service requests including resident PII (${d.format || 'csv'})`,
+    // Resident history. The searched-for email or name is never recorded --
+    // only that a lookup happened, on which report or by which kind, and the count.
+    resident_history_viewed: d => d.service_request_id
+        ? `Viewed other reports from the resident on ${d.service_request_id}`
+            + (typeof d.results === 'number' ? ` (${d.results} ${d.results === 1 ? 'match' : 'matches'})` : '')
+        : null,
+    resident_search: d => `Searched reports by resident ${d.searched_by === 'name' ? 'name' : 'email'}`
+        + (typeof d.results === 'number' ? ` (${d.results} ${d.results === 1 ? 'match' : 'matches'})` : ''),
     backup_key_generated: () => 'Generated a new backup encryption key',
     pii_reencryption: d => `Re-encrypted resident records (${plural(d.rows ?? 0, 'row')}, ${plural(d.fields ?? 0, 'field')})`,
     gcp_configured: d => d.project_id ? `Connected Google Cloud project ${d.project_id}` : null,
@@ -109,7 +141,30 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
     version_deployed: d => d.to_sha ? `Deployed version ${d.to_sha}` : null,
     version_deployment_failed: d => d.target_ref ? `Deployment of ${d.target_ref} failed and was rolled back` : null,
     onboarding_redeemed: () => 'Signed in with a one-time onboarding link',
+    // Secure upgrades (docs/design/secure-upgrades.md, Phase 3)
+    upgrade_request_created: d => `Requested ${upgradeWhat(d)} (#${d.request_id ?? '?'})`
+        + (d.status === 'pending_approval' ? ', waiting for a second admin' : '')
+        + (d.allow_destructive ? ', destructive migration allowed' : '')
+        + (d.scheduled_for ? `, scheduled for ${new Date(d.scheduled_for).toLocaleString()}` : ''),
+    upgrade_request_refused: d => `Refused a request for ${upgradeWhat(d)}`,
+    upgrade_request_approved: d => `Approved ${upgradeWhat(d)} (#${d.request_id ?? '?'})${d.requested_by ? `, requested by ${d.requested_by}` : ''}`,
+    upgrade_request_approval_refused: d => `Was refused approving ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_cancelled: d => `Cancelled ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_claimed: d => `The host updater started ${upgradeWhat(d)} (#${d.request_id ?? '?'})`,
+    upgrade_request_finished: d => `The host updater finished ${upgradeWhat(d)} (#${d.request_id ?? '?'}): ${humanize(d.status || d.outcome || 'unknown')}`,
+    upgrade_request_marked_failed: d => `Marked ${upgradeWhat(d)} (#${d.request_id ?? '?'}) failed${d.note ? `: ${d.note}` : ''}`,
+    upgrade_request_late_report: d => `Refused a late report from the host updater for #${d.request_id ?? '?'} (${humanize(d.outcome || 'finished')})`,
+    upgrade_settings_changed: d => `Turned two-person approval for upgrades ${d.require_two_person_approval ? 'on' : 'off'}`,
+    updater_token_created: d => `Created updater token ${d.prefix ?? ''}${d.label ? ` (${d.label})` : ''}`.trim(),
+    updater_token_revoked: d => `Revoked updater token ${d.prefix ?? ''}${d.label ? ` (${d.label})` : ''}`.trim(),
 };
+
+function upgradeWhat(d: Details): string {
+    if (d.action === 'upgrade') return `an upgrade to ${d.target_tag ?? 'a release'}`;
+    if (d.action === 'rollback') return 'a rollback';
+    if (d.action === 'restart') return 'a restart';
+    return 'an upgrade';
+}
 
 /** The fallback, and the expanded view: every detail as a readable
  * "key: value" pair instead of raw JSON. Values are shallow — an array joins,
@@ -119,7 +174,7 @@ const detailEntries = (details: unknown): Array<[string, string]> => {
     return Object.entries(details as Details)
         .filter(([, v]) => v !== null && v !== undefined && v !== '')
         .map(([k, v]) => [
-            k.replace(/_/g, ' '),
+            humanize(k),
             Array.isArray(v) ? v.join(', ')
                 : typeof v === 'object' ? JSON.stringify(v)
                 : String(v),
@@ -152,6 +207,9 @@ export default function AuditLogViewer() {
     const [endDate, setEndDate] = useState('');
     const [quickRange, setQuickRange] = useState<string>('7');
     const [exportError, setExportError] = useState<string | null>(null);
+    const [integrity, setIntegrity] = useState<IntegrityReport | null>(null);
+    const [integrityError, setIntegrityError] = useState<string | null>(null);
+    const [verifying, setVerifying] = useState(false);
 
     const announce = useOptionalAnnounce();
 
@@ -286,17 +344,43 @@ export default function AuditLogViewer() {
         }
     };
 
+    const handleVerify = async () => {
+        setVerifying(true);
+        setIntegrityError(null);
+        try {
+            const token = localStorage.getItem('token');
+            const response = await fetch('/api/audit/verify-integrity', {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (!response.ok) throw new Error(`Integrity check failed (${response.status}).`);
+            const report: IntegrityReport = await response.json();
+            setIntegrity(report);
+            if (report.integrity_valid) {
+                announce(`Audit log verified: ${report.verified_entries.toLocaleString()} entries intact.`);
+            } else if (report.first_break) {
+                announce(`Audit log chain broken at entry ${report.first_break.id}: ${report.first_break.reason}`, 'assertive');
+            }
+        } catch (err: any) {
+            const message = err?.message || 'Integrity check failed.';
+            setIntegrity(null);
+            setIntegrityError(message);
+            announce(message, 'assertive');
+        } finally {
+            setVerifying(false);
+        }
+    };
+
     const handleSearch = () => {
         setCurrentPage(1);
         fetchLogs();
     };
 
     const getEventIcon = (eventType: string, success: boolean) => {
-        if (!success) return <XCircle className="w-4 h-4 text-red-400" />;
-        if (eventType.includes('login')) return <CheckCircle className="w-4 h-4 text-emerald-400" />;
-        if (eventType.includes('logout')) return <User className="w-4 h-4 text-blue-400" />;
-        if (eventType.includes('emergency')) return <Sparkles className="w-4 h-4 text-indigo-400" />;
-        return <Shield className="w-4 h-4 text-slate-400" />;
+        if (!success) return XCircle;
+        if (eventType.includes('login')) return CheckCircle;
+        if (eventType.includes('logout')) return User;
+        if (eventType.includes('emergency')) return Sparkles;
+        return Shield;
     };
 
     const getEventLabel = (eventType: string) => {
@@ -324,7 +408,7 @@ export default function AuditLogViewer() {
             'provider_saved': 'Provider Saved',
             'secret_saved': 'Credential Saved',
         };
-        return labels[eventType] || eventType.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        return labels[eventType] || humanizeTitle(eventType);
     };
 
     const formatTimestamp = (timestamp: string) => {
@@ -401,6 +485,17 @@ export default function AuditLogViewer() {
                                 <option value="connector_alerts_muted" className="bg-slate-800">Alerts Muted</option>
                                 <option value="public_records_export" className="bg-slate-800">Records Export</option>
                                 <option value="data_export_pii" className="bg-slate-800">PII Export</option>
+                                <option value="resident_history_viewed" className="bg-slate-800">Resident History Viewed</option>
+                                <option value="resident_search" className="bg-slate-800">Resident Search</option>
+                            </optgroup>
+                            <optgroup label="Upgrades">
+                                <option value="upgrade_request_created" className="bg-slate-800">Upgrade Requested</option>
+                                <option value="upgrade_request_approved" className="bg-slate-800">Upgrade Approved</option>
+                                <option value="upgrade_request_cancelled" className="bg-slate-800">Upgrade Cancelled</option>
+                                <option value="upgrade_request_finished" className="bg-slate-800">Upgrade Finished</option>
+                                <option value="upgrade_settings_changed" className="bg-slate-800">Approval Setting Changed</option>
+                                <option value="updater_token_created" className="bg-slate-800">Updater Token Created</option>
+                                <option value="updater_token_revoked" className="bg-slate-800">Updater Token Revoked</option>
                             </optgroup>
                         </select>
                     </div>
@@ -476,7 +571,71 @@ export default function AuditLogViewer() {
                         <Download className="w-4 h-4" aria-hidden="true" />
                         Export CSV
                     </button>
+                    <button
+                        type="button"
+                        onClick={handleVerify}
+                        disabled={verifying}
+                        className="btn-outline btn-outline-md"
+                    >
+                        <ShieldCheck className={`w-4 h-4 ${verifying ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                        {verifying ? 'Verifying…' : 'Verify integrity'}
+                    </button>
                 </div>
+
+                {/* Integrity result. Visual only; the outcome is announced
+                    through announce() (one live region, see the error strip). */}
+                {(integrity || integrityError) && (
+                    <div
+                        data-testid="integrity-result"
+                        className={`rounded-xl border p-4 text-sm space-y-2 ${integrity?.integrity_valid
+                            ? 'bg-emerald-500/10 border-emerald-500/30'
+                            : 'bg-red-500/10 border-red-500/30'}`}
+                    >
+                        {integrityError ? (
+                            <div className="flex items-center gap-2 text-red-300">
+                                <AlertCircle className="w-4 h-4" aria-hidden="true" />
+                                {integrityError}
+                            </div>
+                        ) : integrity && integrity.integrity_valid ? (
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Chip size="sm" tone="success" icon={ShieldCheck}>Chain intact</Chip>
+                                <span className="text-white/90">
+                                    ✓ {integrity.verified_entries.toLocaleString()} {integrity.verified_entries === 1 ? 'entry' : 'entries'} verified
+                                </span>
+                                {integrity.legacy_entries > 0 && (
+                                    <Chip size="sm" tone="neutral">
+                                        {integrity.legacy_entries.toLocaleString()} legacy {integrity.legacy_entries === 1 ? 'entry' : 'entries'} (before verification; not checked)
+                                    </Chip>
+                                )}
+                                {integrity.anchors_checked > 0 && (
+                                    <Chip size="sm" tone="info">
+                                        {integrity.anchors_checked} nightly {integrity.anchors_checked === 1 ? 'anchor' : 'anchors'} matched
+                                    </Chip>
+                                )}
+                            </div>
+                        ) : integrity?.first_break ? (
+                            <>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Chip size="sm" tone="danger" icon={ShieldAlert}>Chain broken</Chip>
+                                    <span className="text-white/90">
+                                        Entry #{integrity.first_break.id}
+                                        {integrity.first_break.timestamp ? ` (${formatTimestamp(integrity.first_break.timestamp)})` : ''}
+                                        : {integrity.first_break.reason}
+                                    </span>
+                                </div>
+                                {(integrity.first_break.expected_hash_prefix || integrity.first_break.stored_hash_prefix) && (
+                                    <div className="font-mono text-xs text-white/70">
+                                        expected {integrity.first_break.expected_hash_prefix ?? '—'}… · stored {integrity.first_break.stored_hash_prefix ?? '—'}…
+                                    </div>
+                                )}
+                                <div className="text-white/60 text-xs">
+                                    {integrity.verified_entries.toLocaleString()} entries verified before the break
+                                    {integrity.legacy_entries > 0 ? `; ${integrity.legacy_entries.toLocaleString()} legacy entries not checked` : ''}.
+                                </div>
+                            </>
+                        ) : null}
+                    </div>
+                )}
 
                 {/* Table */}
                 <div className="bg-white/5 border border-white/10 rounded-xl overflow-hidden" aria-busy={isLoading}>
@@ -530,10 +689,13 @@ export default function AuditLogViewer() {
                                                     >
                                                         <td className="px-6 py-4">
                                                             <div className="flex items-center gap-3">
-                                                                {getEventIcon(log.event_type, log.success)}
-                                                                <span className={`text-sm font-medium ${log.success ? 'text-white' : 'text-red-400'}`}>
+                                                                <Chip
+                                                                    size="sm"
+                                                                    tone={log.success ? (log.event_type.includes('emergency') ? 'accent' : 'success') : 'danger'}
+                                                                    icon={getEventIcon(log.event_type, log.success)}
+                                                                >
                                                                     {getEventLabel(log.event_type)}
-                                                                </span>
+                                                                </Chip>
                                                                 {/* Success and failure were carried by icon shape and
                                                                     colour alone (WCAG 1.4.1) -- identical text otherwise. */}
                                                                 <span className="sr-only">{log.success ? 'Succeeded' : 'Failed'}</span>
@@ -591,7 +753,7 @@ export default function AuditLogViewer() {
                                                                 <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-2 text-sm">
                                                                     {entries.map(([k, v]) => (
                                                                         <div key={k} className="flex gap-2">
-                                                                            <dt className="text-white/50 capitalize shrink-0">{k}:</dt>
+                                                                            <dt className="text-white/50 shrink-0">{k}:</dt>
                                                                             <dd className="text-white/80 break-all">{v}</dd>
                                                                         </div>
                                                                     ))}

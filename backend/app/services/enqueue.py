@@ -44,6 +44,73 @@ QUEUE_UNAVAILABLE = (
 )
 
 
+# Govtech pushes are the exception to "optional at this instant": a report that
+# never reaches the county is lost work, not a skipped email. When one of these
+# cannot be queued it is written to the integration backlog instead, so it shows
+# under Failed syncs and the retry beat sends it once the worker is back.
+_INTEGRATION_PUSHES = {
+    "push_request_to_integrations": "push",
+    "push_status_to_integrations": "push_status",
+    "push_comment_to_integrations": "push_comment",
+    "push_priority_to_integrations": "push_priority",
+}
+
+# Strong references to backlog writes scheduled on the running loop, so the
+# garbage collector cannot cancel one half-way.
+_PENDING: set = set()
+
+
+def _backlog_unqueued(name: str, args: tuple, kwargs: dict) -> None:
+    """Record an integration push that could not be queued. Never raises."""
+    operation = _INTEGRATION_PUSHES.get(str(name).rsplit(".", 1)[-1])
+    if not operation or not args:
+        return
+    try:
+        import asyncio
+
+        from app.tasks.integrations import record_unqueued_push
+
+        subject = args[0]
+        if operation == "push_comment":
+            coro = record_unqueued_push(operation, comment_id=subject)
+        else:
+            coro = record_unqueued_push(operation, request_id=subject,
+                                        notes=kwargs.get("notes"))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+        if loop is not None:
+            # Inside the API: same loop as the request's database engine.
+            task = loop.create_task(coro)
+            _PENDING.add(task)
+            task.add_done_callback(_PENDING.discard)
+        else:
+            from app.tasks.service_requests import run_async
+            run_async(coro)
+    except Exception as exc:  # noqa: BLE001 -- bookkeeping must not break the caller
+        logger.warning("[Queue] could not record the unqueued %s in the integration "
+                       "backlog: %s", sanitize_for_log(operation), sanitize_for_log(str(exc)))
+
+
+def enqueue_later(task: Any, countdown: int, *args: Any, **kwargs: Any) -> bool:
+    """`enqueue`, run no sooner than `countdown` seconds from now. Never raises;
+    an integration push that cannot be queued goes to the backlog the same way."""
+    name = getattr(task, "name", None) or getattr(task, "__name__", "task")
+    try:
+        task.apply_async(args=args, kwargs=kwargs or None, countdown=max(0, int(countdown)))
+        return True
+    except Exception as exc:  # noqa: BLE001 -- see enqueue
+        logger.warning(
+            "[Queue] could not enqueue %s: %s. The record is saved; this "
+            "follow-up work did not run.",
+            sanitize_for_log(str(name)), sanitize_for_log(str(exc)),
+        )
+        if hasattr(task, "apply_async"):
+            _backlog_unqueued(str(name), args, kwargs)
+        return False
+
+
 def enqueue(task: Any, *args: Any, **kwargs: Any) -> bool:
     """Queue `task`. Never raises.
 
@@ -62,4 +129,8 @@ def enqueue(task: Any, *args: Any, **kwargs: Any) -> bool:
             "follow-up work did not run.",
             sanitize_for_log(str(name)), sanitize_for_log(str(exc)),
         )
+        # Only for real Celery tasks: a stand-in without apply_async is a test
+        # double, and has no backlog to write to.
+        if hasattr(task, "apply_async"):
+            _backlog_unqueued(str(name), args, kwargs)
         return False

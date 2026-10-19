@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # The first byte of a wrapped data key records which service wrapped it. Kept in
 # step with pii_crypto's _WRAP_* constants.
-WRAP_TAGS = {b"g": "google", b"a": "azure", b"w": "aws", b"l": "local"}
+WRAP_TAGS = {b"g": "google", b"a": "azure", b"A": "azure", b"w": "aws", b"l": "local"}
 
 
 async def secrets_outside_the_store(db) -> Dict[str, Any]:
@@ -148,7 +148,10 @@ async def pii_wrapped_with_other_keys(db) -> Dict[str, Any]:
                     continue
                 if tag == "local":
                     out["on_application_key"] += count
-                if tag != current:
+                # Another backend, or (Azure) a key version other than the
+                # current one: what the nightly re-wrap moves.
+                from app.core.pii_crypto import wrapped_is_current
+                if not wrapped_is_current(wrapped_b64, current):
                     out["stale"] += count
     except Exception as exc:
         logger.debug("storage status: could not count wrapped PII: %s", exc)

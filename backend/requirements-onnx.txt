@@ -1,0 +1,4 @@
+# Installed with `pip install --no-deps -r requirements-onnx.txt` (see the
+# Dockerfile). numpy, its only runtime import, comes from requirements.txt.
+# Model weights are never bundled: each town downloads them into /models.
+onnxruntime==1.23.2

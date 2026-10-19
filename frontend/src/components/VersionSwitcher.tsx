@@ -1,748 +1,682 @@
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type RefObject } from 'react';
 import {
-    RefreshCw,
-    ChevronDown,
-    Check,
-    X,
-    Clock,
-    ExternalLink,
-    GitBranch,
-    Shield,
-    Package,
-    AlertCircle,
-    Loader2,
-    GitCommit
+    AlertTriangle, Check, ExternalLink, GitBranch, KeyRound, Loader2, Package, RefreshCw, RotateCcw,
+    ShieldCheck, Terminal, X,
 } from 'lucide-react';
-import { useConfirmDeploy } from './DialogProvider';
+import api from '../services/api';
+import {
+    ACTIVE_UPGRADE_STATUSES, IN_FLIGHT_UPGRADE_STATUSES,
+    type CurrentVersion, type UpdaterRelease, type UpdaterState, type UpdaterTokenRecord,
+    type UpgradeAction, type UpgradeRequestRecord, type UpgradeStatus,
+} from '../services/upgradeTypes';
 import { useOptionalAnnounce } from './liveAnnounce';
+import { AccordionSection, Chip, Modal, statusTone, type ChipTone } from './ui';
+import { humanize } from '../utils/humanize';
 
-interface Release {
-    tag: string;
-    name: string;
-    body: string;
-    published_at: string;
-    author: string | null;
-    html_url: string;
-    prerelease: boolean;
-}
+/**
+ * Version Control (docs/design/secure-upgrades.md, Phase 3).
+ *
+ * The console no longer deploys anything. An admin picks a release the host
+ * updater reported as signed and schema-compatible and files a request with a
+ * reason; while two-person approval is on, a different admin approves it; the
+ * updater (a systemd service on the server, with no port of its own) claims
+ * it, verifies, backs up, migrates, health-checks or rolls back, and reports
+ * every step back here.
+ *
+ * The sidebar shows the running version and the active request; the full
+ * panel opens in a dialog because the sidebar is too narrow for release notes
+ * and a step log.
+ */
 
-interface RecentCommit {
-    sha: string;
-    full_sha: string;
-    message: string;
-    date: string;
-    author: string;
-}
+export const INSTALL_DOCS_URL = 'https://github.com/Pinpoint-311/Pinpoint-311/blob/main/updater/README.md';
+export const CONNECT_DOCS_URL = 'https://github.com/Pinpoint-311/Pinpoint-311/blob/main/docs/RELEASES.md#connecting-the-host-updater';
+const POLL_MS = 5000;
 
-interface DeployStep {
-    step: string;
-    success: boolean;
-    detail: string;
-    timestamp: string;
-}
-
-interface DeployFailureDetail {
-    message?: string;
-    error?: string;
-    rollback_performed?: boolean;
-    rollback_errors?: string[];
-    backup_available?: string;
-    steps?: DeployStep[];
-}
-
-interface SecurityCheck {
-    name: string;
-    icon: string;
-    status: string;
-    conclusion: string | null;
-    run_url: string | null;
-    passed: boolean | null;
-}
-
-interface SecuritySummary {
-    passed: number;
-    total: number;
-    all_passed: boolean;
-    score: string;
-}
-
-// Short labels for sidebar display
-const SHORT_LABELS: Record<string, string> = {
-    'owasp_zap': 'Security',
-    'codeql': 'CodeQL',
-    'docker_build': 'Build',
-    'accessibility': 'A11y'
+const STATUS_WORDS: Record<UpgradeStatus, { label: string; tone: ChipTone }> = {
+    pending_approval: { label: 'Waiting for approval', tone: 'warning' },
+    approved: { label: 'Approved, waiting for the updater', tone: 'info' },
+    claimed: { label: 'Starting', tone: 'warning' },
+    running: { label: 'Running', tone: 'warning' },
+    succeeded: { label: 'Succeeded', tone: 'success' },
+    failed: { label: 'Failed', tone: 'danger' },
+    rolled_back: { label: 'Rolled back', tone: 'danger' },
+    needs_approval: { label: 'On hold: destructive migration', tone: 'warning' },
+    cancelled: { label: 'Cancelled', tone: 'neutral' },
+    refused: { label: 'Refused', tone: 'danger' },
 };
 
-function cleanCommitMessage(msg: string | undefined | null): string {
-    if (!msg) return '';
-    return msg.replace(/claude\//gi, '').replace(/\bclaude\b/gi, '').replace(/\s{2,}/g, ' ').trim();
+export function RequestStatusChip({ status }: { status: UpgradeStatus }) {
+    const s = STATUS_WORDS[status] ?? { label: humanize(status), tone: statusTone(status) };
+    return <Chip tone={s.tone}>{s.label}</Chip>;
 }
 
-export default function VersionSwitcher() {
-    const confirmDeploy = useConfirmDeploy();
+const describe = (r: Pick<UpgradeRequestRecord, 'action' | 'target_tag'>) =>
+    r.action === 'upgrade' ? `Upgrade to ${r.target_tag}`
+        : r.action === 'rollback' ? 'Roll back to the previous release'
+            : 'Restart the app containers';
 
-    const [currentVersion, setCurrentVersion] = useState<{ sha: string; tag: string | null; display: string; commit_message?: string } | null>(null);
-    const [releases, setReleases] = useState<Release[]>([]);
-    const [recentCommits, setRecentCommits] = useState<RecentCommit[]>([]);
-    const [selectedRef, setSelectedRef] = useState<string | null>(null);
-    const [selectedRelease, setSelectedRelease] = useState<Release | null>(null);
-    const [selectedCommit, setSelectedCommit] = useState<RecentCommit | null>(null);
-    const [security, setSecurity] = useState<{ verification: Record<string, SecurityCheck>; summary: SecuritySummary } | null>(null);
+const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : '');
+const shortDigest = (d: string | null | undefined) => (d ? `${d.slice(0, 19)}…` : 'not reported');
 
-    const [isLoading, setIsLoading] = useState(false);
-    const [isLoadingSecurity, setIsLoadingSecurity] = useState(false);
-    const [isSwitching, setIsSwitching] = useState(false);
-    const [deployProgress, setDeployProgress] = useState(0);
+/** A three-state check as a chip: verified, failed, or not checked. Words, not
+ *  just colour, carry the result. */
+function CheckChip({ value, yes, no, unknown }: { value: boolean | null; yes: string; no: string; unknown: string }) {
+    if (value === true) return <Chip tone="success" icon={Check}>{yes}</Chip>;
+    if (value === false) return <Chip tone="danger" icon={X}>{no}</Chip>;
+    return <Chip tone="neutral">{unknown}</Chip>;
+}
+
+function ReleaseChips({ r }: { r: UpdaterRelease }) {
+    return (
+        <div className="flex flex-wrap gap-1.5">
+            <CheckChip value={r.signature_verified} yes="Signature verified" no="Signature failed" unknown="Signature not checked" />
+            <CheckChip value={r.gate_passed} yes="Gate passed" no="Gate failed" unknown="Gate unknown" />
+            <CheckChip value={r.compatible_with_this_instance} yes="Schema compatible" no="Schema incompatible" unknown="Schema not checked" />
+            <CheckChip value={r.attested} yes="Attested" no="Attestation failed" unknown="Attestation not checked" />
+            {r.prerelease && <Chip tone="accent">Pre-release</Chip>}
+            {r.current && <Chip tone="info">Running now</Chip>}
+        </div>
+    );
+}
+
+function StepList({ steps, live }: { steps: UpgradeRequestRecord['steps']; live?: boolean }) {
+    if (!steps || steps.length === 0) {
+        return <p className="text-xs text-white/50">{live ? 'Waiting for the updater to report its first step…' : 'No steps were reported.'}</p>;
+    }
+    return (
+        <ol className="space-y-1.5" aria-label="Updater steps">
+            {steps.map((s, i) => (
+                <li key={`${s.step}-${i}`} className="flex items-start gap-2 text-xs">
+                    <Chip tone={statusTone(s.status === 'ok' ? 'succeeded' : s.status)}>{humanize(s.status)}</Chip>
+                    <div className="min-w-0">
+                        <span className="font-medium text-white/85">{humanize(s.step)}</span>
+                        {s.at && <span className="text-white/40 ml-2">{new Date(s.at).toLocaleTimeString()}</span>}
+                        {s.detail && <p className="text-white/55 break-words whitespace-pre-line mt-0.5">{s.detail}</p>}
+                    </div>
+                </li>
+            ))}
+        </ol>
+    );
+}
+
+function CommandLineSteps() {
+    return (
+        <div className="space-y-2 text-xs text-white/70">
+            <p>Until an updater is connected, upgrade from the server&apos;s command line:</p>
+            <pre className="bg-black/30 border border-white/10 rounded-lg p-3 overflow-x-auto font-mono text-[11px] leading-relaxed text-white/80">{`sudo -u pinpoint-updater pinpoint-updater releases --instance <name>
+sudo -u pinpoint-updater pinpoint-updater plan     <name> <tag>
+sudo -u pinpoint-updater pinpoint-updater upgrade  <name> <tag>
+sudo -u pinpoint-updater pinpoint-updater rollback <name>`}</pre>
+        </div>
+    );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Updater connection: tokens                                                 */
+/* ------------------------------------------------------------------------ */
+
+export function UpdaterTokens({ readOnly, onChange }: { readOnly?: boolean; onChange?: () => void }) {
+    const [tokens, setTokens] = useState<UpdaterTokenRecord[] | null>(null);
+    const [label, setLabel] = useState('');
+    const [created, setCreated] = useState<UpdaterTokenRecord | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [deployFailure, setDeployFailure] = useState<DeployFailureDetail | null>(null);
-    const [message, setMessage] = useState<string | null>(null);
-    const [dropdownOpen, setDropdownOpen] = useState(false);
-    const [showDeployLog, setShowDeployLog] = useState(false);
-
     const announce = useOptionalAnnounce();
-    const dropdownRef = useRef<HTMLDivElement>(null);
-    const triggerRef = useRef<HTMLButtonElement>(null);
+    const labelId = useId();
 
-    /* The version menu had no Escape and no outside-click close, so once it was
-     * open a keyboard user could only leave it by tabbing through every commit
-     * in it. Focus goes back to the trigger, which is where they were. */
-    useEffect(() => {
-        if (!dropdownOpen) return;
-        const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') { setDropdownOpen(false); triggerRef.current?.focus(); }
-        };
-        const onClickAway = (e: MouseEvent) => {
-            const t = e.target as Node;
-            if (!dropdownRef.current?.contains(t) && !triggerRef.current?.contains(t)) setDropdownOpen(false);
-        };
-        document.addEventListener('keydown', onKey);
-        document.addEventListener('mousedown', onClickAway);
-        return () => {
-            document.removeEventListener('keydown', onKey);
-            document.removeEventListener('mousedown', onClickAway);
-        };
-    }, [dropdownOpen]);
-
-    /* A deploy runs for minutes and reports through `message`. Routed through
-     * the app's live region rather than a second aria-live node of its own. */
-    useEffect(() => {
-        if (message) announce(message);
-    }, [message, announce]);
-
-    useEffect(() => {
-        if (error) announce(error, 'assertive');
-    }, [error, announce]);
-
-    const fetchCurrentVersion = async () => {
+    const load = useCallback(async () => {
         try {
-            const token = localStorage.getItem('token');
-            const response = await fetch('/api/system/current-version', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                if (data && data.commit_message) {
-                    data.commit_message = cleanCommitMessage(data.commit_message);
-                }
-                setCurrentVersion(data);
-            }
-        } catch (err) {
-            console.error('Failed to fetch current version:', err);
+            setTokens((await api.getUpdaterTokens()).tokens);
+        } catch (e: any) {
+            setError(e?.message || 'Could not load updater tokens');
         }
-    };
-
-    const fetchReleases = async () => {
-        setIsLoading(true);
-        setError(null);
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch('/api/system/releases', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setReleases(data.releases || []);
-                const commits = (data.recent_commits || []).map((c: RecentCommit) => ({
-                    ...c,
-                    message: cleanCommitMessage(c.message)
-                }));
-                setRecentCommits(commits);
-            } else {
-                const errData = await response.json();
-                setError(errData.detail || 'Failed to fetch releases');
-            }
-        } catch (err: any) {
-            setError(err.message || 'Failed to fetch releases');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    const fetchSecurity = async (ref: string) => {
-        setIsLoadingSecurity(true);
-        setSecurity(null);
-        try {
-            const token = localStorage.getItem('token');
-            const response = await fetch(`/api/system/releases/${encodeURIComponent(ref)}/security`, {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (response.ok) {
-                const data = await response.json();
-                setSecurity(data);
-            }
-        } catch (err) {
-            console.error('Failed to fetch security info:', err);
-        } finally {
-            setIsLoadingSecurity(false);
-        }
-    };
-
-    const handleSelectRef = (ref: string, release: Release | null, commit: RecentCommit | null) => {
-        setSelectedRef(ref);
-        setSelectedRelease(release);
-        setSelectedCommit(commit);
-        setDropdownOpen(false);
-        fetchSecurity(ref);
-    };
-
-    const handleSwitchVersion = async () => {
-        if (!selectedRef) return;
-
-        const hasWarnings = security && !security.summary.all_passed;
-        const confirmed = await confirmDeploy(selectedRef.slice(0, 7), hasWarnings || false);
-
-        if (!confirmed) return;
-
-        setIsSwitching(true);
-        setDeployProgress(10);
-        setMessage('Starting deployment...');
-        setError(null);
-        setDeployFailure(null);
-        setShowDeployLog(false);
-
-        try {
-            setDeployProgress(25);
-            const token = localStorage.getItem('token');
-            const response = await fetch(`/api/system/switch-version?ref=${encodeURIComponent(selectedRef)}`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-
-            // Check if response is actually JSON (server may return HTML during restart)
-            const contentType = response.headers.get('content-type') || '';
-            if (!contentType.includes('application/json')) {
-                // Server is likely restarting — wait and poll for health
-                setDeployProgress(40);
-                setMessage('Server is restarting after deployment...');
-                let healthy = false;
-                for (let attempt = 0; attempt < 8; attempt++) {
-                    await new Promise(resolve => setTimeout(resolve, 5000));
-                    try {
-                        const healthResp = await fetch('/api/health');
-                        if (healthResp.ok) {
-                            const healthContentType = healthResp.headers.get('content-type') || '';
-                            if (healthContentType.includes('application/json')) {
-                                healthy = true;
-                                break;
-                            }
-                        }
-                    } catch {
-                        // Server still down, keep waiting
-                    }
-                    const pct = 40 + Math.round(((attempt + 1) / 8) * 50);
-                    setDeployProgress(pct);
-                    setMessage(`Server restarting... ${pct}%`);
-                }
-
-                if (healthy) {
-                    setDeployProgress(100);
-                    setMessage('Deployment complete — server is back online');
-                    setSelectedRef(null);
-                    setSelectedRelease(null);
-                    setSelectedCommit(null);
-                    setSecurity(null);
-                    fetchCurrentVersion();
-                    fetchReleases();
-                } else {
-                    setError('⚠️ Deployment may have succeeded but server health check timed out. Please refresh the page.');
-                }
-                return;
-            }
-
-            const data = await response.json();
-
-            if (response.ok) {
-                setDeployProgress(100);
-                setMessage(data.message || 'Deployment complete');
-                setSelectedRef(null);
-                setSelectedRelease(null);
-                setSelectedCommit(null);
-                setSecurity(null);
-                fetchCurrentVersion();
-                fetchReleases();
-            } else {
-                const detail = data.detail;
-                if (typeof detail === 'object') {
-                    setDeployFailure(detail as DeployFailureDetail);
-                    setShowDeployLog(true);
-                    setError(`${detail.message || 'Deployment failed'}${detail.rollback_performed ? ' — rolled back automatically' : ''}`);
-                } else {
-                    setError(detail || 'Failed to deploy version');
-                }
-            }
-        } catch (err: any) {
-            // Network error likely means server restarted — poll for health
-            setDeployProgress(35);
-            setMessage('Connection lost — server may be restarting...');
-            let healthy = false;
-            for (let attempt = 0; attempt < 8; attempt++) {
-                await new Promise(resolve => setTimeout(resolve, 5000));
-                try {
-                    const healthResp = await fetch('/api/health');
-                    if (healthResp.ok) {
-                        const healthContentType = healthResp.headers.get('content-type') || '';
-                        if (healthContentType.includes('application/json')) {
-                            healthy = true;
-                            break;
-                        }
-                    }
-                } catch {
-                    // Still down
-                }
-                const pct = 40 + Math.round(((attempt + 1) / 8) * 50);
-                setDeployProgress(pct);
-                setMessage(`Waiting for server... ${pct}%`);
-            }
-
-            if (healthy) {
-                setDeployProgress(100);
-                setMessage('Deployment complete — server is back online');
-                setSelectedRef(null);
-                setSelectedRelease(null);
-                setSelectedCommit(null);
-                setSecurity(null);
-                fetchCurrentVersion();
-                fetchReleases();
-            } else {
-                setError(`Failed to deploy: ${err.message}. Server may still be restarting — try refreshing in a minute.`);
-            }
-        } finally {
-            setIsSwitching(false);
-            // Reset progress after a delay so the 100% state is visible
-            setTimeout(() => setDeployProgress(0), 3000);
-        }
-    };
-
-    useEffect(() => {
-        fetchCurrentVersion();
-        fetchReleases();
     }, []);
+    useEffect(() => { load(); }, [load]);
 
-    const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric'
-        });
-    };
-
-    /** Pass, fail and pending were glyph plus colour only, with the check's
-     *  full name reachable only as a `title` on a div nobody can focus. */
-    const statusWord = (check: SecurityCheck) => {
-        if (check.status === 'not_found') return 'not run';
-        if (check.status === 'in_progress' || check.status === 'queued') return 'running';
-        if (check.passed === true) return 'passed';
-        if (check.passed === false) return 'failed';
-        return 'pending';
-    };
-
-    const getStatusIcon = (check: SecurityCheck) => {
-        if (check.status === 'not_found') return <span className="text-white/50" aria-hidden="true">—</span>;
-        if (check.status === 'in_progress' || check.status === 'queued') {
-            return <Loader2 className="w-3.5 h-3.5 text-amber-400 animate-spin" aria-hidden="true" />;
+    const create = async () => {
+        setBusy('create');
+        setError(null);
+        try {
+            const t = await api.createUpdaterToken(label.trim() || undefined);
+            setCreated(t);
+            setLabel('');
+            announce('Updater token created. Copy it now: it is shown only once.');
+            await load();
+            onChange?.();
+        } catch (e: any) {
+            setError(e?.message || 'The token was not created');
+            announce(`The token was not created: ${e?.message || 'error'}`, 'assertive');
+        } finally {
+            setBusy(null);
         }
-        if (check.passed === true) return <Check className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />;
-        if (check.passed === false) return <X className="w-3.5 h-3.5 text-red-400" aria-hidden="true" />;
-        return <Clock className="w-3.5 h-3.5 text-white/50" aria-hidden="true" />;
     };
 
-    // Parse commit message into type and description
-    const parseCommitMessage = (msg: string) => {
-        const match = msg.match(/^(\w+)(?:\(([^)]+)\))?:\s*(.+)$/);
-        if (match) {
-            return { type: match[1], scope: match[2], desc: match[3] };
-        }
-        return { type: null, scope: null, desc: msg };
-    };
-
-    const getTypeColor = (type: string | null) => {
-        switch (type) {
-            case 'feat': return 'bg-emerald-500/20 text-emerald-400';
-            case 'fix': return 'bg-amber-500/20 text-amber-400';
-            case 'style': return 'bg-purple-500/20 text-purple-400';
-            case 'refactor': return 'bg-blue-500/20 text-blue-400';
-            case 'docs': return 'bg-sky-500/20 text-sky-400';
-            case 'chore': return 'bg-gray-500/20 text-gray-400';
-            default: return 'bg-white/10 text-white/60';
+    const revoke = async (t: UpdaterTokenRecord) => {
+        setBusy(`revoke-${t.id}`);
+        setError(null);
+        try {
+            await api.revokeUpdaterToken(t.id);
+            announce(`Token ${t.token_prefix} revoked.`);
+            if (created?.id === t.id) setCreated(null);
+            await load();
+        } catch (e: any) {
+            setError(e?.message || 'The token was not revoked');
+        } finally {
+            setBusy(null);
         }
     };
 
     return (
-        <div className="space-y-3">
-            {/* Current Version */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
-                        <GitBranch className="w-4 h-4 text-indigo-400" />
-                    </div>
-                    <div className="min-w-0">
-                        <p className="text-xs text-white/50">Current</p>
-                        <p className="font-mono text-sm text-white font-medium truncate">
-                            {currentVersion?.display || '...'}
-                        </p>
-                    </div>
+        <div className="space-y-3 text-sm">
+            <p className="text-xs text-white/60">
+                The updater runs on the server and calls this instance over loopback with one of these tokens.
+                Only a hash is stored. See <a className="underline text-indigo-300" href={CONNECT_DOCS_URL} target="_blank" rel="noopener noreferrer">how to connect the updater<span className="sr-only"> (opens in a new tab)</span></a>.
+            </p>
+            {created?.token && (
+                <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 space-y-2">
+                    <p className="text-xs text-amber-100">Copy this token now. It will not be shown again. Put it in the instance&apos;s <code>token_file</code> (mode 0600) on the server.</p>
+                    <code className="block font-mono text-xs break-all bg-black/30 rounded p-2 text-white" data-testid="new-updater-token">{created.token}</code>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => { fetchCurrentVersion(); fetchReleases(); }}
-                    className="p-1.5 hover:bg-white/10 rounded-lg transition-colors flex-shrink-0"
-                    aria-label="Refresh version list"
-                    title="Refresh"
-                >
-                    <RefreshCw className={`w-3.5 h-3.5 text-white/60 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
-                </button>
-            </div>
-
-            {/* Current commit message */}
-            {currentVersion?.commit_message && (
-                <p className="text-xs text-white/50 px-1 truncate" title={cleanCommitMessage(currentVersion.commit_message)}>
-                    {cleanCommitMessage(currentVersion.commit_message)}
-                </p>
             )}
-
-            {/* Version Selector */}
-            <div className="relative">
-                <button
-                    type="button"
-                    ref={triggerRef}
-                    onClick={() => setDropdownOpen(!dropdownOpen)}
-                    aria-expanded={dropdownOpen}
-                    aria-haspopup="menu"
-                    aria-controls="version-switcher-menu"
-                    className="w-full flex items-center justify-between bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white hover:bg-white/15 transition-colors text-sm"
-                >
-                    <span className="flex items-center gap-2 min-w-0">
-                        <Package className="w-3.5 h-3.5 text-white/60 flex-shrink-0" />
-                        {selectedRef ? (
-                            <span className="font-mono truncate">@{selectedRef.slice(0, 7)}</span>
-                        ) : (
-                            <span className="text-white/50">Select version</span>
-                        )}
-                    </span>
-                    <ChevronDown className={`w-3.5 h-3.5 text-white/60 transition-transform flex-shrink-0 ${dropdownOpen ? 'rotate-180' : ''}`} />
-                </button>
-
-                {dropdownOpen && (
-                    <div id="version-switcher-menu" ref={dropdownRef} className="absolute z-50 mt-2 w-[calc(100%+60px)] -left-[30px] bg-slate-800 border border-white/20 rounded-xl shadow-xl max-h-80 overflow-y-auto">
-                        {/* Releases */}
-                        {releases.length > 0 && (
-                            <>
-                                <p className="px-3 py-1.5 text-xs font-medium text-white/40 uppercase tracking-wider border-b border-white/10">
-                                    Releases
-                                </p>
-                                {releases.map((release) => (
-                                    <button
-                                        key={release.tag}
-                                        type="button"
-                                        // Selection was a background tint and nothing else.
-                                        aria-pressed={selectedRef === release.tag}
-                                        onClick={() => handleSelectRef(release.tag, release, null)}
-                                        className={`w-full px-3 py-2 text-left hover:bg-white/10 transition-colors ${selectedRef === release.tag ? 'bg-indigo-500/20' : ''
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <span className="font-mono text-white text-sm">{release.tag}</span>
-                                            <span className="text-xs text-white/40">{formatDate(release.published_at)}</span>
-                                        </div>
-                                        <p className="text-xs text-white/60 mt-0.5">{release.name}</p>
-                                    </button>
-                                ))}
-                            </>
-                        )}
-
-                        {/* Recent Commits - Enhanced */}
-                        {recentCommits.length > 0 && (
-                            <>
-                                <p className="px-3 py-1.5 text-xs font-medium text-white/40 uppercase tracking-wider border-y border-white/10">
-                                    Recent Updates
-                                </p>
-                                {recentCommits.map((commit) => {
-                                    const parsed = parseCommitMessage(commit.message);
-                                    return (
-                                        <button
-                                            key={commit.sha}
-                                            type="button"
-                                            aria-pressed={selectedRef === commit.full_sha}
-                                            onClick={() => handleSelectRef(commit.full_sha, null, commit)}
-                                            className={`w-full px-3 py-2.5 text-left hover:bg-white/10 transition-colors border-b border-white/5 last:border-0 ${selectedRef === commit.full_sha ? 'bg-indigo-500/20' : ''
-                                                }`}
-                                        >
-                                            <div className="flex items-center justify-between mb-1">
-                                                <div className="flex items-center gap-2">
-                                                    <GitCommit className="w-3 h-3 text-white/40" />
-                                                    <span className="font-mono text-white text-xs">@{commit.sha}</span>
-                                                    {parsed.type && (
-                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
-                                                            {parsed.type}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <span className="text-[10px] text-white/40">{formatDate(commit.date)}</span>
-                                            </div>
-                                            <p className="text-sm text-white/80 leading-snug">
-                                                {parsed.scope && <span className="text-white/40">[{parsed.scope}]</span>} {parsed.desc}
-                                            </p>
-                                        </button>
-                                    );
-                                })}
-                            </>
-                        )}
-
-                        {releases.length === 0 && recentCommits.length === 0 && (
-                            <p className="px-3 py-4 text-center text-white/50 text-sm">
-                                {isLoading ? 'Loading...' : 'No releases found'}
-                            </p>
-                        )}
+            {!readOnly && (
+                <div className="flex flex-wrap items-end gap-2">
+                    <div className="flex-1 min-w-[10rem]">
+                        <label htmlFor={labelId} className="block text-xs text-white/60 mb-1">Label (optional)</label>
+                        <input id={labelId} value={label} onChange={e => setLabel(e.target.value)} maxLength={100}
+                            placeholder="e.g. town server updater"
+                            className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm" />
                     </div>
-                )}
-            </div>
-
-            {/* Selected Version Details */}
-            {selectedRef && (
-                <div className="bg-white/5 border border-white/10 rounded-lg p-3 space-y-3">
-                    {/* What's in this update */}
-                    <div>
-                        <p className="text-xs font-medium text-white/50 mb-1.5">What's in this update:</p>
-                        {selectedRelease ? (
-                            <div className="text-sm text-white/80">
-                                <p className="font-medium text-white mb-1">{selectedRelease.name}</p>
-                                <p className="text-xs text-white/60 line-clamp-3">{selectedRelease.body.split('\n').slice(0, 3).join(' ')}</p>
-                            </div>
-                        ) : selectedCommit ? (
-                            <div className="text-sm">
-                                {(() => {
-                                    const parsed = parseCommitMessage(selectedCommit.message);
-                                    return (
-                                        <>
-                                            <div className="flex items-center gap-2 mb-1">
-                                                {parsed.type && (
-                                                    <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${getTypeColor(parsed.type)}`}>
-                                                        {parsed.type === 'feat' ? 'New Feature' :
-                                                            parsed.type === 'fix' ? 'Bug Fix' :
-                                                                parsed.type === 'style' ? 'Style Update' :
-                                                                    parsed.type === 'refactor' ? 'Refactor' : parsed.type}
-                                                    </span>
-                                                )}
-                                                {parsed.scope && <span className="text-xs text-white/40">{parsed.scope}</span>}
-                                            </div>
-                                            <p className="text-white/80">{parsed.desc}</p>
-                                        </>
-                                    );
-                                })()}
-                                <p className="text-[10px] text-white/40 mt-1">by {selectedCommit.author} • {formatDate(selectedCommit.date)}</p>
-                            </div>
-                        ) : (
-                            <p className="text-xs text-white/50">Commit details not available</p>
-                        )}
-                    </div>
-
-                    {/* Security Verification - Compact */}
-                    <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs font-medium text-white/50 flex items-center gap-1">
-                                <Shield className="w-3 h-3" />
-                                Verified
+                    <button type="button" className="btn-outline text-sm" onClick={create} disabled={busy !== null}>
+                        {busy === 'create' ? <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" /> : <KeyRound className="w-4 h-4" aria-hidden="true" />}
+                        <span className="ml-1.5">Create token</span>
+                    </button>
+                </div>
+            )}
+            {error && <p className="text-xs text-red-300">{error}</p>}
+            {tokens && tokens.length > 0 && (
+                <ul className="divide-y divide-white/10 rounded-lg border border-white/10">
+                    {tokens.map(t => (
+                        <li key={t.id} className="flex flex-wrap items-center gap-2 px-3 py-2 text-xs">
+                            <code className="font-mono text-white">{t.token_prefix}…</code>
+                            {t.label && <span className="text-white/70">{t.label}</span>}
+                            <Chip tone={t.status === 'active' ? 'success' : 'neutral'}>{t.status === 'active' ? 'Active' : 'Revoked'}</Chip>
+                            <span className="text-white/45">
+                                created {when(t.created_at)}{t.created_by ? ` by ${t.created_by}` : ''}
+                                {' · '}{t.last_used_at ? `last used ${when(t.last_used_at)}` : 'never used'}
                             </span>
-                            {security?.summary && (
-                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${security.summary.all_passed
-                                    ? 'bg-emerald-500/20 text-emerald-400'
-                                    : 'bg-amber-500/20 text-amber-400'
-                                    }`}>
-                                    {security.summary.score}
-                                </span>
+                            {t.status === 'active' && !readOnly && (
+                                <button type="button" className="btn-outline text-xs ml-auto" onClick={() => revoke(t)}
+                                    disabled={busy !== null} aria-label={`Revoke token ${t.token_prefix}`}>
+                                    Revoke
+                                </button>
                             )}
-                        </div>
-
-                        {isLoadingSecurity ? (
-                            <div className="flex items-center gap-2 text-white/50 text-xs">
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                                Checking...
-                            </div>
-                        ) : security ? (
-                            <div className="grid grid-cols-2 gap-1">
-                                {Object.entries(security.verification).map(([key, check]) => (
-                                    <div
-                                        key={key}
-                                        /* The chip shows an abbreviation, so the
-                                           full check name has to stay reachable
-                                           by hover as well as by screen reader --
-                                           the sr-only span below is an addition
-                                           to the tooltip, not a replacement. */
-                                        title={`${check.name}: ${statusWord(check)}`}
-                                        className="flex items-center gap-1.5 text-[11px] bg-white/5 rounded px-2 py-1"
-                                    >
-                                        {getStatusIcon(check)}
-                                        <span className="text-white/70">{SHORT_LABELS[key] || key}</span>
-                                        <span className="sr-only">{check.name}: {statusWord(check)}</span>
-                                        {check.run_url && (
-                                            <a
-                                                href={check.run_url}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                aria-label={`View the ${check.name} run (opens in a new tab)`}
-                                                className="text-white/50 hover:text-white ml-auto"
-                                            >
-                                                <ExternalLink className="w-2.5 h-2.5" aria-hidden="true" />
-                                            </a>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        ) : null}
-                    </div>
-
-                    {/* Switch Button + Progress */}
-                    {isSwitching ? (
-                        <div className="space-y-1.5">
-                            <div className="flex items-center justify-between text-xs">
-                                <span className="text-white/70 flex items-center gap-1.5">
-                                    <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
-                                    {message || 'Deploying...'}
-                                </span>
-                                <span className="font-mono font-semibold text-white">{deployProgress}%</span>
-                            </div>
-                            {/* A multi-minute, irreversible rebuild-and-migrate of a
-                                live 311 system reported its progress as a div whose
-                                width changed. Nothing announced the percentage, the
-                                step, or that anything was happening at all. */}
-                            <div
-                                className="h-2 rounded-full bg-white/10 overflow-hidden"
-                                role="progressbar"
-                                aria-valuemin={0}
-                                aria-valuemax={100}
-                                aria-valuenow={deployProgress}
-                                aria-valuetext={`${deployProgress}% — ${message || 'Deploying'}`}
-                                aria-label="Deployment progress"
-                            >
-                                <div
-                                    className={`h-full rounded-full transition-all duration-700 ease-out ${deployProgress >= 100
-                                            ? 'bg-gradient-to-r from-emerald-400 to-cyan-400'
-                                            : 'bg-gradient-to-r from-indigo-400 to-purple-400'
-                                        }`}
-                                    style={{ width: `${deployProgress}%` }}
-                                />
-                            </div>
-                        </div>
-                    ) : (
-                        <button
-                            onClick={handleSwitchVersion}
-                            disabled={!selectedRef}
-                            className={`w-full flex items-center justify-center gap-1.5 py-2 rounded-lg font-medium transition-colors text-sm ${security?.summary.all_passed
-                                ? 'bg-indigo-600 hover:bg-indigo-500 text-white'
-                                : 'bg-amber-600/80 hover:bg-amber-600 text-white'
-                                }`}
-                        >
-                            <Package className="w-3.5 h-3.5" />
-                            Deploy this version
-                        </button>
-                    )}
-
-                    {security && !security.summary.all_passed && (
-                        <p className="text-[10px] text-amber-400/80 flex items-start gap-1">
-                            <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
-                            <span>Some checks incomplete</span>
-                        </p>
-                    )}
-                </div>
+                        </li>
+                    ))}
+                </ul>
             )}
+            {tokens && tokens.length === 0 && <p className="text-xs text-white/50">No tokens yet.</p>}
+        </div>
+    );
+}
 
-            {/* Messages. Visible only: the spoken half of both of these is the
-                announce() pair above, and the same string reaching a second
-                region in the same commit is how a deploy that reports every
-                step ends up reporting none of them out loud. Same shape as
-                NotificationSettings. */}
+/* ------------------------------------------------------------------------ */
+/* The full panel                                                             */
+/* ------------------------------------------------------------------------ */
+
+interface FormState {
+    action: UpgradeAction;
+    tag: string | null;
+}
+
+export function VersionControlPanel({ managed = false }: { managed?: boolean }) {
+    const [current, setCurrent] = useState<CurrentVersion | null>(null);
+    const [releases, setReleases] = useState<UpdaterRelease[]>([]);
+    const [updater, setUpdater] = useState<UpdaterState | null>(null);
+    const [requests, setRequests] = useState<UpgradeRequestRecord[]>([]);
+    const [active, setActive] = useState<UpgradeRequestRecord | null>(null);
+    const [loaded, setLoaded] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [message, setMessage] = useState<string | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [form, setForm] = useState<FormState | null>(null);
+    const [reason, setReason] = useState('');
+    const [schedule, setSchedule] = useState('');
+    const [allowDestructive, setAllowDestructive] = useState(false);
+    const [expanded, setExpanded] = useState<Record<number, UpgradeRequestRecord>>({});
+    const announce = useOptionalAnnounce();
+    const ids = useId();
+
+    useEffect(() => { if (message) announce(message); }, [message, announce]);
+    useEffect(() => { if (error) announce(error, 'assertive'); }, [error, announce]);
+
+    const load = useCallback(async () => {
+        const [cv, rel, reqs] = await Promise.allSettled([
+            api.getCurrentVersion(), api.getUpdaterReleases(), api.getUpgradeRequests(),
+        ]);
+        if (cv.status === 'fulfilled') setCurrent(cv.value);
+        if (rel.status === 'fulfilled') { setReleases(rel.value.releases); setUpdater(rel.value.updater); }
+        if (reqs.status === 'fulfilled') {
+            setRequests(reqs.value.requests);
+            setUpdater(reqs.value.updater);
+            const a = reqs.value.requests.find(r => IN_FLIGHT_UPGRADE_STATUSES.includes(r.status))
+                ?? reqs.value.requests.find(r => ACTIVE_UPGRADE_STATUSES.includes(r.status));
+            if (a) {
+                try { setActive(await api.getUpgradeRequest(a.id)); } catch { setActive(a); }
+            } else {
+                setActive(null);
+            }
+        }
+        const failed = [cv, rel, reqs].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+        setError(failed ? (failed.reason?.message || 'Could not load version information') : null);
+        setLoaded(true);
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+
+    // A live step list: poll while the updater is working on something.
+    const inFlight = !!active && IN_FLIGHT_UPGRADE_STATUSES.includes(active.status);
+    const lastStatus = useRef<string | null>(null);
+    useEffect(() => {
+        if (!inFlight) return;
+        const t = setInterval(load, POLL_MS);
+        return () => clearInterval(t);
+    }, [inFlight, load]);
+    useEffect(() => {
+        const key = active ? `${active.id}:${active.status}` : null;
+        if (lastStatus.current && key && lastStatus.current !== key && active) {
+            announce(`${describe(active)}: ${STATUS_WORDS[active.status]?.label ?? active.status}.`);
+        }
+        lastStatus.current = key;
+    }, [active, announce]);
+
+    const twoPerson = updater?.require_two_person_approval ?? true;
+    const connected = !!updater?.connected;
+    const pending = useMemo(() => requests.filter(r => r.status === 'pending_approval' || r.status === 'approved'), [requests]);
+    const history = useMemo(() => requests.filter(r => !ACTIVE_UPGRADE_STATUSES.includes(r.status)), [requests]);
+    const upgradeLaneBusy = requests.some(r => r.action !== 'restart' && ACTIVE_UPGRADE_STATUSES.includes(r.status));
+
+    const openForm = (action: UpgradeAction, tag: string | null) => {
+        setForm({ action, tag });
+        setReason('');
+        setSchedule('');
+        setAllowDestructive(false);
+        setError(null);
+        setMessage(null);
+    };
+
+    const submit = async () => {
+        if (!form) return;
+        if (reason.trim().length < 3) {
+            setError('Give a reason: it goes to every admin and into the audit log.');
+            return;
+        }
+        setBusy('submit');
+        setError(null);
+        try {
+            const created = await api.createUpgradeRequest({
+                action: form.action, target_tag: form.tag, reason: reason.trim(),
+                scheduled_for: schedule ? new Date(schedule).toISOString() : null,
+                allow_destructive: form.action === 'upgrade' ? allowDestructive : false,
+            });
+            setForm(null);
+            setMessage(created.status === 'pending_approval'
+                ? `${describe(created)} requested. Another admin must approve it.`
+                : `${describe(created)} requested. The updater will pick it up ${created.scheduled_for ? 'at the scheduled time' : 'within about a minute'}.`);
+            await load();
+        } catch (e: any) {
+            setError(e?.message || 'The request was not filed');
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const act = async (r: UpgradeRequestRecord, kind: 'approve' | 'cancel' | 'fail') => {
+        setBusy(`${kind}-${r.id}`);
+        setError(null);
+        const word = kind === 'approve' ? 'approved' : kind === 'cancel' ? 'cancelled' : 'marked failed';
+        try {
+            const out = kind === 'approve' ? await api.approveUpgradeRequest(r.id)
+                : kind === 'cancel' ? await api.cancelUpgradeRequest(r.id)
+                    : await api.markUpgradeRequestFailed(r.id);
+            setMessage(`${describe(out)}: ${word}.`);
+            await load();
+        } catch (e: any) {
+            setError(e?.message || `The request was not ${word}`);
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const toggleTwoPerson = async (on: boolean) => {
+        setBusy('settings');
+        setError(null);
+        try {
+            setUpdater(await api.setUpgradeSettings(on));
+            setMessage(on ? 'Two-person approval is on.' : 'Two-person approval is off: one admin can now upgrade this instance.');
+            await load();
+        } catch (e: any) {
+            setError(e?.message || 'The setting did not save');
+        } finally {
+            setBusy(null);
+        }
+    };
+
+    const toggleSteps = async (r: UpgradeRequestRecord) => {
+        if (expanded[r.id]) {
+            const next = { ...expanded };
+            delete next[r.id];
+            setExpanded(next);
+            return;
+        }
+        try {
+            const d = await api.getUpgradeRequest(r.id);
+            setExpanded(prev => ({ ...prev, [r.id]: d }));
+        } catch (e: any) {
+            setError(e?.message || 'Could not load the step log');
+        }
+    };
+
+    const formRelease = form?.tag ? releases.find(x => x.tag === form.tag) : null;
+    const reasonId = `${ids}-reason`;
+    const scheduleId = `${ids}-schedule`;
+    const destructiveId = `${ids}-destructive`;
+
+    return (
+        <div className="space-y-4 text-sm text-white">
+            {/* Current */}
+            <section aria-labelledby={`${ids}-current`} className="rounded-xl bg-white/5 border border-white/10 p-4">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <h3 id={`${ids}-current`} className="text-xs uppercase tracking-wider text-white/50">Running now</h3>
+                        <p className="font-mono text-lg">{current?.display ?? '…'}</p>
+                        <dl className="mt-2 grid grid-cols-[auto,1fr] gap-x-3 gap-y-1 text-xs">
+                            <dt className="text-white/50">Git SHA</dt><dd className="font-mono break-all">{current?.git_sha || 'not stamped'}</dd>
+                            <dt className="text-white/50">Backend digest</dt><dd className="font-mono break-all" title={current?.backend_digest ?? undefined}>{shortDigest(current?.backend_digest)}</dd>
+                            <dt className="text-white/50">Frontend digest</dt><dd className="font-mono break-all" title={current?.frontend_digest ?? undefined}>{shortDigest(current?.frontend_digest)}</dd>
+                            <dt className="text-white/50">Schema</dt><dd className="font-mono">{current?.db_revision || 'unknown'}</dd>
+                        </dl>
+                    </div>
+                    <button type="button" className="btn-outline text-xs" onClick={load} aria-label="Refresh version information">
+                        <RefreshCw className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                </div>
+                <p className="mt-3 text-xs text-white/55">
+                    {connected
+                        ? <>Updater {updater?.version ? `v${updater.version} ` : ''}last checked in {when(updater?.last_seen_at)}.</>
+                        : 'No updater has checked in from this server.'}
+                </p>
+            </section>
+
             {error && (
-                <div className="space-y-2">
-                    <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs">
-                        <div className="flex items-start gap-1.5">
-                            <AlertCircle className="w-3 h-3 flex-shrink-0 mt-0.5" />
-                            <span>{error}</span>
-                        </div>
-                    </div>
-
-                    {/* Deployment Log */}
-                    {deployFailure?.steps && deployFailure.steps.length > 0 && (
-                        <div className="rounded-lg border border-white/10 overflow-hidden">
-                            <button
-                                type="button"
-                                onClick={() => setShowDeployLog(!showDeployLog)}
-                                aria-expanded={showDeployLog}
-                                aria-controls="deploy-log"
-                                className="w-full flex items-center justify-between px-3 py-2 bg-white/[0.04] hover:bg-white/[0.06] transition-colors text-xs"
-                            >
-                                <span className="text-white/50 font-medium flex items-center gap-1.5">
-                                    <Clock className="w-3 h-3" />
-                                    Deployment Log ({deployFailure.steps.length} steps)
-                                </span>
-                                <ChevronDown className={`w-3 h-3 text-white/40 transition-transform ${showDeployLog ? 'rotate-180' : ''}`} />
-                            </button>
-                            {showDeployLog && (
-                                <div id="deploy-log" className="px-3 py-2 space-y-1.5 bg-black/20 max-h-64 overflow-y-auto">
-                                    {deployFailure.steps.map((step, i) => (
-                                        <div key={i} className="flex items-start gap-2 text-[11px]">
-                                            {step.success ? (
-                                                <Check className="w-3 h-3 text-emerald-400 flex-shrink-0 mt-0.5" />
-                                            ) : (
-                                                <X className="w-3 h-3 text-red-400 flex-shrink-0 mt-0.5" />
-                                            )}
-                                            <div className="min-w-0">
-                                                <span className={`font-mono font-medium ${step.success ? 'text-white/60' : 'text-red-400'}`}>
-                                                    {step.step.replace(/_/g, ' ')}
-                                                </span>
-                                                {step.detail && (
-                                                    <p className={`mt-0.5 break-all ${step.success ? 'text-white/35' : 'text-red-300/70'}`}>
-                                                        {step.detail}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {deployFailure.error && (
-                                        <div className="pt-1.5 mt-1.5 border-t border-white/5">
-                                            <p className="text-[11px] text-red-300/80 font-mono break-all">{deployFailure.error}</p>
-                                        </div>
-                                    )}
-                                    {deployFailure.rollback_errors && deployFailure.rollback_errors.length > 0 && (
-                                        <div className="pt-1.5 mt-1.5 border-t border-white/5">
-                                            <p className="text-[10px] text-amber-400/80 font-medium mb-1">Rollback issues:</p>
-                                            {deployFailure.rollback_errors.map((err, i) => (
-                                                <p key={i} className="text-[11px] text-amber-300/60 break-all">{err}</p>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </div>
-                    )}
+                <div className="p-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-red-300 text-xs flex items-start gap-1.5">
+                    <AlertTriangle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                    <span>{error}</span>
                 </div>
             )}
-
-            {message && !isSwitching && (
-                <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-400 text-xs flex items-center gap-1.5">
-                    <Check className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+            {message && (
+                <div className="p-2.5 bg-emerald-500/10 border border-emerald-500/30 rounded-lg text-emerald-300 text-xs flex items-start gap-1.5">
+                    <Check className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" aria-hidden="true" />
                     <span>{message}</span>
                 </div>
             )}
+
+            {managed ? (
+                <p role="note" className="text-xs text-white/70 bg-white/5 border border-white/10 rounded-lg p-3">
+                    Upgrades for this town come from your state&apos;s hosting platform, so this panel is read-only.
+                </p>
+            ) : loaded && !connected ? (
+                <section aria-labelledby={`${ids}-none`} className="rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 space-y-3">
+                    <h3 id={`${ids}-none`} className="font-semibold flex items-center gap-2">
+                        <Terminal className="w-4 h-4" aria-hidden="true" /> No updater connected
+                    </h3>
+                    <p className="text-xs text-white/75">
+                        Upgrades run on the server, by the Pinpoint updater, never from this web app. Install it,
+                        create a token below, and register this instance. <a className="underline text-indigo-200" href={INSTALL_DOCS_URL} target="_blank" rel="noopener noreferrer">Install the updater<ExternalLink className="inline w-3 h-3 ml-0.5" aria-hidden="true" /><span className="sr-only"> (opens in a new tab)</span></a>
+                    </p>
+                    <CommandLineSteps />
+                </section>
+            ) : connected ? (
+                <>
+                    {/* Active request with its live step list */}
+                    {active && (
+                        <section aria-labelledby={`${ids}-active`} className="rounded-xl bg-white/5 border border-white/10 p-4 space-y-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h3 id={`${ids}-active`} className="font-semibold">#{active.id} {describe(active)}</h3>
+                                <RequestStatusChip status={active.status} />
+                                {inFlight && <Loader2 className="w-3.5 h-3.5 animate-spin text-white/60" aria-hidden="true" />}
+                            </div>
+                            <p className="text-xs text-white/60">Requested by {active.requested_by} {when(active.requested_at)}: “{active.reason}”</p>
+                            {(inFlight || (active.steps && active.steps.length > 0)) && <StepList steps={active.steps} live={inFlight} />}
+                            {active.can_mark_failed && (
+                                <div className="flex flex-wrap items-center gap-2 pt-1">
+                                    <button type="button" className="btn-outline text-xs" onClick={() => act(active, 'fail')} disabled={busy !== null}>
+                                        Mark failed
+                                    </button>
+                                    <span className="text-xs text-white/50">
+                                        Only if the updater has stopped{active.last_report_at ? ` (last report ${when(active.last_report_at)})` : ''}. It does not stop anything on the server, and a late report from this run is refused. A silent run fails on its own after its time limit.
+                                    </span>
+                                </div>
+                            )}
+                        </section>
+                    )}
+
+                    {/* Pending approvals and queued requests */}
+                    {pending.length > 0 && (
+                        <section aria-labelledby={`${ids}-pending`} className="space-y-2">
+                            <h3 id={`${ids}-pending`} className="text-xs uppercase tracking-wider text-white/50">Waiting</h3>
+                            {pending.map(r => {
+                                const blockedId = `${ids}-blocked-${r.id}`;
+                                return (
+                                    <div key={r.id} className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="font-medium">#{r.id} {describe(r)}</span>
+                                            <RequestStatusChip status={r.status} />
+                                            {r.allow_destructive && <Chip tone="danger" icon={AlertTriangle}>Destructive migration allowed</Chip>}
+                                            {r.scheduled_for && <Chip tone="info">Scheduled {when(r.scheduled_for)}</Chip>}
+                                        </div>
+                                        <p className="text-xs text-white/60">By {r.requested_by} {when(r.requested_at)}: “{r.reason}”{r.approved_by ? ` · approved by ${r.approved_by}` : ''}</p>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            {r.status === 'pending_approval' && (
+                                                <button type="button" className="btn-outline text-xs" onClick={() => act(r, 'approve')}
+                                                    disabled={!r.can_approve || busy !== null}
+                                                    aria-describedby={r.approve_blocked_reason ? blockedId : undefined}>
+                                                    <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" /><span className="ml-1">Approve</span>
+                                                </button>
+                                            )}
+                                            {r.can_cancel && (
+                                                <button type="button" className="btn-outline text-xs" onClick={() => act(r, 'cancel')} disabled={busy !== null}>
+                                                    Cancel
+                                                </button>
+                                            )}
+                                            {r.status === 'pending_approval' && r.approve_blocked_reason && (
+                                                <span id={blockedId} className="text-xs text-amber-200/90">{r.approve_blocked_reason}</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </section>
+                    )}
+
+                    {/* Releases */}
+                    <section aria-labelledby={`${ids}-releases`} className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <h3 id={`${ids}-releases`} className="text-xs uppercase tracking-wider text-white/50">Signed releases</h3>
+                            <button type="button" className="btn-outline text-xs" onClick={() => openForm('rollback', null)}
+                                disabled={upgradeLaneBusy || busy !== null}>
+                                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /><span className="ml-1">Request rollback</span>
+                            </button>
+                        </div>
+                        {releases.length === 0 && <p className="text-xs text-white/50">The updater has not reported any releases yet.</p>}
+                        {releases.map(r => (
+                            <div key={r.tag} className="rounded-lg border border-white/10 bg-white/5 p-3 space-y-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <span className="font-mono font-medium">{r.tag}</span>
+                                    {r.name && r.name !== r.tag && <span className="text-white/60 text-xs">{r.name}</span>}
+                                    {r.published_at && <span className="text-white/40 text-xs">{new Date(r.published_at).toLocaleDateString()}</span>}
+                                </div>
+                                <ReleaseChips r={r} />
+                                {r.notes && (
+                                    <details className="text-xs">
+                                        <summary className="cursor-pointer text-white/70">Release notes</summary>
+                                        <div className="mt-1 whitespace-pre-line text-white/65 max-h-60 overflow-y-auto">{r.notes}</div>
+                                        {r.url && <a className="underline text-indigo-300" href={r.url} target="_blank" rel="noopener noreferrer">Full release<span className="sr-only"> (opens in a new tab)</span></a>}
+                                    </details>
+                                )}
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <button type="button" className="btn-outline text-xs" onClick={() => openForm('upgrade', r.tag)}
+                                        disabled={!r.requestable || upgradeLaneBusy || busy !== null}
+                                        aria-label={`Request upgrade to ${r.tag}`}>
+                                        <Package className="w-3.5 h-3.5" aria-hidden="true" /><span className="ml-1">Request upgrade</span>
+                                    </button>
+                                    {!r.requestable && r.refusal && <span className="text-xs text-white/50">{r.refusal}</span>}
+                                </div>
+                            </div>
+                        ))}
+                    </section>
+
+                    {/* Request form */}
+                    {form && (
+                        <section aria-labelledby={`${ids}-form`} className="rounded-xl border border-indigo-400/30 bg-indigo-500/10 p-4 space-y-3">
+                            <h3 id={`${ids}-form`} className="font-semibold">{form.action === 'upgrade' ? `Request upgrade to ${form.tag}` : 'Request rollback to the previous release'}</h3>
+                            <p className="text-xs text-white/65">
+                                {twoPerson ? 'A different admin must approve this before it runs. ' : ''}
+                                Every admin is emailed. The updater takes a verified backup first and rolls back automatically if the new version is unhealthy.
+                            </p>
+                            <div>
+                                <label htmlFor={reasonId} className="block text-xs text-white/70 mb-1">Reason (required)</label>
+                                <textarea id={reasonId} required value={reason} onChange={e => setReason(e.target.value)} rows={2} maxLength={2000}
+                                    className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white text-sm" />
+                            </div>
+                            <div>
+                                <label htmlFor={scheduleId} className="block text-xs text-white/70 mb-1">Run at (optional, your local time)</label>
+                                <input id={scheduleId} type="datetime-local" value={schedule} onChange={e => setSchedule(e.target.value)}
+                                    className="bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm" />
+                            </div>
+                            {form.action === 'upgrade' && (
+                                <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3 space-y-1">
+                                    <div className="flex items-start gap-2">
+                                        <input id={destructiveId} type="checkbox" checked={allowDestructive}
+                                            onChange={e => setAllowDestructive(e.target.checked)} className="mt-0.5" />
+                                        <label htmlFor={destructiveId} className="text-xs font-medium">Allow a destructive migration</label>
+                                    </div>
+                                    <p className="text-xs text-red-200/90">
+                                        Leave this off unless a previous attempt stopped “on hold: destructive migration”. A destructive
+                                        migration drops or rewrites data and cannot be rolled back without restoring the backup.
+                                        {formRelease?.min_db_revision ? ` This release needs schema ${formRelease.min_db_revision} or later.` : ''}
+                                    </p>
+                                </div>
+                            )}
+                            <div className="flex gap-2">
+                                <button type="button" className="btn-outline text-sm" onClick={submit} disabled={busy !== null}>
+                                    {busy === 'submit' && <Loader2 className="w-4 h-4 animate-spin mr-1" aria-hidden="true" />}
+                                    Submit request
+                                </button>
+                                <button type="button" className="btn-outline text-sm" onClick={() => setForm(null)}>Back</button>
+                            </div>
+                        </section>
+                    )}
+
+                    {/* History */}
+                    {history.length > 0 && (
+                        <section aria-labelledby={`${ids}-history`} className="space-y-2">
+                            <h3 id={`${ids}-history`} className="text-xs uppercase tracking-wider text-white/50">History</h3>
+                            <ul className="space-y-2">
+                                {history.map(r => (
+                                    <li key={r.id} className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-1.5">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="font-medium">#{r.id} {describe(r)}</span>
+                                            <RequestStatusChip status={r.status} />
+                                            <span className="text-xs text-white/40">{when(r.finished_at || r.requested_at)}</span>
+                                        </div>
+                                        <p className="text-xs text-white/55">
+                                            {r.requested_by}{r.approved_by && r.approved_by !== r.requested_by ? `, approved by ${r.approved_by}` : ''}
+                                            {r.cancelled_by ? `, cancelled by ${r.cancelled_by}` : ''}: “{r.reason}”
+                                        </p>
+                                        {r.outcome_summary && <p className="text-xs text-white/70">{r.outcome_summary}</p>}
+                                        {r.status !== 'cancelled' && (
+                                            <button type="button" className="text-xs underline text-white/60" aria-expanded={!!expanded[r.id]} onClick={() => toggleSteps(r)}>
+                                                {expanded[r.id] ? 'Hide steps' : 'Show steps'}
+                                            </button>
+                                        )}
+                                        {expanded[r.id] && <StepList steps={expanded[r.id].steps} />}
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+                    )}
+
+                    <label className="flex items-start gap-2 text-xs text-white/70">
+                        <input type="checkbox" checked={twoPerson} disabled={busy !== null}
+                            onChange={e => toggleTwoPerson(e.target.checked)} className="mt-0.5" />
+                        <span>Require a second admin to approve upgrades and rollbacks (recommended). Restarts need one admin. Changes to this setting are audited.</span>
+                    </label>
+                </>
+            ) : null}
+
+            {!managed && (
+                <AccordionSection title="Updater connection" subtitle="Tokens the host updater uses" icon={KeyRound} defaultOpen={loaded && !connected}>
+                    <UpdaterTokens onChange={load} />
+                </AccordionSection>
+            )}
+        </div>
+    );
+}
+
+/* ------------------------------------------------------------------------ */
+/* Sidebar summary                                                            */
+/* ------------------------------------------------------------------------ */
+
+export default function VersionSwitcher() {
+    const [current, setCurrent] = useState<CurrentVersion | null>(null);
+    const [summary, setSummary] = useState<{ updater: UpdaterState; active: UpgradeRequestRecord | null } | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const [open, setOpen] = useState(false);
+    const [managed, setManaged] = useState(false);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const announce = useOptionalAnnounce();
+
+    useEffect(() => { if (error) announce(error, 'assertive'); }, [error, announce]);
+
+    const load = useCallback(async () => {
+        const [cv, reqs, cfg] = await Promise.allSettled([api.getCurrentVersion(), api.getUpgradeRequests(), api.getSystemConfig()]);
+        if (cv.status === 'fulfilled') setCurrent(cv.value);
+        if (cfg.status === 'fulfilled') setManaged(!!cfg.value?.managed_mode);
+        if (reqs.status === 'fulfilled') {
+            const active = reqs.value.requests.find(r => ACTIVE_UPGRADE_STATUSES.includes(r.status)) ?? null;
+            setSummary({ updater: reqs.value.updater, active });
+        }
+        const failed = [cv, reqs].find(r => r.status === 'rejected') as PromiseRejectedResult | undefined;
+        setError(failed ? (failed.reason?.message || 'Could not load version information') : null);
+    }, []);
+    useEffect(() => { load(); }, [load]);
+
+    return (
+        <div className="space-y-2">
+            <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                    <GitBranch className="w-4 h-4 text-indigo-400" aria-hidden="true" />
+                </div>
+                <div className="min-w-0">
+                    <p className="text-xs text-white/50">Current</p>
+                    <p className="font-mono text-sm text-white font-medium truncate">{current?.display || '…'}</p>
+                </div>
+            </div>
+            {summary?.active ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-white/70">
+                    <span className="truncate">{describe(summary.active)}</span>
+                    <RequestStatusChip status={summary.active.status} />
+                </div>
+            ) : summary && !summary.updater.connected && !managed ? (
+                <p className="text-xs text-amber-200/80">No updater connected</p>
+            ) : null}
+            {error && <p className="text-xs text-red-300 break-words">{error}</p>}
+            <button ref={trigger} type="button" className="btn-outline w-full text-sm justify-center" onClick={() => setOpen(true)}>
+                <Package className="w-3.5 h-3.5" aria-hidden="true" /><span className="ml-1.5">Version control</span>
+            </button>
+            <Modal isOpen={open} onClose={() => { setOpen(false); load(); }} title="Version Control" size="lg" triggerRef={trigger as RefObject<HTMLElement>}>
+                <VersionControlPanel managed={managed} />
+            </Modal>
         </div>
     );
 }

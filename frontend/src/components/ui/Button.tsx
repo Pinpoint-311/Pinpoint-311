@@ -41,13 +41,21 @@ export const Button: React.FC<ButtonProps> = ({
     onClick,
     ...rest
 }) => {
-    const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-300 rounded-xl focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900';
+    const baseStyles = 'inline-flex items-center justify-center font-medium transition-all duration-300 rounded-xl focus:outline-none focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-amber-300 focus-visible:ring-offset-2 focus-visible:ring-offset-[#1B1B3A]';
+    /* WCAG 2.4.7 / 1.4.11: a 3px amber-300 ring on a dark 2px offset. The
+     * ring is 10.3:1 against #23234A and 5.9:1 against #454390, the lightest
+     * panel, and the dark offset keeps it distinct from the indigo fill of a
+     * primary button. Was a 2px amber-400 ring that reviewers found faint. */
 
     const variantStyles = {
         primary: 'glass-button',
-        secondary: 'bg-white/10 hover:bg-white/20 border border-white/20 text-white',
+        // Outline edge at white/60: 3:1 or better against the page and the
+        // button's own fill (white/20 was 1.9:1). WCAG 1.4.11.
+        secondary: 'bg-white/10 hover:bg-white/20 border border-white/60 hover:border-white/80 text-white',
         ghost: 'bg-transparent hover:bg-white/10 text-white/80 hover:text-white',
-        danger: 'bg-red-500/80 hover:bg-red-500 border border-red-400/30 text-white',
+        // The red fill alone is 2.96:1 on #23234A; a red-200/80 edge is 4.4:1
+        // or better on every surface.
+        danger: 'bg-red-500/80 hover:bg-red-500 border border-red-200/80 text-white',
     };
 
     const sizeStyles = {

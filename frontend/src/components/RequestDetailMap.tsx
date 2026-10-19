@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { MapPin } from 'lucide-react';
 import { MapLayer } from '../services/api';
+import { useContextLayerOutlines, type OutlineHighlight } from './useContextLayerOutlines';
+import { humanize } from '../utils/humanize';
 import {
     GeoJsonLayerHandle,
     MapRenderer,
@@ -44,6 +46,12 @@ interface RequestDetailMapProps {
      * had a way to be told about it.
      */
     townshipBoundary?: object | null;
+    /**
+     * Staff only: draw the context layers (parcels, zones) that apply to this
+     * report's category, at parcel zoom, with the feature(s) the report fell in
+     * drawn stronger. Omitted on the resident tracking page.
+     */
+    outlines?: { category: string; highlight?: readonly OutlineHighlight[] | null } | null;
 }
 
 export default function RequestDetailMap({
@@ -53,6 +61,7 @@ export default function RequestDetailMap({
     mapLayers,
     config,
     townshipBoundary,
+    outlines = null,
 }: RequestDetailMapProps) {
     const mapRef = useRef<HTMLDivElement>(null);
     const mapInstanceRef = useRef<MapRenderer | null>(null);
@@ -71,6 +80,13 @@ export default function RequestDetailMap({
      * outside the provider's canvas.
      */
     const [assetPoint, setAssetPoint] = useState<{ lat: number; lng: number } | null>(null);
+
+    useContextLayerOutlines(
+        mapInstanceRef, popupRef, mapReady,
+        outlines ? 'staff' : 'off',
+        outlines ? [outlines.category] : null,
+        outlines?.highlight ?? null,
+    );
 
     // Load the configured map provider and attach the map
     useEffect(() => {
@@ -193,7 +209,7 @@ export default function RequestDetailMap({
                 popup.setContent(popupRoot('padding: 12px;', [
                     el('h4', {
                         style: 'margin: 0 0 8px 0; font-size: 14px; font-weight: 600; color: #1f2937;',
-                        text: '📍 Request Location',
+                        text: 'Request Location',
                     }),
                     el('p', {
                         style: 'margin: 0; font-size: 12px; color: #6b7280;',
@@ -373,7 +389,7 @@ export default function RequestDetailMap({
                             {Object.entries(matchedAsset.properties || {})
                                 .filter(([k]) => k !== 'id' && k !== 'name')
                                 .slice(0, 5)
-                                .map(([k, v]) => <li key={k}>{`${k}: ${String(v)}`}</li>)}
+                                .map(([k, v]) => <li key={k}>{`${humanize(k)}: ${String(v)}`}</li>)}
                         </ul>
                     </>
                 )}

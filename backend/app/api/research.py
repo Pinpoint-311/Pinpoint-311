@@ -15,12 +15,13 @@ All endpoints:
 - Query sanitized data (no PII)
 - Log all access for audit purposes
 """
+from app.services.priority import effective_priority
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, extract
 from sqlalchemy.orm import selectinload
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime, date, timedelta
 import csv
 import io
@@ -1317,7 +1318,11 @@ async def export_csv(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
-    privacy_mode: str = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
+    # Literal, not str: any value other than these two used to be accepted, and
+    # the GeoJSON export fuzzed only on an exact match for "fuzzed" -- so
+    # ?privacy_mode=x handed a researcher exact (home) coordinates while the
+    # admin check, which only looked for "exact", never fired.
+    privacy_mode: Literal["fuzzed", "exact"] = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
 ):
@@ -1405,7 +1410,8 @@ async def export_geojson(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
     service_code: Optional[str] = Query(None),
-    privacy_mode: str = Query("fuzzed"),
+    # See export_csv: Literal so an unknown mode is a 422, never exact output.
+    privacy_mode: Literal["fuzzed", "exact"] = Query("fuzzed", description="Location privacy: 'fuzzed' or 'exact' (requires admin)"),
     db: AsyncSession = Depends(get_db),
     current_user = Depends(get_current_researcher)
 ):
@@ -1463,8 +1469,9 @@ async def export_geojson(
 
     features = []
     for req in requests:
-        # Privacy-aware location for the geometry.
-        if privacy_mode == "fuzzed":
+        # Privacy-aware location for the geometry. Fail closed: anything that is
+        # not explicitly (admin-checked) "exact" gets fuzzed.
+        if privacy_mode != "exact":
             lat, long = fuzz_location(req.lat, req.long)
         else:
             lat, long = req.lat, req.long
@@ -1813,7 +1820,7 @@ COLUMN_DICTIONARY = [
     ("status_change_count", "integer", "Number of status changes (audit entries with action=status_change)", "Bureaucratic Friction Pack"),
     
     # Civic Engagement
-    ("submission_channel", "string", "How submitted: portal, phone, walk_in, email", "Core"),
+    ("submission_channel", "string", "How submitted: portal, phone, walk_in, email, other", "Core"),
     ("department_id", "integer", "ID of assigned department", "Core"),
     ("comment_count", "integer", "Total comments on request (internal + external)", "Core"),
     ("public_comment_count", "integer", "Public/external comments visible to reporter", "Core"),
@@ -2198,81 +2205,26 @@ async def research_chat(
         conversation += f"\n**{role_label}:** {msg.content}\n"
     conversation += f"\n**User:** {body.message}\n\n**Data Assistant:**"
 
-    # Call Vertex AI
+    # Call the configured AI provider -- the same one triage and the staff
+    # Analytics Advisor use, not a hardcoded Vertex/Gemini call.
     try:
-        import os
-        from app.services.secret_manager import get_secret as sm_get_secret
+        from app.services.ai import AIProviderError, get_ai_provider
 
-        project_id = await sm_get_secret("VERTEX_AI_PROJECT")
-        if not project_id:
-            project_id = os.getenv("GOOGLE_VERTEX_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")
-
-        if not project_id:
-            raise HTTPException(status_code=503, detail="Vertex AI not configured")
-
-        service_account_json = await sm_get_secret("VERTEX_AI_SERVICE_ACCOUNT_KEY")
-
-        import google.auth
-        from google.auth.transport.requests import Request
-        from google.oauth2 import service_account as sa_module
-        import aiohttp
-
-        if service_account_json:
-            sa_info = json.loads(service_account_json)
-            credentials = sa_module.Credentials.from_service_account_info(
-                sa_info,
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
-            )
-        else:
-            credentials, _ = google.auth.default(
-                scopes=['https://www.googleapis.com/auth/cloud-platform']
+        provider = await get_ai_provider(db)
+        if not provider:
+            raise HTTPException(
+                status_code=503,
+                detail="AI is not set up or is switched off. An admin can configure it under AI in the Admin Console.",
             )
 
-        credentials.refresh(Request())
-
-        endpoint = f"https://aiplatform.googleapis.com/v1/projects/{project_id}/locations/global/publishers/google/models/gemini-3.1-flash-lite:generateContent"
-
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": conversation}]}],
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.8,
-                "maxOutputTokens": 4096,
-            },
-            "safetySettings": [
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-            ]
-        }
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                endpoint,
-                headers={
-                    "Authorization": f"Bearer {credentials.token}",
-                    "Content-Type": "application/json"
-                },
-                json=payload
-            ) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    logger.error(f"Vertex AI research chat error: {error_text}")
-                    raise HTTPException(status_code=502, detail=f"AI service error: {response.status}")
-
-                result = await response.json()
-
-        # Extract response text
-        ai_response = ""
-        if 'candidates' in result and result['candidates']:
-            parts = result['candidates'][0].get('content', {}).get('parts', [])
-            for part in parts:
-                if 'text' in part:
-                    ai_response += part['text']
+        try:
+            ai_response = await provider.complete_text(conversation, temperature=0.3, max_tokens=4096)
+        except AIProviderError as e:
+            logger.error(f"Research chat AI error ({provider.provider}/{provider.model}): {e}")
+            raise HTTPException(status_code=502, detail=f"The AI service ({provider.provider}) returned an error.")
 
         if not ai_response:
-            ai_response = "I wasn't able to generate a response. Please try rephrasing your question."
+            ai_response = "I couldn't generate a response. Try rephrasing your question."
 
         # Log the research chat access
         await log_research_access(
@@ -2287,7 +2239,7 @@ async def research_chat(
         raise
     except Exception as e:
         logger.error(f"Research chat error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to get AI response")
+        raise HTTPException(status_code=500, detail="Couldn't get a response from the AI service. Try again.")
 
 
 
@@ -2499,7 +2451,7 @@ def build_dataset_row(req, _eq, privacy_mode, *, packs=None, operational=False, 
         "ai_vs_manual_priority_diff": ai_priority_diff,
         "status": req.status,
         "closed_substatus": req.closed_substatus,
-        "priority": req.priority,
+        "priority": effective_priority(req),
         "resolution_outcome": resolution_outcome,
         "address_anonymized": address_anon,
         "latitude": lat,

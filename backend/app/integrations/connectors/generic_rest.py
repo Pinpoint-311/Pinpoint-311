@@ -14,6 +14,11 @@ Config:
     get_path            default "/requests/{id}"  (GET)
     list_path           default "/requests"       (GET, ?updated_since=ISO8601)
     status_path         default "/requests/{id}/status"  (PUT {status, notes})
+    update_path         optional "/requests/{id}" -- where a priority change is
+                        sent (update_method, default PATCH, body {<priority field>: value}).
+                        No default: without it priority changes stay local.
+    priority_map_out    optional {"high"|"medium"|"low"|"1".."10": vendor value};
+                        without it the 1-10 score is sent as-is
     auth_style          "bearer" (default) | "api_key_header" | "basic" | "query"
     auth_header         header name when auth_style=api_key_header (default X-API-Key)
     auth_query_param    query param name when auth_style=query (default api_key)
@@ -21,6 +26,7 @@ Config:
     status_field        response field holding status (default "status")
     updated_field       response field holding updated timestamp (default "updated_at")
     field_map           optional {pinpoint_field: vendor_field} overrides for the create body
+    service_code_map_out  {local service code: vendor category code} for the create body
 Credentials:
     api_key             used by bearer / api_key_header / query styles
     username, password  used by basic style
@@ -71,6 +77,7 @@ OPTIONAL_ENDPOINTS = {
     "comments": "comments_path",
     "documents": "documents_path",
     "assets": "assets_path",
+    "push_priority": "update_path",
 }
 
 # Work-order support is not an endpoint -- the fields ride along on records the
@@ -202,11 +209,17 @@ class GenericRestConnector(BaseConnector):
 
     def _build_create_body(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         field_map = {**DEFAULT_FIELD_MAP, **(self.config.get("field_map") or {})}
+        mapped_code = self.map_service_code_out(payload.get("service_code"))
+        if mapped_code:
+            # The vendor's own category code, from service_code_map_out.
+            payload = {**payload, "service_code": mapped_code}
         body: Dict[str, Any] = {}
         for ours, theirs in field_map.items():
             if not theirs:
                 continue  # mapping a field to null/"" omits it
             value = payload.get(ours)
+            if ours == "priority":
+                value = self.map_priority_out(value)
             if value is not None and value != []:
                 body[theirs] = value
         extra = self.config.get("static_fields") or {}
@@ -278,6 +291,27 @@ class GenericRestConnector(BaseConnector):
                 json=body,
             )
             self._raise_for_status(resp, f"{self.platform} status update")
+
+    async def push_priority(self, external_id: str, priority: Any) -> None:
+        if not str(self.config.get("update_path") or "").strip():
+            raise ConnectorError(f"{self.platform}: no update path is set, so priority changes cannot be sent")
+        field = {**DEFAULT_FIELD_MAP, **(self.config.get("field_map") or {})}.get("priority")
+        if not field:
+            raise ConnectorError(f"{self.platform}: priority is mapped to no vendor field")
+        value = self.map_priority_out(priority)
+        if value is None:
+            raise ConnectorError(f"{self.platform}: this priority has no mapped vendor value")
+        method = str(self.config.get("update_method") or "PATCH").strip().upper()
+        if method not in ("PATCH", "PUT", "POST"):
+            raise ConnectorError(f"{self.platform}: update_method must be PATCH, PUT or POST, not {method!r}")
+        async with self._client(**self._request_kwargs()) as client:
+            resp = await client.request(
+                method,
+                self._url("update_path", "", external_id),
+                params=self._query_auth(),
+                json={field: value},
+            )
+            self._raise_for_status(resp, f"{self.platform} priority update")
 
     def _extract_items(self, body: Any) -> List[Dict[str, Any]]:
         if isinstance(body, list):

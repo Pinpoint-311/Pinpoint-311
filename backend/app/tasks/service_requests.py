@@ -6,7 +6,12 @@ from app.services import email_layout as L
 from app.services.town_time import format_town
 from sqlalchemy import select
 import asyncio
+import logging
 import os
+
+# Module-level: most tasks define their own, and anchor_audit_chain did not,
+# so its first log line raised NameError and the nightly anchor never ran.
+logger = logging.getLogger(__name__)
 
 
 def run_async(coro):
@@ -31,6 +36,10 @@ def run_async(coro):
         try:
             return await coro
         finally:
+            # Let fire-and-forget writes (usage metering, connector health)
+            # finish rather than be cancelled when this loop closes.
+            from app.core.background import drain
+            await drain()
             await engine.dispose()
 
     return asyncio.run(_runner())
@@ -242,6 +251,11 @@ def analyze_request(self, request_id: int):
                     _geo = await geocode_dispatch.geocode(db, request.address)
                     if _geo:
                         request.lat, request.long = _geo.lat, _geo.lng
+                        # The pin arrived after intake, so the parcel/zone
+                        # context the intake path records is taken now.
+                        from app.services import gis_layers
+                        await gis_layers.refresh_request_context(
+                            db, request, actor_type="system", actor_name="Geocoder", reason="geocoded")
                 except Exception:
                     logger.debug("[Analysis] geocode fallback failed", exc_info=True)
             
@@ -377,6 +391,12 @@ def analyze_request(self, request_id: int):
     try:
         result = run_async(_analyze())
         logger.info(f"[AI Analysis] Task completed: {result}")
+        if isinstance(result, dict) and result.get("status") == "success":
+            # Send the report to the town's systems now that it carries the
+            # triaged priority (and update ones it already reached).
+            from app.services.enqueue import enqueue
+            from app.tasks.integrations import sync_after_triage
+            enqueue(sync_after_triage, request_id)
         return result
     except Exception as exc:
         logger.error(f"[AI Analysis] Task failed with error: {exc}", exc_info=True)
@@ -403,6 +423,9 @@ def geocode_address(self, request_id: int):
             if geo_result:
                 request.lat = geo_result.lat
                 request.long = geo_result.lng
+                from app.services import gis_layers
+                await gis_layers.refresh_request_context(
+                    db, request, actor_type="system", actor_name="Geocoder", reason="geocoded")
                 await db.commit()
                 return {
                     "status": "success",
@@ -504,6 +527,18 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
             if not request:
                 return {"error": "Request not found"}
             
+            # The resident asked not to be contacted about this report.
+            if getattr(request, "contact_opt_out", False):
+                logger.info(f"[Notification] Skipping {notification_type} for {request.service_request_id}: resident opted out")
+                return {"status": "skipped", "reason": "resident opted out"}
+            # A placeholder address (manual-...@intake.local, integration-...@
+            # intake.local, archived-...@retention.local) is not a mailbox:
+            # sending to it bounces and harms the town's sender reputation.
+            if (request.email or "").strip().lower().rsplit("@", 1)[-1].split(".")[-1] == "local":
+                email_enabled = False
+                if not (sms_enabled and request.phone):
+                    return {"status": "skipped", "reason": "no deliverable contact"}
+
             logger.info(f"[Notification] Sending {notification_type} for request {request.service_request_id} (email={email_enabled}, sms={sms_enabled})")
             
             # Get user's preferred language for translation
@@ -1116,7 +1151,10 @@ def purge_old_ip_addresses():
             r1 = await db.execute(
                 update(AuditLog)
                 .where(AuditLog.timestamp < cutoff, AuditLog.ip_address.isnot(None))
-                .values(ip_address=None, user_agent=None)
+                # The salt goes with them: it is what lets the chain's
+                # commitment be checked against the IP, and without it the
+                # remaining digest reveals nothing.
+                .values(ip_address=None, user_agent=None, context_salt=None)
             )
             r2 = await db.execute(
                 update(DisclaimerAcknowledgment)
@@ -1589,14 +1627,17 @@ def send_weekly_digest():
 
 @celery_app.task(bind=True)
 def anchor_audit_chain(self):
-    """Record the request-audit hash-chain head to the append-only AuditAnchor
-    table AND emit it to the application log. Runs daily via Celery Beat.
+    """Record the heads of both audit hash chains -- request_audit_logs and
+    audit_logs -- to the append-only AuditAnchor table AND emit them to the
+    application log. Runs daily via Celery Beat.
 
-    This puts the chain head outside the mutable audit table (and, in hosted
+    This puts the chain heads outside the mutable audit tables (and, in hosted
     mode, outside the instance entirely via log shipping), so a full-history
     rewrite can't pass silently — the anchors and external logs would disagree.
+    The audit_logs head is recorded with its id and the row count up to it, so
+    /api/audit/verify-integrity can tell when entries were cut off the tail.
     """
-    from app.models import RequestAuditLog, AuditAnchor
+    from app.models import RequestAuditLog, AuditAnchor, AuditLog
     from sqlalchemy import func as _func
 
     async def _anchor():
@@ -1606,22 +1647,46 @@ def anchor_audit_chain(self):
                 .where(RequestAuditLog.entry_hash.isnot(None))
                 .order_by(RequestAuditLog.id.desc()).limit(1)
             )).scalar()
-            if not head:
-                return {"status": "skipped", "reason": "no hashed audit entries yet"}
-            count = (await db.execute(
-                select(_func.count()).select_from(RequestAuditLog)
-                .where(RequestAuditLog.entry_hash.isnot(None))
-            )).scalar() or 0
+            count = 0
+            if head:
+                count = (await db.execute(
+                    select(_func.count()).select_from(RequestAuditLog)
+                    .where(RequestAuditLog.entry_hash.isnot(None))
+                )).scalar() or 0
+            auth = (await db.execute(
+                select(AuditLog.id, AuditLog.entry_hash)
+                .order_by(AuditLog.id.desc()).limit(1)
+            )).first()
+            auth_count = auth_legacy = None
+            if auth:
+                auth_count, auth_legacy = (await db.execute(
+                    select(_func.count(),
+                           _func.count().filter(AuditLog.chain_version == 1))
+                    .select_from(AuditLog).where(AuditLog.id <= auth.id)
+                )).one()
+            if not head and not auth:
+                return {"status": "skipped", "reason": "no audit entries yet"}
+            auth_head = auth.entry_hash if auth else None
             last = (await db.execute(
                 select(AuditAnchor).order_by(AuditAnchor.id.desc()).limit(1)
             )).scalar_one_or_none()
-            if last and last.head_hash == head:
+            if last and last.head_hash == head and last.auth_head_id == (auth.id if auth else None) \
+                    and last.auth_head_hash == auth_head:
                 return {"status": "unchanged", "head": head, "count": count}
-            db.add(AuditAnchor(head_hash=head, entry_count=count))
+            db.add(AuditAnchor(
+                head_hash=head, entry_count=count,
+                auth_head_id=auth.id if auth else None, auth_head_hash=auth_head,
+                auth_entry_count=auth_count, auth_legacy_count=auth_legacy,
+            ))
             await db.commit()
             # External-visible line (shipped to central log aggregation in hosted mode)
-            logger.info(f"[AUDIT ANCHOR] head={head} count={count}")
-            return {"status": "anchored", "head": head, "count": count}
+            logger.info(
+                f"[AUDIT ANCHOR] head={head} count={count} "
+                f"auth_head={auth_head} auth_head_id={auth.id if auth else None} auth_count={auth_count}"
+            )
+            return {"status": "anchored", "head": head, "count": count,
+                    "auth_head": auth_head, "auth_head_id": auth.id if auth else None,
+                    "auth_count": auth_count}
 
     try:
         return run_async(_anchor())
@@ -1754,9 +1819,8 @@ def proactive_health_scan():
             # mode, or with a screen reader, has to get the same answer.
             blocks = [
                 L.heading(f"{worst}: system needs attention", 2),
-                L.paragraph("Each check below has crossed its alert threshold. "
-                            "The condition observed and the action for it are "
-                            "stated on each one."),
+                L.paragraph("Each check below has crossed its alert threshold "
+                            "and states what was observed and what to do."),
             ]
             for c in escalations:
                 tone = "critical" if c["status"] == "critical" else "warning"
@@ -1818,3 +1882,4 @@ def proactive_health_scan():
     except Exception as e:
         logger.error(f"[proactive] scan failed: {e}")
         return {"status": "error", "error": str(e)}
+

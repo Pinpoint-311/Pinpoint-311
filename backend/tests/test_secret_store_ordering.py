@@ -83,7 +83,7 @@ def test_the_refusal_says_what_to_do_instead():
     nothing -- so the message sent people to a flow that would have caused the
     problem it was warning about."""
     src = inspect.getsource(system.save_provider)
-    assert "does not move them" in src
+    assert "does not move existing credentials" in src
     assert "hourly migration" in src
 
 

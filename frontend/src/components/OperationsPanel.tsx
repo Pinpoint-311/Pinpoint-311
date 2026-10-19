@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useId } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Server, Database, RefreshCw, Play, Trash2, HardDrive, Clock,
@@ -6,11 +6,15 @@ import {
     Cloud, Activity, AlertTriangle, Cpu
 } from 'lucide-react';
 import { Card, Button } from './ui';
+import { RequestStatusChip } from './VersionSwitcher';
+import type { UpdaterState, UpgradeRequestRecord } from '../services/upgradeTypes';
+import { ACTIVE_UPGRADE_STATUSES } from '../services/upgradeTypes';
 import api, { HealthDashboard, RunbookResult, ProactiveHealth, HealthCheck } from '../services/api';
 import type { ConnectorHealth } from '../types';
 import { ALERTING_STATUSES, hasAlert } from './capabilityUI';
 import { useDialog } from './DialogProvider';
 import { useAnnounce } from '../context/AccessibilityContext';
+import { humanize } from '../utils/humanize';
 
 /* Status words a person can read.
  *
@@ -40,7 +44,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const statusLabel = (status: string): string =>
-    STATUS_LABELS[status] ?? String(status).replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
+    STATUS_LABELS[status] ?? humanize(String(status));
 
 /* Same list the provider cards gate their mute button on, so "is this
  * alerting?" cannot mean two different things in two places. */
@@ -63,12 +67,95 @@ const RESOLUTION_TIPS: Record<string, { issue: string; steps: string[] }> = {
      * single-container deployment the first suggested remedy is one that
      * always fails. The host-side command comes first now, because it works
      * everywhere. */
-    backend: { issue: 'Backend API not responding', steps: ['Restart it on the host: docker compose restart backend', 'Or press Restart below, where this deployment allows it', 'Check the server logs'] },
+    backend: { issue: 'Backend API not responding', steps: ['Request a restart below (the host updater restarts this instance only)', 'Or on the host: docker compose -p <project> restart backend', 'Check the server logs'] },
     frontend: { issue: 'Frontend not reachable', steps: ['Check FRONTEND_HOST — a wrong address looks the same as a stopped service', 'Restart on the host: docker compose restart frontend', 'Review build errors'] },
     db: { issue: 'Database connection failed', steps: ['Check PostgreSQL is running', 'Check free disk space', 'Review connection limits'] },
     redis: { issue: 'Redis cache unavailable', steps: ['Restart on the host: docker compose restart redis', 'Check Redis logs', 'Verify memory limits'] },
     caddy: { issue: 'Reverse proxy not routing', steps: ['If you reached this page through the proxy, it is routing', 'Check the Caddyfile', 'Verify SSL certificates'] }
 };
+
+/* Restarts are requests the host updater runs (docs/design/secure-upgrades.md,
+ * Phase 3): backend, worker and frontend of THIS instance's compose project,
+ * nothing else. One admin is enough -- a restart changes no code or schema
+ * and is the lever people reach for mid-incident -- but it needs a reason,
+ * which goes to every admin and the audit log. */
+function RestartRequests() {
+    const [updater, setUpdater] = useState<UpdaterState | null>(null);
+    const [latest, setLatest] = useState<UpgradeRequestRecord | null>(null);
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const announce = useAnnounce();
+    const reasonId = useId();
+
+    const load = useCallback(async () => {
+        try {
+            const data = await api.getUpgradeRequests();
+            setUpdater(data.updater);
+            setLatest(data.requests.find(r => r.action === 'restart') ?? null);
+        } catch (err: any) {
+            setError(err?.message || 'Could not load restart requests');
+        }
+    }, []);
+    useEffect(() => { load(); }, [load]);
+    const active = !!latest && ACTIVE_UPGRADE_STATUSES.includes(latest.status);
+    useEffect(() => {
+        if (!active) return;
+        const t = setInterval(load, 5000);
+        return () => clearInterval(t);
+    }, [active, load]);
+
+    const request = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            const r = await api.createUpgradeRequest({ action: 'restart', reason: reason.trim() });
+            setLatest(r);
+            setReason('');
+            announce('Restart requested. The updater will run it within about a minute.', 'polite');
+        } catch (err: any) {
+            setError(err?.message || 'The restart was not requested');
+            announce(`The restart was not requested: ${err?.message || 'error'}.`, 'assertive');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    if (updater && !updater.connected) {
+        return (
+            <p role="note" className="mb-3 text-sm text-amber-200/90 bg-amber-500/10 border border-amber-400/30 rounded-lg p-3">
+                Container restarts run through the host updater, and none is connected. Connect it in
+                Version Control, or restart on the server: docker compose -p &lt;project&gt; restart backend worker frontend
+            </p>
+        );
+    }
+    return (
+        <div className="mb-4 space-y-2">
+            <div className="flex flex-wrap items-end gap-2">
+                <div className="flex-1 min-w-[12rem]">
+                    <label htmlFor={reasonId} className="block text-xs text-gray-300 mb-1">Why restart the app containers?</label>
+                    <input id={reasonId} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
+                        placeholder="e.g. worker stopped sending emails"
+                        className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm" />
+                </div>
+                <button type="button" className="btn-outline text-sm" onClick={request}
+                    disabled={busy || active || reason.trim().length < 3 || !updater}>
+                    {busy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" aria-hidden="true" /> : <RotateCcw className="w-4 h-4 mr-1" aria-hidden="true" />}
+                    Request restart
+                </button>
+            </div>
+            <p className="text-xs text-gray-400">Restarts backend, worker and frontend of this instance only. The database, Redis and the shared proxy are not touched.</p>
+            {latest && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300" data-testid="restart-request-status">
+                    <span>Restart #{latest.id} by {latest.requested_by}</span>
+                    <RequestStatusChip status={latest.status} />
+                    {latest.outcome_summary && <span className="text-gray-400">{latest.outcome_summary}</span>}
+                </div>
+            )}
+            {error && <p className="text-xs text-red-300">{error}</p>}
+        </div>
+    );
+}
 
 export default function OperationsPanel() {
     const [health, setHealth] = useState<HealthDashboard | null>(null);
@@ -221,7 +308,7 @@ export default function OperationsPanel() {
     const executeRunbook = async (action: string, label: string) => {
         const confirmed = await dialog.confirm({
             title: `Execute: ${label}`,
-            message: `Are you sure you want to execute "${label}"?\n\nThis action will be logged and may briefly affect availability.`,
+            message: `Run "${label}"?\n\nThis is logged and can briefly interrupt service.`,
             variant: action.includes('restart') ? 'warning' : 'info',
             confirmText: 'Execute',
         });
@@ -275,8 +362,6 @@ export default function OperationsPanel() {
         };
         return colors[status] || colors.unknown;
     };
-
-    const canRestart = (name: string) => ['backend', 'frontend', 'redis', 'caddy'].includes(name);
 
     // Find services with issues
     const degradedServices = health ?
@@ -492,7 +577,7 @@ export default function OperationsPanel() {
                                                 : 'bg-slate-800/50 border-slate-700/50'}`}
                                         >
                                             <span className={`px-2 py-0.5 mt-0.5 text-xs rounded-full border shrink-0 ${getStatusBadge(c.status === 'critical' ? 'error' : 'fallback')}`}>
-                                                {c.status}
+                                                {statusLabel(c.status)}
                                             </span>
                                             <div className={`min-w-0 flex-1 ${isMuted ? 'opacity-60' : ''}`}>
                                                 <p className="text-white text-sm font-medium">
@@ -553,11 +638,11 @@ export default function OperationsPanel() {
                                         : 'bg-slate-800/50 border-slate-700/50'}`}
                                 >
                                     <span className={`px-2 py-0.5 mt-0.5 text-xs rounded-full border shrink-0 ${getStatusBadge(hasAlert(c.status) ? 'error' : 'unknown')}`}>
-                                        {c.status}
+                                        {statusLabel(c.status)}
                                     </span>
                                     <div className={`min-w-0 flex-1 ${isMuted ? 'opacity-60' : ''}`}>
-                                        <p className="text-white text-sm font-medium capitalize">
-                                            {label}: <span className="font-normal text-gray-300">{c.summary}</span>
+                                        <p className="text-white text-sm font-medium">
+                                            {humanize(label)}: <span className="font-normal text-gray-300">{c.summary}</span>
                                         </p>
                                         {isMuted && (
                                             <p className="text-xs mt-1.5 text-amber-200/85">
@@ -594,24 +679,12 @@ export default function OperationsPanel() {
                             return (
                                 <div key={name} className="bg-slate-800/50 rounded-lg p-3 border border-slate-700/50">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-white font-medium capitalize">{name}</span>
+                                        <span className="text-white font-medium">{humanize(name)}</span>
                                         <span className={`px-2 py-0.5 text-xs rounded-full border ${getStatusBadge(svc.status)}`}>
                                             {statusLabel(svc.status)}
                                         </span>
                                     </div>
                                     <p className="text-gray-300 text-xs truncate mb-2">{svc.uptime || 'Checking...'}</p>
-                                    {canRestart(name) && (
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            className="w-full text-xs"
-                                            onClick={() => executeRunbook(`restart-${name}`, `Restart ${name}`)}
-                                            disabled={runbookLoading !== null}
-                                        >
-                                            <RotateCcw className="w-3 h-3 mr-1" aria-hidden="true" />
-                                            Restart
-                                        </Button>
-                                    )}
                                 </div>
                             );
                         })}
@@ -702,8 +775,8 @@ export default function OperationsPanel() {
                             if (!tips) return null;
                             return (
                                 <div key={serviceName} className="bg-slate-800/50 rounded-lg p-3">
-                                    <h4 className="font-medium text-white text-sm capitalize mb-2">
-                                        {serviceName}: {tips.issue}
+                                    <h4 className="font-medium text-white text-sm mb-2">
+                                        {humanize(serviceName)}: {tips.issue}
                                     </h4>
                                     <ol className="list-decimal list-inside text-gray-300 text-xs space-y-1">
                                         {tips.steps.map((step, i) => (
@@ -723,15 +796,8 @@ export default function OperationsPanel() {
                     <Play className="w-5 h-5 text-green-400" aria-hidden="true" />
                     Emergency Operations
                 </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <Button
-                        variant="secondary"
-                        onClick={() => executeRunbook('restart-all', 'Restart All Services')}
-                        disabled={runbookLoading !== null}
-                    >
-                        {runbookLoading === 'restart-all' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden="true" /> : <RotateCcw className="w-4 h-4 mr-2" aria-hidden="true" />}
-                        Restart All
-                    </Button>
+                <RestartRequests />
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                     <Button
                         variant="secondary"
                         onClick={() => executeRunbook('clear-cache', 'Clear Cache')}
@@ -786,7 +852,7 @@ export default function OperationsPanel() {
                             <div className="flex items-start gap-3">
                                 {lastAction.status === 'success' ? <CheckCircle className="w-5 h-5 text-green-400 mt-0.5" aria-hidden="true" /> : <XCircle className="w-5 h-5 text-red-400 mt-0.5" aria-hidden="true" />}
                                 <div className="flex-1 min-w-0">
-                                    <span className="font-medium text-white">{lastAction.action}: {statusLabel(lastAction.status)}</span>
+                                    <span className="font-medium text-white">{humanize(lastAction.action)}: {statusLabel(lastAction.status)}</span>
                                     <span className="text-gray-300 text-sm ml-2">at {new Date(lastAction.timestamp).toLocaleTimeString()}</span>
                                     {(() => {
                                         const d = (lastAction.details || {}) as Record<string, any>;

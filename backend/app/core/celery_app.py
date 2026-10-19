@@ -26,12 +26,46 @@ def _use_null_pool_in_worker(**_kwargs):
 worker_process_init.connect(_use_null_pool_in_worker)
 worker_init.connect(_use_null_pool_in_worker)
 
+
+def _fresh_sync_pool_in_child(**_kwargs):
+    """Forked children must not reuse the parent's psycopg2 connections.
+
+    The parent opens some before it forks -- the crash-reporting hook below
+    reads the saved Sentry DSN through the secret store, which uses the sync
+    engine -- and a fork copies those sockets into every child. Two processes
+    then talk over one Postgres connection, which is what Sentry showed as
+    "error with status PGRES_TUPLES_OK and no message from the libpq" and
+    "server closed the connection unexpectedly" in the notification tasks,
+    followed by tasks hanging until the 300 s hard limit killed them.
+
+    `dispose(close=False)` is SQLAlchemy's prescribed fix: the child forgets
+    the inherited connections without closing them (closing would cut them
+    out from under the parent) and opens its own. Children only; connected
+    before the crash-reporting hook so that hook already gets a fresh one.
+    """
+    from app.db.session import sync_engine
+    sync_engine.dispose(close=False)
+
+
+worker_process_init.connect(_fresh_sync_pool_in_child)
+
+
+def _crash_reporting_in_worker(**kwargs):
+    # The worker never started Sentry at all, so a failing nightly sync or
+    # notification task was only ever in the container log.
+    from app.core.crash_reporting import init_in_worker
+    init_in_worker(**kwargs)
+
+
+worker_process_init.connect(_crash_reporting_in_worker)
+worker_init.connect(_crash_reporting_in_worker)
+
 celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
-             "app.tasks.storage", "app.tasks.connector_checks"]
+             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades"]
 )
 
 celery_app.conf.update(
@@ -62,6 +96,12 @@ celery_app.conf.update(
     # The 15-minute pollers stay intervals: they fire within minutes of boot
     # regardless, and a fixed-minute stampede buys nothing.
     beat_schedule={
+        # Upgrade requests whose host updater stopped reporting become failed
+        # (app/tasks/upgrades.py). Interval, not crontab: it is a sweep.
+        "upgrade-request-lease": {
+            "task": "app.tasks.upgrades.expire_stale_upgrade_requests",
+            "schedule": 60 * 5,
+        },
         # Proactive health scan: warn admins by email before something fails
         # (disk/memory/connections/backup staleness), every 15 minutes.
         "proactive-health-scan": {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, FormEvent } from 'react';
 import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -48,11 +48,22 @@ import {
     FlagTriangleRight,
     Lock,
     Globe,
+    SlidersHorizontal,
+    Target,
+    Building2,
+    Scale,
+    RotateCcw,
+    Bot,
+    Eye,
 } from 'lucide-react';
 import { CommentCard, CommentEmptyState } from '../components/commentUI';
-import { Button, Card, Modal, Input, Textarea, Select, StatusBadge, Badge } from '../components/ui';
+import { Button, Card, Modal, Textarea, StatusBadge, Badge, Chip, RoleChip } from '../components/ui';
+import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
+import { languageLabel } from '../utils/languages';
+import { sourceLabel } from '../utils/requestSource';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData, PlatformFeedbackStatistics } from '../types';
@@ -68,6 +79,8 @@ import ActivityFeed from '../components/ActivityFeed';
 import { bellAppearance, markKeyRead, readIdsFromStorage, readKey, unreadCount } from '../components/activityBell';
 import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
+import MatchedAssetCard from '../components/MatchedAssetCard';
+import { LocationContextSection } from '../components/LocationContextCard';
 
 type View = 'dashboard' | 'active' | 'in_progress' | 'resolved' | 'statistics';
 
@@ -183,7 +196,6 @@ export default function StaffDashboard() {
     const [statsLoading, setStatsLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [searchQuery, setSearchQuery] = useState('');
-    const [showIntakeModal, setShowIntakeModal] = useState(false);
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [statistics, setStatistics] = useState<Statistics | null>(null);
     const [advancedStats, setAdvancedStats] = useState<AdvancedStatistics | null>(null);
@@ -206,16 +218,6 @@ export default function StaffDashboard() {
     // One config for every map on this page, from the town's chosen provider.
     const mapConfig = useMemo(() => resolveMapProviderConfig(mapsConfig), [mapsConfig]);
 
-    // Intake form state
-    const [intakeData, setIntakeData] = useState({
-        service_code: '',
-        description: '',
-        address: '',
-        first_name: '',
-        last_name: '',
-        phone: '',
-        source: 'phone',
-    });
 
     // Comments state
     const [comments, setComments] = useState<RequestComment[]>([]);
@@ -315,7 +317,7 @@ export default function StaffDashboard() {
 
     // AI Analytics Chat state
     const [chatOpen, setChatOpen] = useState(false);
-    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([]);
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; error?: boolean }[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [chatLoading, setChatLoading] = useState(false);
     const chatEndRef = useRef<HTMLDivElement>(null);
@@ -340,7 +342,7 @@ export default function StaffDashboard() {
             const result = await api.analyticsChat(msg, newMessages.slice(0, -1));
             setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
         } catch (err: any) {
-            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ Error: ${err.message || 'Failed to get AI response'}` }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }]);
         } finally {
             setChatLoading(false);
         }
@@ -551,6 +553,15 @@ export default function StaffDashboard() {
         setFilterPhotoReview(false);
     };
 
+    // Whether an admin has hidden this report's whole category from public view.
+    const categoryHidden = !!(selectedRequest
+        && services.find(s => s.service_code === selectedRequest.service_code)?.hidden_from_public);
+
+    // Filters set in the collapsible panel (department, category, priority),
+    // counted on the Filters button so a closed panel still shows they're on.
+    const activePanelFilters = (filterDepartment !== null ? 1 : 0) + (filterService !== null ? 1 : 0)
+        + (mapPriorityFilter !== 'all' ? 1 : 0);
+
     const hasActiveFilters = searchQuery.trim() || filterDepartment !== null || filterService !== null || filterAssignment !== 'all' || mapPriorityFilter !== 'all' || filterPhotoReview;
 
     /* How many reports are holding a photo nobody has decided about yet.
@@ -749,10 +760,17 @@ export default function StaffDashboard() {
      * all, and below 1024px, where the panel is a `fixed inset-0` overlay, the
      * next Tab walked the list *behind* the overlay with no visible focus ring
      * anywhere on screen. */
+    /* Keyed on the request's id, not the object. The open request is replaced
+     * by a fresh copy every 30 seconds (every 5 while its AI analysis is still
+     * coming), and by every status change, comment or archive. When this
+     * depended on the object, each of those counted as "a new request was
+     * opened": the panel jumped back to the top and focus was pulled to the
+     * heading -- out of a half-typed comment -- while staff were using it. */
+    const openRequestId = selectedRequest?.service_request_id;
     useEffect(() => {
-        if (selectedRequest) {
-            updateHash(`${currentView}/request/${selectedRequest.service_request_id}`);
-            updateTitle(`Request ${selectedRequest.service_request_id}`);
+        if (openRequestId) {
+            updateHash(`${currentView}/request/${openRequestId}`);
+            updateTitle(`Request ${openRequestId}`);
             // Scroll detail panel to top when a new request is selected
             if (detailPanelRef.current) {
                 detailPanelRef.current.scrollTo({ top: 0, behavior: 'instant' });
@@ -773,7 +791,7 @@ export default function StaffDashboard() {
         if (restoreTo?.isConnected && (document.activeElement === document.body || document.activeElement === null)) {
             restoreTo.focus({ preventScroll: true });
         }
-    }, [selectedRequest, currentView, updateHash, updateTitle]);
+    }, [openRequestId, currentView, updateHash, updateTitle]);
 
     /* Below the `lg` breakpoint the detail panel is `fixed inset-0 z-50` — a
      * full-screen overlay laid over the list, which stays in the DOM behind it,
@@ -983,7 +1001,7 @@ export default function StaffDashboard() {
             announce(`Status set to ${status === 'in_progress' ? 'In Progress' : status === 'open' ? 'Open' : status}.`);
         } catch (err) {
             console.error('Failed to update status:', err);
-            announce('Could not update the status. Please try again.', 'assertive');
+            announce('Couldn\'t update the status. Try again.', 'assertive');
         }
     };
 
@@ -1008,7 +1026,7 @@ export default function StaffDashboard() {
             announce('Request closed.');
         } catch (err) {
             console.error('Failed to close request:', err);
-            announce('Could not close the request. Please try again.', 'assertive');
+            announce('Couldn\'t close the request. Try again.', 'assertive');
         }
     };
 
@@ -1045,7 +1063,7 @@ export default function StaffDashboard() {
                 : 'Public reply sent to the reporter.');
         } catch (err) {
             console.error('Failed to add comment:', err);
-            announce('Could not post the comment. Please try again.', 'assertive');
+            announce('Couldn\'t post the comment. Try again.', 'assertive');
         } finally {
             setIsSubmittingComment(false);
         }
@@ -1064,29 +1082,6 @@ export default function StaffDashboard() {
             console.error('Failed to delete request:', err);
         } finally {
             setIsDeleting(false);
-        }
-    };
-
-    const handleCreateIntake = async (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            await api.createManualIntake({
-                ...intakeData,
-                source: intakeData.source as 'phone' | 'walk_in' | 'email',
-            });
-            setShowIntakeModal(false);
-            setIntakeData({
-                service_code: '',
-                description: '',
-                address: '',
-                first_name: '',
-                last_name: '',
-                phone: '',
-                source: 'phone',
-            });
-            loadInitialData();
-        } catch (err) {
-            console.error('Failed to create intake:', err);
         }
     };
 
@@ -1150,7 +1145,7 @@ export default function StaffDashboard() {
             await api.exportRequests({ format });
         } catch (err: any) {
             console.error('Export failed:', err);
-            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+            alert(`Export didn't finish: ${err.message || 'unknown error'}. Try again.`);
         }
     };
 
@@ -1159,12 +1154,12 @@ export default function StaffDashboard() {
             await api.exportStatistics({ format });
         } catch (err: any) {
             console.error('Statistics export failed:', err);
-            alert(`Export failed: ${err.message || 'Unknown error'}. Please try again.`);
+            alert(`Export didn't finish: ${err.message || 'unknown error'}. Try again.`);
         }
     };
 
     return (
-        <div className="h-screen flex overflow-hidden">
+        <div className="relative h-screen flex overflow-hidden">
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (
@@ -1199,9 +1194,13 @@ export default function StaffDashboard() {
                                 title="Go to Home"
                             >
                                 {settings?.logo_url ? (
-                                    <div className="relative">
-                                        <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-8 w-auto" />
-                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                                    // shrink-0 + max-w-none: in this crowded flex row the
+                                    // image's preflight max-width:100% let the browser
+                                    // squeeze it narrower than its natural width at a
+                                    // fixed height, so a round seal came out cropped.
+                                    <div className="relative shrink-0">
+                                        <img src={settings.logo_url} alt={`${settings?.township_name || 'Municipality'} logo`} className="h-10 w-auto max-w-none object-contain" />
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
                                             <Home className="w-4 h-4 text-white" aria-hidden="true" />
                                         </div>
                                     </div>
@@ -1323,7 +1322,7 @@ export default function StaffDashboard() {
                                 </div>
                                 <div className="min-w-0 flex-1 overflow-hidden text-left">
                                     <p className="font-medium text-white text-sm truncate">{user?.full_name || user?.username}</p>
-                                    <p className="text-xs text-white/50 capitalize">{user?.role}</p>
+                                    <div className="mt-0.5"><RoleChip role={user?.role} /></div>
                                     {user?.departments && user.departments.length > 0 && (
                                         <p className="text-xs text-primary-400 truncate mt-0.5">{user.departments.map(d => d.name).join(', ')}</p>
                                     )}
@@ -1724,7 +1723,7 @@ export default function StaffDashboard() {
                                 <div className="bg-gradient-to-br from-purple-500/20 to-purple-500/5 border border-purple-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-purple-200 uppercase tracking-wider">Next Week Forecast</div>
                                     <div className="text-2xl sm:text-3xl font-bold text-white mt-1 sm:mt-2">{advancedStats?.predictive_insights?.volume_forecast_next_week || 0}</div>
-                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1 capitalize">Trend: {advancedStats?.predictive_insights?.trend_direction || 'stable'}</div>
+                                    <div className="text-[10px] sm:text-xs text-white/60 mt-1">Trend: {humanize(advancedStats?.predictive_insights?.trend_direction || 'stable')}</div>
                                 </div>
                                 <div className="bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 border border-emerald-500/30 rounded-xl p-3 sm:p-5">
                                     <div className="text-[10px] sm:text-xs font-medium text-emerald-200 uppercase tracking-wider">Avg Resolution</div>
@@ -1812,9 +1811,8 @@ export default function StaffDashboard() {
                                     </div>
 
                                     <p className="text-[11px] text-white/35 mt-3.5 leading-relaxed">
-                                        These were never filed as requests, so they are not in any queue or export.
-                                        A road appearing often is either worth raising with that agency, or a sign its
-                                        routing rule is wrong.
+                                        These weren't filed as requests, so they aren't in any queue or export.
+                                        A road that appears often is worth raising with that agency, or its routing rule needs fixing.
                                     </p>
                                 </div>
                             )}
@@ -2111,7 +2109,7 @@ export default function StaffDashboard() {
                                 {/* Header */}
                                 <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                                     <h3 className="text-[0.92rem] font-bold flex items-center gap-2">
-                                        <span className="text-white">✦</span>
+                                        <Sparkles className="w-4 h-4 text-white" aria-hidden="true" />
                                         <span style={{ background: 'linear-gradient(135deg, #a5b4fc, #22d3a5)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Analytics Advisor</span>
                                     </h3>
                                     <div className="flex items-center gap-1.5">
@@ -2148,7 +2146,7 @@ export default function StaffDashboard() {
                                             className="flex items-center justify-center transition-colors"
                                             style={{ background: 'rgba(255,255,255,0.08)', border: 'none', borderRadius: '8px', width: '30px', height: '30px', cursor: 'pointer', color: 'rgba(255,255,255,0.5)', fontSize: '0.85rem' }}
                                         >
-                                            ✕
+                                            <X className="w-4 h-4" aria-hidden="true" />
                                         </button>
                                     </div>
                                 </div>
@@ -2166,7 +2164,7 @@ export default function StaffDashboard() {
                                                 background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)', alignSelf: 'flex-start'
                                             }}
                                         >
-                                            👋 Hi! I'm the AI Analytics Advisor. I can help you understand your data — trends, equity metrics, response times, sentiment, and more. What would you like to know?
+                                            I'm the AI Analytics Advisor. Ask about trends, equity metrics, response times, sentiment, and more.
                                         </div>
                                     )}
 
@@ -2193,7 +2191,12 @@ export default function StaffDashboard() {
                                                 }),
                                             }}
                                         >
-                                            {msg.role === 'assistant' ? (
+                                            {msg.role === 'assistant' && msg.error ? (
+                                                <span className="flex items-start gap-2 text-red-200">
+                                                    <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" aria-hidden="true" />
+                                                    <span>{msg.content}</span>
+                                                </span>
+                                            ) : msg.role === 'assistant' ? (
                                                 <div
                                                     dangerouslySetInnerHTML={{
                                                         __html: (() => {
@@ -2356,32 +2359,6 @@ export default function StaffDashboard() {
                                             ({isLoading ? '…' : sortedRequests.length})
                                         </span>
                                     </h2>
-                                    <div className="flex items-center gap-2">
-                                        {/* Was an icon-only toggle with no accessible
-                                            name at all (1.1.1), no aria-expanded or
-                                            aria-controls to say what it operates
-                                            (4.1.2), and "filters are active" conveyed
-                                            by a bullet glyph tinted primary-400 — a
-                                            bullet is not a word and a colour is not a
-                                            state (1.4.1). The name now carries both. */}
-                                        <Button
-                                            size="sm"
-                                            variant="ghost"
-                                            onClick={() => setShowFilters(!showFilters)}
-                                            aria-expanded={showFilters}
-                                            /* Only while the panel exists -- it is unmounted when
-                                               collapsed, so a constant aria-controls left a dangling
-                                               reference for assistive tech to follow nowhere. */
-                                            aria-controls={showFilters ? 'request-filters' : undefined}
-                                            className={hasActiveFilters ? 'text-primary-400' : ''}
-                                        >
-                                            <Search className="w-4 h-4" aria-hidden="true" />
-                                            <span className="sr-only">
-                                                {hasActiveFilters ? 'Filters, filters active' : 'Filters'}
-                                            </span>
-                                            {hasActiveFilters && <span className="ml-1 text-xs" aria-hidden="true">•</span>}
-                                        </Button>
-                                    </div>
                                 </div>
 
                                 {/* The photo-review backlog.
@@ -2462,8 +2439,13 @@ export default function StaffDashboard() {
                                 </div>
 
 
-                                {/* Search Input */}
-                                <div className="relative">
+                                {/* Search, with the filter toggle beside it. The toggle was an
+                                    icon-only magnifying glass in the far corner of the header --
+                                    hard to find, and a magnifying glass reads as "search", not
+                                    "filters". Here it is labeled, sits where people look when
+                                    narrowing the list, and says how many filters are on. */}
+                                <div className="flex items-stretch gap-2">
+                                <div className="relative flex-1 min-w-0">
                                     {/* z-10: glass-input carries backdrop-filter, so without it
                                         the input paints over this icon and blurs it. */}
                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40 z-10" aria-hidden="true" />
@@ -2485,6 +2467,33 @@ export default function StaffDashboard() {
                                         </button>
                                     )}
                                 </div>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowFilters(!showFilters)}
+                                    aria-expanded={showFilters}
+                                    /* Only while the panel exists -- it is unmounted when collapsed. */
+                                    aria-controls={showFilters ? 'request-filters' : undefined}
+                                    aria-label={activePanelFilters ? `Filters, ${activePanelFilters} active` : 'Filters'}
+                                    className={`shrink-0 inline-flex items-center gap-1.5 px-3 rounded-xl text-sm font-medium border transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-300 ${showFilters || activePanelFilters
+                                        ? 'bg-primary-500/20 border-primary-400/50 text-white'
+                                        : 'bg-white/5 border-white/15 text-white/80 hover:bg-white/10 hover:text-white'}`}
+                                >
+                                    <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />
+                                    <span>Filters</span>
+                                    {activePanelFilters > 0 && (
+                                        <span className="min-w-[1.25rem] h-5 px-1 rounded-full bg-primary-500 text-white text-[11px] font-semibold inline-flex items-center justify-center" aria-hidden="true">
+                                            {activePanelFilters}
+                                        </span>
+                                    )}
+                                </button>
+                                </div>
+
+                                {/* Search by resident: a server lookup over encrypted PII,
+                                    so it is its own audited control rather than part of the
+                                    instant filter above. Only when the module is on. */}
+                                {settings?.modules?.resident_history && (
+                                    <ResidentSearch onOpen={(id) => loadRequestDetail(id)} />
+                                )}
 
                                 {/* Sort Order */}
                                 <div>
@@ -2556,9 +2565,9 @@ export default function StaffDashboard() {
                                                 className="glass-input text-sm py-2"
                                             >
                                                 <option value="all">All Priorities</option>
-                                                <option value="high">🔴 {bandLabel('high')}</option>
-                                                <option value="medium">🟡 {bandLabel('medium')}</option>
-                                                <option value="low">🟢 {bandLabel('low')}</option>
+                                                <option value="high">{bandLabel('high')}</option>
+                                                <option value="medium">{bandLabel('medium')}</option>
+                                                <option value="low">{bandLabel('low')}</option>
                                             </select>
                                         </div>
 
@@ -2566,7 +2575,7 @@ export default function StaffDashboard() {
                                         {hasActiveFilters && (
                                             <button
                                                 onClick={clearFilters}
-                                                className="text-xs text-primary-400 hover:text-primary-300"
+                                                className="btn-outline"
                                             >
                                                 Clear all filters
                                             </button>
@@ -2666,12 +2675,12 @@ export default function StaffDashboard() {
                                                 </div>
                                                 {/* Priority indicator */}
                                                 {request.assigned_to === user?.username ? (
-                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-400">
-                                                        🎯 Mine
+                                                    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-primary-500/20 text-primary-400">
+                                                        <Target className="w-3 h-3" aria-hidden="true" /> Mine
                                                     </span>
                                                 ) : request.assigned_department_id && userDepartmentIds.includes(request.assigned_department_id) && !request.assigned_to ? (
-                                                    <span className="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
-                                                        🏢 Dept
+                                                    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-200">
+                                                        <Building2 className="w-3 h-3" aria-hidden="true" /> Dept
                                                     </span>
                                                 ) : null}
                                             </div>
@@ -2722,7 +2731,7 @@ export default function StaffDashboard() {
                                 <div className="lg:hidden p-3 border-b border-white/10 flex items-center">
                                     <button
                                         onClick={() => setSelectedRequest(null)}
-                                        className="flex items-center gap-2 text-white/70 hover:text-white"
+                                        className="btn-outline btn-outline-md"
                                     >
                                         <ChevronLeft className="w-5 h-5" aria-hidden="true" />
                                         <span>Back to List</span>
@@ -2739,6 +2748,41 @@ export default function StaffDashboard() {
                                                 <div className="flex items-center gap-1.5 sm:gap-2 mb-0.5 sm:mb-1 flex-wrap">
                                                     <span className="font-mono text-[10px] sm:text-xs text-white/50 bg-white/5 px-1.5 sm:px-2 py-0.5 rounded">{selectedRequest.service_request_id}</span>
                                                     <StatusBadge status={selectedRequest.status} />
+                                                    {/* How it came in. */}
+                                                    <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded border bg-white/5 text-white/80 border-white/20">
+                                                        {selectedRequest.source === 'phone' ? <Phone className="w-3 h-3" aria-hidden="true" />
+                                                            : selectedRequest.source === 'email' ? <Mail className="w-3 h-3" aria-hidden="true" />
+                                                            : selectedRequest.source === 'walk_in' ? <User className="w-3 h-3" aria-hidden="true" />
+                                                            : <Globe className="w-3 h-3" aria-hidden="true" />}
+                                                        <span className="sr-only">Received by: </span>{sourceLabel(selectedRequest.source)}
+                                                    </span>
+                                                    {selectedRequest.sla_due_datetime && selectedRequest.sla_state && (() => {
+                                                        const due = new Date(selectedRequest.sla_due_datetime);
+                                                        const when = due.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                                                        const look = {
+                                                            on_track: { cls: 'bg-sky-500/15 text-sky-200 border-sky-400/30', text: `Due ${when}` },
+                                                            at_risk: { cls: 'bg-amber-500/15 text-amber-200 border-amber-400/30', text: `Due soon · ${when}` },
+                                                            overdue: { cls: 'bg-red-500/20 text-red-200 border-red-400/40', text: `Overdue · was due ${when}` },
+                                                            met: { cls: 'bg-emerald-500/15 text-emerald-200 border-emerald-400/30', text: 'Met SLA' },
+                                                            breached: { cls: 'bg-red-500/10 text-red-200/80 border-red-400/25', text: 'Missed SLA' },
+                                                        }[selectedRequest.sla_state];
+                                                        return look ? (
+                                                            <span className={`inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded border ${look.cls}`}>
+                                                                <Clock className="w-3 h-3" aria-hidden="true" />
+                                                                {look.text}
+                                                                <span className="sr-only"> (service level target)</span>
+                                                            </span>
+                                                        ) : null;
+                                                    })()}
+                                                    {categoryHidden && (
+                                                        <span className="inline-flex items-center gap-1 text-[11px] sm:text-xs font-medium px-1.5 sm:px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-200 border border-indigo-400/30">
+                                                            <EyeOff className="w-3 h-3" aria-hidden="true" />
+                                                            Category hidden from public
+                                                            <span className="sr-only">
+                                                                — reports in this category are kept off the public map and list. Work it normally.
+                                                            </span>
+                                                        </span>
+                                                    )}
                                                     {(selectedRequest as any).is_public === false &&(
                                                         /* The explanation was `title`-only, so
                                                             keyboard and touch users saw the word
@@ -2751,7 +2795,7 @@ export default function StaffDashboard() {
                                                             <EyeOff className="w-3 h-3" aria-hidden="true" />
                                                             Unlisted
                                                             <span className="sr-only">
-                                                                — the resident asked to keep this off the public map and feed. Work it normally, just don't share it publicly.
+                                                                — the resident asked to keep this off the public map and feed. Work it normally, but don't share it publicly.
                                                             </span>
                                                         </span>
                                                     )}
@@ -2917,7 +2961,7 @@ export default function StaffDashboard() {
                                                             : 'Assignment saved.');
                                                     } catch (err) {
                                                         console.error(err);
-                                                        announce('Could not save the assignment. Please try again.', 'assertive');
+                                                        announce('Couldn\'t save the assignment. Try again.', 'assertive');
                                                     } finally {
                                                         setIsSavingAssignment(false);
                                                     }
@@ -2925,51 +2969,88 @@ export default function StaffDashboard() {
                                             )}
                                         </div>
 
-                                        {/* Row 4: Legal Hold Toggle (Admin Only) - Hidden on mobile, shown in menu */}
+                                        {/* Content-screen flag. Shown on its own: it used to be read as
+                                            a legal hold, so every profanity-flagged report looked held. */}
+                                        {/* A flag with no reason on a held record is the old hold
+                                            control's mirror, not a moderation flag -- not shown. */}
+                                        {selectedRequest.flagged === true
+                                            && !(selectedRequest.legal_hold === true && !selectedRequest.flag_reason) && (
+                                            <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/25 text-xs text-amber-100/90">
+                                                <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300" aria-hidden="true" />
+                                                <span className="flex-1"><strong className="font-semibold">Flagged for review.</strong>{selectedRequest.flag_reason ? ` ${selectedRequest.flag_reason}` : ' The content screen marked this report.'}</span>
+                                                {user?.role === 'admin' && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={async () => {
+                                                            try {
+                                                                // Both fields, so the server clears the content flag
+                                                                // and leaves any legal hold exactly as it is.
+                                                                const updated = await api.updateRequest(selectedRequest.service_request_id, {
+                                                                    flagged: false,
+                                                                    legal_hold: selectedRequest.legal_hold === true,
+                                                                });
+                                                                setSelectedRequest(updated);
+                                                                setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
+                                                                announce('Flag cleared.');
+                                                            } catch (err) {
+                                                                console.error('Failed to clear flag:', err);
+                                                                announce("Couldn't clear the flag. Try again.", 'assertive');
+                                                            }
+                                                        }}
+                                                        className="shrink-0 text-[11px] font-medium px-2 py-0.5 rounded border border-amber-300/50 text-amber-100 hover:bg-amber-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
+                                                    >
+                                                        Clear flag
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {/* Row 4: Legal Hold Toggle (Admin Only) — reads and writes `legal_hold`, the
+                                            field retention honors, never the content-screen `flagged`. - Hidden on mobile, shown in menu */}
                                         {user?.role === 'admin' && (
                                             <button
                                                 onClick={async () => {
-                                                    if (selectedRequest.flagged !== true) {
+                                                    if (selectedRequest.legal_hold !== true) {
                                                         // Show confirmation before placing on legal hold
                                                         if (window.confirm('Place this request under Legal Hold?\n\nThis will prevent the record from being archived or deleted by the retention policy.\n\nContinue?')) {
                                                             try {
                                                                 const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                    flagged: true
+                                                                    legal_hold: true
                                                                 });
                                                                 setSelectedRequest(updated);
                                                                 setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
                                                                 announce('Legal hold placed. This record is now exempt from the retention policy.');
                                                             } catch (err) {
                                                                 console.error('Failed to enable legal hold:', err);
-                                                                announce('Could not place the legal hold. Please try again.', 'assertive');
+                                                                announce('Couldn\'t place the legal hold. Try again.', 'assertive');
                                                             }
                                                         }
                                                     } else {
                                                         // Allow direct removal without confirmation
                                                         try {
                                                             const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                                flagged: false
+                                                                legal_hold: false
                                                             });
                                                             setSelectedRequest(updated);
                                                             setRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
                                                             announce('Legal hold removed.');
                                                         } catch (err) {
                                                             console.error('Failed to remove legal hold:', err);
-                                                            announce('Could not remove the legal hold. Please try again.', 'assertive');
+                                                            announce('Couldn\'t remove the legal hold. Try again.', 'assertive');
                                                         }
                                                     }
                                                 }}
-                                                className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.flagged === true
+                                                className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.legal_hold === true
                                                     ? 'bg-gradient-to-r from-amber-500 to-orange-600 text-white shadow-lg shadow-amber-500/30 ring-2 ring-white/20'
                                                     : 'bg-white/5 border border-white/10 text-white/70 hover:bg-amber-500/20 hover:text-amber-400 hover:border-amber-500/30'
                                                     }`}
                                                 type="button"
-                                                aria-pressed={selectedRequest.flagged === true}
-                                                aria-label={selectedRequest.flagged === true ? 'Remove legal hold' : 'Place on legal hold'}
+                                                aria-pressed={selectedRequest.legal_hold === true}
+                                                aria-label={selectedRequest.legal_hold === true ? 'Remove legal hold' : 'Place on legal hold'}
                                             >
                                                 <FlagTriangleRight className="w-3.5 h-3.5 sm:w-4 sm:h-4" aria-hidden="true" />
-                                                <span className="hidden sm:inline">{selectedRequest.flagged === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
-                                                <span className="sm:hidden">{selectedRequest.flagged === true ? 'Legal Hold ✓' : 'Legal Hold'}</span>
+                                                <span className="hidden sm:inline">{selectedRequest.legal_hold === true ? 'Under Legal Hold (Click to Remove)' : 'Place on Legal Hold'}</span>
+                                                <span className="sm:hidden inline-flex items-center gap-1">Legal Hold{selectedRequest.legal_hold === true && <Check className="w-3.5 h-3.5" aria-hidden="true" />}</span>
                                             </button>
                                         )}
 
@@ -2990,6 +3071,11 @@ export default function StaffDashboard() {
                                             watching their own report simply saw it
                                             disappear. Restoring is not confirmed: putting
                                             a report back is not the risky direction. */}
+                                        {categoryHidden ? (
+                                            <p className="text-[11px] text-white/45 text-center py-1">
+                                                This category is hidden from public view, so this report is already off the public map and list.
+                                            </p>
+                                        ) : (<>
                                         <button
                                             type="button"
                                             aria-pressed={selectedRequest.public_archived === true}
@@ -2997,9 +3083,8 @@ export default function StaffDashboard() {
                                                 const nowArchived = selectedRequest.public_archived !== true;
                                                 if (nowArchived && !window.confirm(
                                                     'Archive this report from public view?\n\n' +
-                                                    'It will be removed from the public tracker and the public map straight away. ' +
-                                                    'Nothing is deleted — residents holding the link can still see it, and it stays in research exports.\n\n' +
-                                                    'Continue?'
+                                                    'It comes off the public tracker and map right away. ' +
+                                                    'Nothing is deleted: residents with the link can still see it, and it stays in research exports.'
                                                 )) return;
                                                 try {
                                                     const updated = await api.setPublicArchived(
@@ -3012,7 +3097,7 @@ export default function StaffDashboard() {
                                                         : 'Restored to public view.');
                                                 } catch (err) {
                                                     console.error('Failed to change public visibility:', err);
-                                                    announce('Could not change the public visibility. Please try again.', 'assertive');
+                                                    announce('Couldn\'t change the public visibility. Try again.', 'assertive');
                                                 }
                                             }}
                                             className={`w-full py-1.5 sm:py-2 px-3 sm:px-4 rounded-lg text-xs sm:text-sm font-medium transition-all flex items-center justify-center gap-1.5 sm:gap-2 ${selectedRequest.public_archived === true
@@ -3028,7 +3113,7 @@ export default function StaffDashboard() {
                                             <span className="hidden sm:inline">{selectedRequest.public_archived === true
                                                 ? 'Archived from Public View (Click to Restore)'
                                                 : 'Archive from Public View'}</span>
-                                            <span className="sm:hidden">{selectedRequest.public_archived === true ? 'Archived \u2713' : 'Archive'}</span>
+                                            <span className="sm:hidden inline-flex items-center gap-1">{selectedRequest.public_archived === true ? <>Archived<Check className="w-3.5 h-3.5" aria-hidden="true" /></> : 'Archive'}</span>
                                         </button>
 
                                         {selectedRequest.public_archived === true && (
@@ -3036,6 +3121,7 @@ export default function StaffDashboard() {
                                                 Off the public tracker and map. The report stays &mdash; residents with the link still see it, and it is still in research exports.
                                             </p>
                                         )}
+                                        </>)}
                                     </div>
 
                                     {/* Scrollable Content - Professional Government Styling */}
@@ -3055,7 +3141,7 @@ export default function StaffDashboard() {
                                                     <div className="grid grid-cols-2 gap-2 text-sm">
                                                         {Object.entries(selectedRequest.custom_fields).map(([key, value]) => (
                                                             <div key={key} className="flex flex-col">
-                                                                <span className="text-white/40 text-xs capitalize">{key.replace(/_/g, ' ')}</span>
+                                                                <span className="text-white/40 text-xs">{humanize(key)}</span>
                                                                 <span className="text-white/80">{Array.isArray(value) ? value.join(', ') : String(value)}</span>
                                                             </div>
                                                         ))}
@@ -3102,7 +3188,7 @@ export default function StaffDashboard() {
                                                             : `${selectedRequest.media_pending_review.length} photos need your review`}
                                                     </p>
                                                     <p className="text-xs text-amber-200/70 mb-3">
-                                                        The automatic face and licence-plate blur could not run on
+                                                        The automatic face and license-plate blur could not run on
                                                         these, so they have been kept off the public tracker, the map
                                                         and the Open311 feed. Check for faces and plates before
                                                         releasing one.
@@ -3218,8 +3304,8 @@ export default function StaffDashboard() {
                                                             {/* Translation block for non-English submissions */}
                                                             {ai?.translation && ai.translation.detected_language && ai.translation.detected_language !== 'English' && ai.translation.english_translation && (
                                                                 <div className="mb-4 p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
-                                                                    <p className="text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
-                                                                        🌐 Translation ({ai.translation.detected_language})
+                                                                    <p className="flex items-center gap-1.5 text-xs font-bold text-blue-400 uppercase tracking-wider mb-2">
+                                                                        <Globe className="w-3.5 h-3.5" aria-hidden="true" /> Translation ({ai.translation.detected_language})
                                                                     </p>
                                                                     {/* WCAG 3.1.2: without `lang` the browser
                                                                         and the screen reader both treat this as
@@ -3288,7 +3374,7 @@ export default function StaffDashboard() {
                                                                                         announce(`AI priority accepted. Priority confirmed at ${priorityScore} out of 10.`);
                                                                                     } catch (e) {
                                                                                         console.error('Failed to accept AI priority:', e);
-                                                                                        announce('Could not accept the AI priority. Please try again.', 'assertive');
+                                                                                        announce('Couldn\'t accept the AI priority. Try again.', 'assertive');
                                                                                     } finally {
                                                                                         setIsUpdatingPriority(false);
                                                                                     }
@@ -3373,7 +3459,7 @@ export default function StaffDashboard() {
                                                                                             announce(`Priority saved as ${pendingPriority} out of 10.`);
                                                                                         } catch (e) {
                                                                                             console.error('Failed to update priority:', e);
-                                                                                            announce('Could not save the priority. Please try again.', 'assertive');
+                                                                                            announce('Couldn\'t save the priority. Try again.', 'assertive');
                                                                                         } finally {
                                                                                             setIsUpdatingPriority(false);
                                                                                         }
@@ -3409,7 +3495,7 @@ export default function StaffDashboard() {
                                                                                             announce('Priority reset to the AI suggestion.');
                                                                                         } catch (e) {
                                                                                             console.error('Failed to clear priority:', e);
-                                                                                            announce('Could not reset the priority. Please try again.', 'assertive');
+                                                                                            announce('Couldn\'t reset the priority. Try again.', 'assertive');
                                                                                         } finally {
                                                                                             setIsUpdatingPriority(false);
                                                                                         }
@@ -3434,7 +3520,12 @@ export default function StaffDashboard() {
                                                                             <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
                                                                             <div>
                                                                                 <p className="text-xs font-bold text-red-400 uppercase tracking-tight">Content Warning</p>
-                                                                                <p className="text-xs text-red-300/80">AI detected: {ai.content_flags.join(', ').replace(/_/g, ' ')}</p>
+                                                                                <p className="text-xs text-red-300/80 mb-1.5">AI detected:</p>
+                                                                                <div className="flex flex-wrap gap-1.5">
+                                                                                    {ai.content_flags.map((flag: string) => (
+                                                                                        <Chip key={flag} tone="danger" value={flag} />
+                                                                                    ))}
+                                                                                </div>
                                                                             </div>
                                                                         </div>
                                                                     )}
@@ -3458,13 +3549,13 @@ export default function StaffDashboard() {
                                                                             <div className="grid grid-cols-1 gap-2">
                                                                                 <div className="flex justify-between items-center text-xs">
                                                                                     <span className="text-white/40">Physical Scale</span>
-                                                                                    <span className="text-white/80 font-medium">{ai.photo_assessment.physical_scale}</span>
+                                                                                    <span className="text-white/80 font-medium">{humanize(ai.photo_assessment.physical_scale)}</span>
                                                                                 </div>
                                                                                 <div className="flex justify-between items-center text-xs">
                                                                                     <span className="text-white/40">Blocking Severity</span>
-                                                                                    <span className={`font-bold ${ai.photo_assessment.blocking_severity === 'full_block' ? 'text-red-400' :
-                                                                                        ai.photo_assessment.blocking_severity === 'partial' ? 'text-amber-400' : 'text-green-400'
-                                                                                        }`}>{ai.photo_assessment.blocking_severity?.replace('_', ' ').toUpperCase()}</span>
+                                                                                    <Chip tone={ai.photo_assessment.blocking_severity === 'full_block' ? 'danger' :
+                                                                                        ai.photo_assessment.blocking_severity === 'partial' ? 'warning' : 'success'
+                                                                                        } value={ai.photo_assessment.blocking_severity} />
                                                                                 </div>
                                                                             </div>
                                                                         </div>
@@ -3476,10 +3567,10 @@ export default function StaffDashboard() {
                                                                             {ai.quantitative_metrics.estimated_severity && ai.quantitative_metrics.estimated_severity !== 'unknown' && (
                                                                                 <div className="p-2.5 rounded-lg bg-white/5 border border-white/5">
                                                                                     <p className="text-[11px] uppercase tracking-wider text-white/70 mb-0.5">Severity</p>
-                                                                                    <p className={`text-xs font-bold ${ai.quantitative_metrics.estimated_severity === 'critical' ? 'text-red-400' :
-                                                                                        ai.quantitative_metrics.estimated_severity === 'high' ? 'text-amber-400' :
-                                                                                            ai.quantitative_metrics.estimated_severity === 'medium' ? 'text-blue-400' : 'text-green-400'
-                                                                                        }`}>{ai.quantitative_metrics.estimated_severity.toUpperCase()}</p>
+                                                                                    <Chip tone={ai.quantitative_metrics.estimated_severity === 'critical' ? 'danger' :
+                                                                                        ai.quantitative_metrics.estimated_severity === 'high' ? 'warning' :
+                                                                                            ai.quantitative_metrics.estimated_severity === 'medium' ? 'info' : 'success'
+                                                                                        } value={ai.quantitative_metrics.estimated_severity} />
                                                                                 </div>
                                                                             )}
                                                                             {ai.quantitative_metrics.systemic_failure_probability !== undefined && (
@@ -3592,9 +3683,7 @@ export default function StaffDashboard() {
                                                                     {ai?.safety_flags && Array.isArray(ai.safety_flags) && ai.safety_flags.length > 0 && (
                                                                         <div className="flex flex-wrap gap-1.5 mb-4">
                                                                             {ai.safety_flags.map((flag: string, i: number) => (
-                                                                                <span key={i} className="inline-flex items-center px-2 py-1 rounded bg-red-500/10 text-red-400 text-[10px] font-bold ring-1 ring-red-500/20">
-                                                                                    {flag.replace(/_/g, ' ').toUpperCase()}
-                                                                                </span>
+                                                                                <Chip key={i} tone="danger" icon={AlertTriangle} value={flag} />
                                                                             ))}
                                                                         </div>
                                                                     )}
@@ -3626,7 +3715,7 @@ export default function StaffDashboard() {
                                             {/* Completion info */}
                                             {selectedRequest.status === 'closed' && (selectedRequest.completion_message || selectedRequest.completion_photo_url) && (
                                                 <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 mb-4">
-                                                    <p className="text-green-400 font-medium text-sm mb-1">✓ {selectedRequest.closed_substatus === 'resolved' ? 'Resolved' : selectedRequest.closed_substatus === 'no_action' ? 'No Action Needed' : 'Referred'}</p>
+                                                    <p className="flex items-center gap-1.5 text-green-400 font-medium text-sm mb-1"><CheckCircle className="w-4 h-4" aria-hidden="true" />{selectedRequest.closed_substatus === 'resolved' ? 'Resolved' : selectedRequest.closed_substatus === 'no_action' ? 'No Action Needed' : 'Referred'}</p>
                                                     {selectedRequest.completion_message && (
                                                         <p className="text-white/70 text-sm mb-2">{selectedRequest.completion_message}</p>
                                                     )}
@@ -3658,12 +3747,34 @@ export default function StaffDashboard() {
                                                 {(selectedRequest.first_name || selectedRequest.last_name) && (
                                                     <span className="flex items-center gap-1"><User className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.first_name} {selectedRequest.last_name}</span>
                                                 )}
+                                                {selectedRequest.preferred_language && selectedRequest.preferred_language !== 'en' && (
+                                                    <span className="flex items-center gap-1 text-primary-200" title="Updates go to this resident in this language">
+                                                        <Globe className="w-3.5 h-3.5" aria-hidden="true" /> Prefers {languageLabel(selectedRequest.preferred_language)}
+                                                    </span>
+                                                )}
                                                 <a href={`mailto:${selectedRequest.email}`} className="flex items-center gap-1 hover:text-primary-400"><Mail className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.email}</a>
                                                 {selectedRequest.phone && (
                                                     <a href={`tel:${selectedRequest.phone}`} className="flex items-center gap-1 hover:text-primary-400"><Phone className="w-3.5 h-3.5" aria-hidden="true" /> {selectedRequest.phone}</a>
                                                 )}
                                             </div>
                                         </div>
+
+                                        {/* Resident history: opt-in module; the server scopes, minimises and audits. */}
+                                        {settings?.modules?.resident_history && (
+                                            <ResidentHistoryCard
+                                                serviceRequestId={selectedRequest.service_request_id}
+                                                onOpen={(id) => loadRequestDetail(id)}
+                                            />
+                                        )}
+
+                                        {/* A report from a category that collects no location, or one
+                                            the resident skipped: said, rather than leaving a gap. */}
+                                        {!selectedRequest.address && selectedRequest.lat == null && (
+                                            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-slate-800/40 border border-white/[0.06] text-sm text-white/50">
+                                                <MapPin className="w-4 h-4 text-white/30" aria-hidden="true" />
+                                                No location on this report
+                                            </div>
+                                        )}
 
                                         {/* ═══ SECTION 2: Location & Map ═══ */}
                                         {
@@ -3686,6 +3797,12 @@ export default function StaffDashboard() {
                                                                 mapLayers={mapLayers}
                                                                 config={mapConfig}
                                                                 townshipBoundary={mapsConfig?.township_boundary}
+                                                                outlines={{
+                                                                    category: selectedRequest.service_code,
+                                                                    highlight: (selectedRequest.gis_context || [])
+                                                                        .filter(g => g.feature_key)
+                                                                        .map(g => ({ layer_id: g.layer_id, feature_key: g.feature_key })),
+                                                                }}
                                                             />
                                                         </div>
                                                     )}
@@ -3702,112 +3819,23 @@ export default function StaffDashboard() {
                                                         </div>
                                                     )}
 
-                                                    {/* Matched Asset Info - Below Map */}
+                                                    {/* Matched asset: picked on the map at intake */}
                                                     {(selectedRequest as any).matched_asset && (
-                                                        <div className="mt-3 p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/20">
-                                                            {/* Clear header label */}
-                                                            <div className="flex items-center gap-2 mb-2">
-                                                                <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">🔗 Matched Asset</span>
-                                                                {(selectedRequest as any).matched_asset.distance_meters && (
-                                                                    <span className="text-xs text-white/40 ml-auto">
-                                                                        {(selectedRequest as any).matched_asset.distance_meters < 1
-                                                                            ? '<1m away'
-                                                                            : `${Math.round((selectedRequest as any).matched_asset.distance_meters)}m away`}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center gap-2 mb-2">
-                                                                <div className="w-3 h-3 rounded bg-emerald-500" />
-                                                                <span className="text-sm font-medium text-emerald-400">
-                                                                    {(selectedRequest as any).matched_asset.layer_name}
-                                                                </span>
-                                                            </div>
-                                                            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
-                                                                {(selectedRequest as any).matched_asset.asset_id && (
-                                                                    <>
-                                                                        <span className="text-white/40">Asset ID</span>
-                                                                        <span className="text-white/80 font-mono">{(selectedRequest as any).matched_asset.asset_id}</span>
-                                                                    </>
-                                                                )}
-                                                                {(selectedRequest as any).matched_asset.asset_type && (
-                                                                    <>
-                                                                        <span className="text-white/40">Type</span>
-                                                                        <span className="text-white/80">{(selectedRequest as any).matched_asset.asset_type}</span>
-                                                                    </>
-                                                                )}
-                                                                {(selectedRequest as any).matched_asset.properties &&
-                                                                    Object.entries((selectedRequest as any).matched_asset.properties)
-                                                                        .filter(([key, value]) => {
-                                                                            // Exclude common ID fields
-                                                                            if (['id', 'asset_id', 'name', 'layer_name', 'objectid', 'fid', 'gid'].includes(key.toLowerCase())) return false;
-                                                                            // Exclude purely numeric values (likely IDs)
-                                                                            if (typeof value === 'number' && String(value).match(/^\d+$/)) return false;
-                                                                            // Exclude null/undefined/empty
-                                                                            if (value === null || value === undefined || value === '') return false;
-                                                                            return true;
-                                                                        })
-                                                                        .slice(0, 6)
-                                                                        .map(([key, value]) => (
-                                                                            <React.Fragment key={key}>
-                                                                                <span className="text-white/40 truncate">
-                                                                                    {key.replace(/_/g, ' ').replace(/([A-Z])/g, ' $1').trim()}
-                                                                                </span>
-                                                                                <span className="text-white/80 truncate">
-                                                                                    {String(value)}
-                                                                                </span>
-                                                                            </React.Fragment>
-                                                                        ))
-                                                                }
-                                                            </div>
-
-                                                            {/* Asset History - Related Reports */}
-                                                            <div className="mt-3 pt-3 border-t border-emerald-500/20">
-                                                                <div className="flex items-center gap-2 mb-2">
-                                                                    <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-300">📋 Asset History</span>
-                                                                    {isLoadingAssetHistory && (
-                                                                        <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                                                                    )}
-                                                                </div>
-                                                                {assetRelatedRequests.length > 0 ? (
-                                                                    <div className="space-y-2">
-                                                                        <p className="text-xs text-emerald-400/80">
-                                                                            {assetRelatedRequests.length} other report{assetRelatedRequests.length !== 1 ? 's' : ''} linked to this asset
-                                                                        </p>
-                                                                        <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                                                                            {assetRelatedRequests.slice(0, 5).map((r) => (
-                                                                                <button
-                                                                                    key={r.service_request_id}
-                                                                                    onClick={() => loadRequestDetail(r.service_request_id)}
-                                                                                    className="w-full text-left p-2 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors group"
-                                                                                >
-                                                                                    <div className="flex items-center justify-between">
-                                                                                        <span className="text-xs font-mono text-emerald-400 group-hover:text-emerald-300">{r.service_request_id}</span>
-                                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${r.status === 'closed' ? 'bg-green-500/20 text-green-400' :
-                                                                                            r.status === 'in_progress' ? 'bg-amber-500/20 text-amber-400' :
-                                                                                                'bg-red-500/20 text-red-400'
-                                                                                            }`}>{r.status.replace('_', ' ')}</span>
-                                                                                    </div>
-                                                                                    <p className="text-xs text-white/60 truncate mt-0.5">{r.service_name}</p>
-                                                                                    <p className="text-[10px] text-white/40 mt-0.5">
-                                                                                        {new Date(r.requested_datetime).toLocaleDateString()}
-                                                                                    </p>
-                                                                                </button>
-                                                                            ))}
-                                                                        </div>
-                                                                        {assetRelatedRequests.length > 5 && (
-                                                                            <p className="text-[10px] text-white/40 text-center">
-                                                                                +{assetRelatedRequests.length - 5} more reports
-                                                                            </p>
-                                                                        )}
-                                                                    </div>
-                                                                ) : !isLoadingAssetHistory ? (
-                                                                    <p className="text-xs text-white/40">
-                                                                        No previous reports for this asset
-                                                                    </p>
-                                                                ) : null}
-                                                            </div>
-                                                        </div>
+                                                        <MatchedAssetCard
+                                                            asset={(selectedRequest as any).matched_asset}
+                                                            layerColor={mapLayers.find(l => l.name === (selectedRequest as any).matched_asset.layer_name)?.fill_color}
+                                                            reports={assetRelatedRequests}
+                                                            loading={isLoadingAssetHistory}
+                                                            onOpenReport={loadRequestDetail}
+                                                        />
                                                     )}
+
+                                                    {/* Location context: the parcel / zone it fell in, recorded at intake */}
+                                                    <LocationContextSection
+                                                        entries={selectedRequest.gis_context}
+                                                        requestId={selectedRequest.service_request_id}
+                                                        onOpenReport={loadRequestDetail}
+                                                    />
                                                 </div>
                                             )
                                         }
@@ -3846,7 +3874,7 @@ export default function StaffDashboard() {
 
                                                         return timelineEntries.map((entry, idx) => {
                                                             // Determine color and text based on action - simple circles, no emojis
-                                                            let actionConfig: { color: string; text: string };
+                                                            let actionConfig: { color: string; text: string; icon?: typeof Check };
 
                                                             if (entry.action === 'submitted') {
                                                                 actionConfig = { color: 'bg-emerald-500', text: 'Request submitted' };
@@ -3864,7 +3892,7 @@ export default function StaffDashboard() {
                                                                 } else if (newStatus === 'open') {
                                                                     statusText = oldStatus === 'closed' ? 'Reopened' : oldStatus === 'in_progress' ? 'Reverted to Open' : 'Status set to Open';
                                                                 } else {
-                                                                    statusText = `Status: ${oldStatus} → ${newStatus}`;
+                                                                    statusText = `Status: ${humanize(oldStatus)} → ${humanize(newStatus)}`;
                                                                 }
 
                                                                 actionConfig = {
@@ -3881,34 +3909,45 @@ export default function StaffDashboard() {
                                                                 const isArchived = entry.new_value === 'archived';
                                                                 actionConfig = {
                                                                     color: isArchived ? 'bg-slate-500' : 'bg-emerald-500',
+                                                                    icon: isArchived ? EyeOff : Eye,
                                                                     text: isArchived
-                                                                        ? '\ud83d\udc41\ufe0f Archived from public view'
-                                                                        : '\ud83d\udc41\ufe0f Restored to public view'
+                                                                        ? 'Archived from public view'
+                                                                        : 'Restored to public view'
                                                                 };
                                                             } else if (entry.action === 'legal_hold') {
                                                                 // Show if legal hold was enabled or removed
                                                                 const isEnabled = entry.new_value === 'enabled';
                                                                 actionConfig = {
                                                                     color: isEnabled ? 'bg-amber-500' : 'bg-gray-500',
-                                                                    text: isEnabled ? '⚖️ Legal Hold Enabled' : '⚖️ Legal Hold Removed'
+                                                                    icon: Scale,
+                                                                    text: isEnabled ? 'Legal Hold Enabled' : 'Legal Hold Removed'
                                                                 };
                                                             } else if (entry.action === 'deleted') {
                                                                 actionConfig = {
                                                                     color: 'bg-red-500',
-                                                                    text: `🗑️ Soft Deleted: ${entry.new_value || 'No reason given'}`
+                                                                    icon: Trash2,
+                                                                    text: `Soft Deleted: ${entry.new_value || 'No reason given'}`
                                                                 };
                                                             } else if (entry.action === 'restored') {
                                                                 actionConfig = {
                                                                     color: 'bg-green-500',
-                                                                    text: '♻️ Request Restored'
+                                                                    icon: RotateCcw,
+                                                                    text: 'Request Restored'
                                                                 };
                                                             } else if (entry.action === 'priority_accepted') {
                                                                 actionConfig = {
                                                                     color: 'bg-emerald-500',
-                                                                    text: `🤖 AI Priority Accepted: ${entry.new_value || ''}`
+                                                                    icon: Bot,
+                                                                    text: `AI Priority Accepted: ${entry.new_value || ''}`
+                                                                };
+                                                            } else if (entry.action === 'priority_changed') {
+                                                                actionConfig = {
+                                                                    color: 'bg-amber-500',
+                                                                    icon: SlidersHorizontal,
+                                                                    text: `Priority set to ${entry.new_value}${entry.old_value ? ` (was ${entry.old_value})` : ''}`
                                                                 };
                                                             } else {
-                                                                actionConfig = { color: 'bg-gray-500', text: entry.action };
+                                                                actionConfig = { color: 'bg-gray-500', text: humanize(entry.action) };
                                                             }
 
                                                             const isLast = idx === auditLog.length - 1;
@@ -3921,10 +3960,13 @@ export default function StaffDashboard() {
                                                                     {/* Content */}
                                                                     <div className="flex-1 min-w-0 -mt-0.5">
                                                                         <div className="flex items-center gap-2 flex-wrap">
-                                                                            <span className="text-white/90 text-sm font-medium">{actionConfig.text}</span>
-                                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
-                                                                                {entry.actor_type === 'staff' || entry.actor_type === 'admin' ? entry.actor_name || 'Staff' : 'Resident'}
+                                                                            <span className="inline-flex items-center gap-1.5 text-white/90 text-sm font-medium">
+                                                                                {actionConfig.icon && <actionConfig.icon className="w-3.5 h-3.5 text-white/60 shrink-0" aria-hidden="true" />}
+                                                                                {actionConfig.text}
                                                                             </span>
+                                                                            <Chip tone={entry.actor_type === 'staff' || entry.actor_type === 'admin' ? 'accent' : 'info'}>
+                                                                                {entry.actor_type === 'staff' || entry.actor_type === 'admin' ? entry.actor_name || 'Staff' : 'Resident'}
+                                                                            </Chip>
                                                                         </div>
                                                                         <div className="text-white/40 text-xs mt-0.5">
                                                                             {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'No timestamp'}
@@ -4079,7 +4121,7 @@ export default function StaffDashboard() {
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm font-medium text-white">
-                                                                        {copiedLink === 'staff' ? 'Copied!' : 'Staff Portal Link'}
+                                                                        {copiedLink === 'staff' ? 'Copied' : 'Staff Portal Link'}
                                                                     </div>
                                                                     <div className="text-xs text-white/40 truncate">For internal staff use</div>
                                                                 </div>
@@ -4101,7 +4143,7 @@ export default function StaffDashboard() {
                                                                 </div>
                                                                 <div className="flex-1 min-w-0">
                                                                     <div className="text-sm font-medium text-white">
-                                                                        {copiedLink === 'resident' ? 'Copied!' : 'Resident Portal Link'}
+                                                                        {copiedLink === 'resident' ? 'Copied' : 'Resident Portal Link'}
                                                                     </div>
                                                                     <div className="text-xs text-white/40 truncate">Share with the reporter</div>
                                                                 </div>
@@ -4131,50 +4173,6 @@ export default function StaffDashboard() {
                 }
             </main>
 
-            {/* Manual Intake Modal */}
-            <Modal isOpen={showIntakeModal} onClose={() => setShowIntakeModal(false)} title="New Manual Intake">
-                <form onSubmit={handleCreateIntake} className="space-y-4">
-                    <Select
-                        label="Service Category"
-                        options={[
-                            { value: '', label: 'Select a category...' },
-                            ...services.map((s) => ({ value: s.service_code, label: s.service_name })),
-                        ]}
-                        value={intakeData.service_code}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, service_code: e.target.value }))}
-                        required
-                    />
-                    <Input
-                        label="Location"
-                        placeholder="Address or intersection"
-                        value={intakeData.address}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, address: e.target.value }))}
-                    />
-                    <Textarea
-                        label="Description"
-                        placeholder="Describe the issue..."
-                        value={intakeData.description}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, description: e.target.value }))}
-                        required
-                    />
-                    <Select
-                        label="Source"
-                        options={[
-                            { value: 'phone', label: 'Phone Call' },
-                            { value: 'walk_in', label: 'Walk-In' },
-                            { value: 'email', label: 'Email' },
-                        ]}
-                        value={intakeData.source}
-                        onChange={(e) => setIntakeData((prev) => ({ ...prev, source: e.target.value }))}
-                    />
-                    <div className="flex justify-end gap-3 pt-4">
-                        <Button variant="ghost" onClick={() => setShowIntakeModal(false)}>
-                            Cancel
-                        </Button>
-                        <Button type="submit">Create Intake</Button>
-                    </div>
-                </form>
-            </Modal >
 
             {/* Close Request Modal - Substatus Selection */}
             < Modal isOpen={showClosedModal} onClose={() => setShowClosedModal(false)} title="Close Request" >
@@ -4260,7 +4258,7 @@ export default function StaffDashboard() {
                                                 setCompletionPhotoUrl(result.url);
                                             } catch (err) {
                                                 console.error('Upload failed:', err);
-                                                alert("Failed to upload image");
+                                                alert("The photo didn't upload. Try again.");
                                             }
                                         }
                                     }}
@@ -4277,7 +4275,7 @@ export default function StaffDashboard() {
                                         <img src={completionPhotoUrl} alt="Completion" className="h-12 w-12 object-cover rounded-lg" />
                                         <button
                                             onClick={() => setCompletionPhotoUrl('')}
-                                            className="text-red-400 hover:text-red-300 text-sm"
+                                            className="btn-outline btn-outline-danger"
                                         >
                                             Remove
                                         </button>
@@ -4304,16 +4302,16 @@ export default function StaffDashboard() {
                     <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                         <p className="text-red-400 font-medium flex items-center gap-2">
                             <Trash2 className="w-5 h-5" aria-hidden="true" />
-                            This will soft-delete the request
+                            This hides the request
                         </p>
                         <p className="text-white/60 text-sm mt-2">
-                            The request will be hidden from the normal view but will remain accessible to administrators.
+                            It's removed from normal views but stays available to administrators.
                         </p>
                     </div>
 
                     <Textarea
                         label="Justification *"
-                        placeholder="Explain why this request should be deleted (minimum 10 characters)..."
+                        placeholder="Explain why this request should be deleted (at least 10 characters)..."
                         value={deleteJustification}
                         onChange={(e) => setDeleteJustification(e.target.value)}
                         required
@@ -4374,10 +4372,19 @@ export default function StaffDashboard() {
                 isOpen={showManualIntake}
                 onClose={() => setShowManualIntake(false)}
                 services={services}
+                requests={allRequests}
+                departments={departments}
+                staff={users}
                 onCreated={(created) => {
                     // Reflect the new request immediately without a full reload.
                     setAllRequests(prev => [created as any, ...prev]);
                     setRequests(prev => [created as any, ...prev]);
+                }}
+                onOpenRequest={(requestId) => {
+                    // The form keeps what was typed, so reopening it picks up
+                    // where the clerk left off.
+                    setShowManualIntake(false);
+                    handleMapRequestSelect(requestId);
                 }}
             />
             {/* Activity Feed Panel */}

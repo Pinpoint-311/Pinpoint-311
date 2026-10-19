@@ -44,6 +44,7 @@ from app.services.road_matching import (
     MUNICIPAL_DEFAULTS,
     default_jurisdiction,
     jurisdictions_from_config,
+    parse_road_entry,
     road_matches,
     _as_list,
 )
@@ -168,6 +169,7 @@ def _matching_jurisdiction(
     road: RoadMatch,
     excluded: Optional[set] = None,
     trims: Optional[Dict[str, "Trim"]] = None,
+    outside_limits: Optional[set] = None,
 ) -> Optional[Tuple[Dict[str, Any], str]]:
     if excluded and road.source_feature_id in excluded:
         return None  # switched off in the coverage map
@@ -175,6 +177,12 @@ def _matching_jurisdiction(
         return None  # past the point the clerk dragged the rule back to
     for jurisdiction in jurisdictions:
         for entry in _as_list(jurisdiction.get("roads")):
+            if outside_limits:
+                parsed = parse_road_entry(entry)
+                if parsed and parsed.has_limits and parsed.label in outside_limits:
+                    # Right road, wrong stretch: "Oak Rd (Elm St to
+                    # Route 10)" says nothing about the rest of Oak Rd.
+                    continue
             if road_matches(entry, road.name or "") or (road.ref and road_matches(entry, road.ref)):
                 return jurisdiction, entry
     return None
@@ -196,6 +204,7 @@ def choose_road(
     *,
     tie_tolerance_m: float = TIE_TOLERANCE_METRES,
     town_wins_ties: bool = True,
+    outside_limits: Optional[set] = None,
 ) -> Optional[Tuple[RoadMatch, Optional[Tuple[Dict[str, Any], str]]]]:
     """Pick the road that decides routing, and the jurisdiction claiming it.
 
@@ -203,6 +212,9 @@ def choose_road(
 
     Returns (road, None) when the town is responsible and (road, (jurisdiction,
     matched_entry)) when someone else is. Returns None when there is no road.
+
+    `outside_limits` holds the labels of limited entries ("Oak Rd (Elm St
+    to Route 10)") whose stretch the pin is known to be off; see road_limits.
     """
     if not candidates:
         return None
@@ -227,7 +239,7 @@ def choose_road(
     )
 
     def claim_for(road: RoadMatch) -> Optional[Tuple[Dict[str, Any], str]]:
-        claim = _matching_jurisdiction(jurisdictions, road, excluded, trims)
+        claim = _matching_jurisdiction(jurisdictions, road, excluded, trims, outside_limits)
         if claim is not None:
             return claim
         # Switched off or trimmed back in the coverage map: the clerk did that
@@ -291,7 +303,10 @@ async def resolve_jurisdiction_spatial(
 
     try:
         candidates = await nearest_roads(db, lat, lng, radius_m=radius_m)
-        chosen = choose_road(candidates, config, town_wins_ties=town_wins_ties)
+        outside = await _outside_limits(db, config, candidates, lat, lng, radius_m)
+        chosen = choose_road(
+            candidates, config, town_wins_ties=town_wins_ties, outside_limits=outside
+        )
     except Exception as exc:
         logger.warning("spatial jurisdiction resolution failed, defaulting to municipality: %s", exc)
         return None
@@ -310,6 +325,30 @@ async def resolve_jurisdiction_spatial(
         matched_road=road.label,
         matched_entry=matched_entry,
     )
+
+
+async def _outside_limits(
+    db: AsyncSession,
+    config: Dict[str, Any],
+    candidates: Sequence[RoadMatch],
+    lat: float,
+    lng: float,
+    radius_m: float,
+) -> set:
+    """Limited entries this pin is off. Empty -- the whole road -- on any error."""
+    from app.services import road_limits
+
+    if not candidates or not road_limits.limited_entries(config):
+        return set()
+    names = [n for c in candidates for n in (c.name, c.ref) if n]
+    try:
+        # In a savepoint: a failed spatial query must not poison the
+        # transaction the report itself is about to be written in.
+        async with db.begin_nested():
+            return await road_limits.entries_outside(db, config, names, lat, lng, radius_m=radius_m)
+    except Exception as exc:
+        logger.warning("road limits could not be checked, using whole roads: %s", exc)
+        return set()
 
 
 # ---- configuration conflicts -------------------------------------------------

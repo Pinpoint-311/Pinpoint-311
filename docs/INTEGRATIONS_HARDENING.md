@@ -4,7 +4,7 @@ Status: **done** · Written 2026-08-05 from a full review of the "Connect Your
 Other Town Systems" feature (backend + frontend); implemented 2026-08-06 across
 four commits, one per work package. Kept as the record of what was wrong and
 why each fix is shaped the way it is — [INTEGRATIONS.md](INTEGRATIONS.md) now
-documents the resulting behaviour. Companion to
+documents the resulting behavior. Companion to
 [INTEGRATIONS.md](INTEGRATIONS.md), which describes the intended design; this
 document lists where the implementation diverges from it and defines the work
 to close each gap.

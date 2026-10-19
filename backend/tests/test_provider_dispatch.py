@@ -34,6 +34,25 @@ async def test_translation_selects_azure(monkeypatch):
     assert provider.provider == "azure"
 
 
+@pytest.mark.parametrize("pasted, expected", [
+    # Global and Gov hosts serve Translator at the root -- left alone.
+    (None, "https://api.cognitive.microsofttranslator.com"),
+    ("", "https://api.cognitive.microsofttranslator.com"),
+    ("https://api.cognitive.microsofttranslator.com/", "https://api.cognitive.microsofttranslator.com"),
+    ("https://api.cognitive.microsofttranslator.us", "https://api.cognitive.microsofttranslator.us"),
+    # A resource's own subdomain serves it under /translator/text/v3.0; a bare
+    # /translate there is a 404 (seen live on a fresh install).
+    ("https://res.cognitiveservices.azure.com/", "https://res.cognitiveservices.azure.com/translator/text/v3.0"),
+    ("https://res.cognitiveservices.azure.com/translator/text/v3.0/", "https://res.cognitiveservices.azure.com/translator/text/v3.0"),
+    ("https://res.cognitiveservices.azure.com/translator/text/v3.0/translate?api-version=3.0",
+     "https://res.cognitiveservices.azure.com/translator/text/v3.0"),
+    ("https://res.cognitiveservices.azure.us", "https://res.cognitiveservices.azure.us/translator/text/v3.0"),
+])
+def test_azure_translator_endpoint_is_normalised(pasted, expected):
+    provider = tp.AzureTranslationProvider(api_key="k", region="eastus", endpoint=pasted)
+    assert provider.endpoint == expected
+
+
 async def test_translation_selects_aws(monkeypatch):
     monkeypatch.setattr(sm, "get_secret", _fake_secrets({
         "TRANSLATION_PROVIDER": "aws",

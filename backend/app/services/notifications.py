@@ -6,8 +6,11 @@ import logging
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
+
+SMTP_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -138,20 +141,27 @@ class EmailProvider:
             
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = f"{sender_name} <{self.from_email}>"
+            # formataddr quotes a name that needs it. Unquoted, a comma in the
+            # name ("Springfield, IL Pilot") splits the header into two addresses,
+            # and smtplib sent MAIL FROM:<Springfield> -- live, every email failed
+            # with 501 "Was expecting MAIL arg syntax of FROM:<address>".
+            msg["From"] = formataddr((sender_name, self.from_email))
             msg["To"] = to
             
             if body_text:
                 msg.attach(MIMEText(body_text, "plain"))
             msg.attach(MIMEText(body_html, "html"))
             
+            # A timeout: smtplib's default is none, so a mail server that stopped
+            # answering held the task until Celery's 300 s hard limit killed
+            # the worker process (Sentry: TimeLimitExceeded, SIGKILL).
             if self.use_tls:
-                with smtplib.SMTP(self.smtp_host, self.smtp_port) as server:
+                with smtplib.SMTP(self.smtp_host, self.smtp_port, timeout=SMTP_TIMEOUT_SECONDS) as server:
                     server.starttls()
                     server.login(self.smtp_user, self.smtp_password)
                     server.send_message(msg)
             else:
-                with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port) as server:
+                with smtplib.SMTP_SSL(self.smtp_host, self.smtp_port, timeout=SMTP_TIMEOUT_SECONDS) as server:
                     server.login(self.smtp_user, self.smtp_password)
                     server.send_message(msg)
             
@@ -295,7 +305,7 @@ class SESEmailProvider:
             logger.warning("[SES] region/from_email not configured")
             return False
         try:
-            sender = f"{from_name or self.from_name} <{self.from_email}>"
+            sender = formataddr((from_name or self.from_name, self.from_email))
             body: Dict[str, Any] = {"Html": {"Data": body_html, "Charset": "UTF-8"}}
             if body_text:
                 body["Text"] = {"Data": body_text, "Charset": "UTF-8"}
@@ -479,12 +489,8 @@ class NotificationService:
         worth the deadlock risk.
         """
         try:
-            import asyncio
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        try:
-            loop.create_task(self._record_health(connector, success))
+            from app.core.background import spawn
+            spawn(self._record_health(connector, success))
         except Exception as exc:
             logger.debug("Could not schedule %s health: %s", connector, exc)
 
@@ -559,10 +565,8 @@ class NotificationService:
                         )
                 
                 # Run in new event loop if needed
-                try:
-                    asyncio.get_running_loop()  # Check if loop is running
-                    asyncio.create_task(_track())
-                except RuntimeError:
+                from app.core.background import spawn
+                if not spawn(_track()):
                     asyncio.run(_track())
             except Exception as e:
                 logger.debug(f"Failed to track email usage: {e}")
@@ -662,9 +666,9 @@ class NotificationService:
                 # has stayed, because it is the only instruction here.
                 L.heading("Your request has been received", 2),
                 L.fields([("Request ID", f"#{request_id}")]),
-                L.paragraph("You can track the status of your request using this ID."),
+                L.paragraph("Use this ID to track your request."),
             ],
-            footer_lines=["We appreciate your help in making our community better."],
+            footer_lines=["Thank you for your report."],
         )
         if email:
             self.send_email(email, message["subject"], message["html"], message["text"])

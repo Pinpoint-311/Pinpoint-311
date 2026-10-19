@@ -30,7 +30,7 @@ The implementation is `frontend/src/components/StayInformed.tsx`, which carries 
 
 A deployment may instead set `CONTACT_FORM_URL` to a registration form the operator hosts (a Microsoft Form, in practice). When it is unset — the default — the built-in form above is used unchanged. When it is set:
 
-- **The console shows the operator's form rather than its own**, either framed inside the page (the default) or opened in a new tab if `CONTACT_FORM_EMBED=false`. It is labelled as hosted by Microsoft Forms in both cases. The application server transmits nothing either way; the traffic is between the administrator's browser and Microsoft.
+- **The console shows the operator's form rather than its own**, either framed inside the page (the default) or opened in a new tab if `CONTACT_FORM_EMBED=false`. It is labeled as hosted by Microsoft Forms in both cases. The application server transmits nothing either way; the traffic is between the administrator's browser and Microsoft.
 - **The form is fetched only after somebody asks for it.** A framed third-party form is a request to Microsoft the moment it is rendered, so rendering it requires a click on a button that says so. The automatic first-run prompt shows an invitation and no frame, and dismissing it contacts nobody. Opening the form is the disclosed request; submitting it sends the answers to Microsoft Forms, where the operator reads them.
 - **Pre-filled answers travel in the form's URL, and the operator chooses which.** `CONTACT_FORM_URL` may contain `{organization}`, `{deployment_url}`, `{version}`, `{contact_name}`, `{contact_email}` and `{contact_role}` placeholders, which the console substitutes. A placeholder that is not in the URL is a value that is never sent. `{contact_name}`, `{contact_email}` and `{contact_role}` are the signed-in administrator's own details — personal data — and are therefore opt-in by the same mechanism: they are transmitted only if the operator deliberately put them in the URL. Whatever is pre-filled is visible and editable in the form before it is submitted.
 - **The frame is given no more than it needs.** It runs under a `sandbox` allowing only scripts, its own storage, form submission and pop-ups, and is sent with `referrer-policy: no-referrer` so the address of the town's console — often an internal hostname — is not disclosed to Microsoft. A link to open the form in a new tab is always offered alongside the frame, because a browser that blocks third-party storage will not render it.
@@ -96,9 +96,27 @@ When an external secret store is configured, integration and provider credential
 |----------|-------|
 | Scheme | AES-256-GCM data key per value, wrapped by the configured cloud key service |
 | Portability | A value stays decryptable under whichever key service wrapped it (tagged wrap), so switching clouds does not orphan existing data |
-| Protected fields | Email, phone, name, address |
+| Protected fields | Email, phone, first and last name. The service address and coordinates are stored in plain text, because they are mapped, routed by jurisdiction and (unless a report is unlisted) shown on the public map. Categories set to "Not collected" store no location at all |
 | Local fallback | Fernet (AES-128-CBC + HMAC-SHA256) derived from `SECRET_KEY` |
 | Provider guarantees | HSM backing, rotation, and certifications are the cloud provider's, not Pinpoint's — verify them against your requirements |
+| Key custody | The key lives in the town's own cloud account; the application can only wrap and unwrap data keys with it (no export, delete or rotate) |
+| Key rotation | Supported on any schedule. Azure key versions are recorded per data key and a nightly job re-wraps older ones; see [DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md#key-custody-and-rotation) |
+
+### Resident History (optional module, off by default)
+
+Lets staff see a resident's other requests on a request's detail view, and search requests by an exact full email address or full name. Resident PII stays encrypted as above; matching uses separate keyed fingerprints.
+
+| Property | Value |
+|----------|-------|
+| Matching | HMAC-SHA256 of the normalized email and of the normalized full name, in their own indexed columns. One-way; the encrypted PII columns are unchanged |
+| Fingerprint key | 256 random bits per deployment, generated on first use, stored wrapped exactly as resident PII is (by the configured cloud KMS), with no fallback to a weaker scheme, and re-wrapped if the key service changes. Not derived from `SECRET_KEY` |
+| Access | Staff and admin roles only, within the caller's department scope; the module switch is checked server-side on every call |
+| Disclosure | Request number, category, status and date only |
+| Audit | Every lookup is an audit event (`resident_history_viewed`, `resident_search`) with actor and result count, never the searched value; results are withheld if the audit write fails |
+| Retention | Fingerprints exist only while the module is on and are erased when it is turned off. Scrubbing a request's email or name clears its fingerprints |
+| Egress | Fingerprints are excluded from exports, work orders and connector payloads |
+
+See `docs/PRIVACY_ASSESSMENT.md` §3.1 for the purpose statement and residual risk.
 
 ### Content Moderation (public inputs)
 

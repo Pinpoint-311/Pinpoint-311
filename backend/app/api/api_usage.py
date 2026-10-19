@@ -126,5 +126,5 @@ async def get_pricing_info(
     
     return {
         "services": SERVICE_PRICING,
-        "disclaimer": "Prices are estimates based on published Google Cloud pricing. Actual billing may vary based on usage tier, commitment discounts, and regional pricing."
+        "disclaimer": "Prices are estimates based on published Google Cloud pricing. Actual billing varies with usage tier, commitment discounts, and region."
     }

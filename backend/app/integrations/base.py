@@ -228,13 +228,24 @@ class ExternalComment:
 #   media_urls (http(s) URLs only — base64 blobs are never pushed)
 
 
+#: Prefix on an IntegrationLink.external_id that is not the vendor's record id
+#: yet. GeoReport v2 lets a server answer a create with a `token` and assign the
+#: real `service_request_id` later; the link is stored as ``token:<token>`` and
+#: the pull resolves it through the connector's ``resolve_pending_id``.
+PENDING_ID_PREFIX = "token:"
+
+
 class BaseConnector:
     """Abstract base for platform connectors."""
 
     platform: str = "base"
     # What this connector supports: subset of
-    #   {"push", "push_status", "pull", "comments", "documents", "assets",
-    #    "work_orders", "lookups", "test"}
+    #   {"push", "push_status", "push_priority", "pull", "comments",
+    #    "documents", "assets", "work_orders", "lookups", "test"}
+    # "push_priority" means push_priority() can change the priority on a record
+    # that already exists. Claimed per configuration, not per platform: it
+    # needs to know where the vendor keeps priority (a mapped column, an update
+    # path, an agency's priority values).
     # "work_orders" means pull_updates / fetch_record populate the work-order
     # fields on ExternalRecord (assignment, schedule, resolution) and push
     # carries assignment/priority outbound.
@@ -249,6 +260,62 @@ class BaseConnector:
     def __init__(self, config: Dict[str, Any], credentials: Dict[str, Any]):
         self.config = config or {}
         self.credentials = credentials or {}
+        #: Things that did not stop the operation but changed what was sent --
+        #: a layer column that does not exist, a value outside a coded domain,
+        #: coordinates left off because the agency's projection is unknown. The
+        #: sync task writes these to the sync log as warnings after each call,
+        #: so they reach the admin instead of only the worker's log.
+        self.warnings: List[str] = []
+
+    def warn(self, message: str) -> None:
+        if message and message not in self.warnings:
+            self.warnings.append(message)
+
+    def take_warnings(self) -> List[str]:
+        """Hand over and clear the warnings gathered so far."""
+        out, self.warnings = list(self.warnings), []
+        return out
+
+    # ---- Service-code mapping -------------------------------------------
+
+    def map_service_code_out(self, local_code: Optional[str]) -> Optional[str]:
+        """The vendor's code for one of our categories, or None when unmapped."""
+        if not local_code:
+            return None
+        from app.integrations.mapping import service_code_map_out
+        return service_code_map_out(self.config).get(str(local_code))
+
+    # ---- Priority mapping -----------------------------------------------
+
+    #: What to send when the town has not mapped priorities: the 1-10 score
+    #: itself. Connectors whose vendor only accepts agency-defined values
+    #: (Accela) set this False and send nothing until a mapping exists.
+    SEND_RAW_PRIORITY = True
+
+    def map_priority_out(self, score: Any) -> Optional[Any]:
+        """The vendor's value for a Pinpoint priority (1-10), or None to omit it.
+
+        ``priority_map_out`` may key an exact score ("9") or a band ("high" for
+        8-10, "medium" for 5-7, "low" for 1-4 -- the staff dashboard's bands).
+        An exact score wins over its band.
+        """
+        if score is None:
+            return None
+        try:
+            number = float(score)
+        except (TypeError, ValueError):
+            return None
+        mapping = {str(k).strip().lower(): v for k, v in (self.config.get("priority_map_out") or {}).items()
+                   if v not in (None, "")}
+        if mapping:
+            exact = str(int(number)) if number == int(number) else str(number)
+            if exact in mapping:
+                return mapping[exact]
+            band = "high" if number >= 8 else "medium" if number >= 5 else "low"
+            return mapping.get(band)
+        if not self.SEND_RAW_PRIORITY:
+            return None
+        return int(number) if number == int(number) else number
 
     # ---- Status mapping -------------------------------------------------
 
@@ -268,6 +335,18 @@ class BaseConnector:
         overrides = {str(k).lower(): v for k, v in (self.config.get("status_map_in") or {}).items()}
         if key in overrides:
             return overrides[key]
+        # A word we send is a word we understand. A town that maps
+        # in_progress -> "Under Review" outbound and never added the reverse
+        # would otherwise read its own pushed status back as "open".
+        # Only a word exactly one of our statuses maps to: Open311 sends both
+        # open and in_progress as "open", and reading that back as either would
+        # be a guess.
+        reverse: Dict[str, List[str]] = {}
+        for ours, theirs in (self.config.get("status_map_out") or {}).items():
+            if theirs:
+                reverse.setdefault(str(theirs).strip().lower(), []).append(ours)
+        if len(reverse.get(key, [])) == 1:
+            return reverse[key][0]
         return self.DEFAULT_STATUS_MAP_IN.get(key, "open" if key not in ("closed", "resolved", "archived", "complete", "completed") else "closed")
 
     # ---- Operations (override in subclasses) ----------------------------
@@ -284,12 +363,29 @@ class BaseConnector:
         """Propagate a local status change to the external record."""
         raise ConnectorError(f"{self.platform} connector does not support status updates")
 
+    async def push_priority(self, external_id: str, priority: Any) -> None:
+        """Change the priority on an existing external record (capability
+        "push_priority"). `priority` is the Pinpoint 1-10 score; the connector
+        maps it with map_priority_out."""
+        raise ConnectorError(f"{self.platform} connector does not support priority updates")
+
     async def pull_updates(self, since: Optional[datetime] = None) -> List[ExternalRecord]:
         """Fetch records changed on the platform since `since`."""
         raise ConnectorError(f"{self.platform} connector does not support pulling updates")
 
     async def fetch_record(self, external_id: str) -> Optional[ExternalRecord]:
         """Fetch a single record by external id (used for per-request refresh)."""
+        return None
+
+    async def pull_linked(self, external_ids: List[str]) -> List[ExternalRecord]:
+        """Fetch the current state of records we are already linked to
+        (capability "pull_linked"). For vendors whose change feed cannot be
+        trusted to include status edits on older records."""
+        raise ConnectorError(f"{self.platform} connector does not support polling linked records")
+
+    async def resolve_pending_id(self, external_id: str) -> Optional[str]:
+        """Turn a ``token:`` placeholder id into the vendor's real record id,
+        or None while the vendor has not assigned one yet."""
         return None
 
     # -- Comments (capability "comments") --

@@ -179,7 +179,9 @@ def verify_state(state: str, max_age: int = STATE_TTL_SECONDS) -> Optional[Dict[
         expected = _b64(hmac.new(_signing_key(), body.encode(), hashlib.sha256).digest())
     except Exception:
         return None
-    if not hmac.compare_digest(sig, expected):
+    # Bytes, not str: compare_digest raises TypeError on a str holding non-ASCII,
+    # which turned a junk state from an unauthenticated caller into a 500.
+    if not hmac.compare_digest(sig.encode("utf-8"), expected.encode("utf-8")):
         return None
     try:
         payload = json.loads(_unb64(body))
@@ -191,6 +193,23 @@ def verify_state(state: str, max_age: int = STATE_TTL_SECONDS) -> Optional[Dict[
     if age < -60 or age > max_age:  # small negative tolerance for clock skew
         return None
     return payload
+
+
+async def consume_state(db, payload: Dict[str, Any]) -> bool:
+    """Burn a verified state so it opens exactly one callback.
+
+    The signature and the ten-minute window say the state is ours and fresh,
+    not that it is unused: without this, a state captured from the redirect
+    (browser history, a proxy log) could be replayed inside that window with
+    a different authorization code. Recorded in the database, so the refusal
+    holds across workers and restarts. False means "already used".
+    """
+    from app.services import one_time
+
+    nonce = str((payload or {}).get("n") or "")
+    if not nonce:
+        return False
+    return await one_time.burn(db, "accela_state", f"{payload.get('iid')}:{nonce}")
 
 
 # ---------------------------------------------------------------------------

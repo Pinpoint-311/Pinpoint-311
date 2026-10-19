@@ -138,9 +138,9 @@ def build_alerts(
             body=(
                 f"These roads are used by jurisdiction rules but are no longer in the "
                 f"road data: {listed}.\n\n"
-                "Reports on them are now handled by the town instead of being "
-                "redirected, and the routing screens show no error. The usual cause is "
-                "a spelling change by the data publisher. Check the road names against "
+                "Reports on them now go to the town instead of being redirected, and "
+                "the routing screens don't show an error. The common cause is a "
+                "spelling change by the data publisher. Check the road names in "
                 "Service Categories -> Routing."
             ),
         ))
@@ -151,10 +151,9 @@ def build_alerts(
             subject=f"Road data for {township} has failed to update {consecutive_failures} times",
             body=(
                 f"The last error was: {last_error or 'unknown'}.\n\n"
-                "Routing still works, because the last successful copy of the road "
-                "data is still in use. That copy is not being refreshed, so streets "
-                "added or renamed since then are absent. Check that the source URL in "
-                "the road-data settings still resolves."
+                "Routing still works from the last successful copy of the road data, "
+                "but streets added or renamed since then are missing. Check that the "
+                "source URL in the road-data settings still resolves."
             ),
         ))
 
@@ -171,8 +170,8 @@ def build_alerts(
                 subject=f"Road data for {township} shrank sharply and was not applied",
                 body=(
                     f"The update returned {changes.current_count} named roads against "
-                    f"{changes.previous_count} before. That is usually a truncated response "
-                    "rather than roads genuinely disappearing, so the previous data was kept."
+                    f"{changes.previous_count} before. That points to a truncated response, "
+                    "so the previous data was kept."
                 ),
             ))
         else:

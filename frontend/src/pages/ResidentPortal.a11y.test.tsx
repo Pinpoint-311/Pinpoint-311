@@ -130,7 +130,7 @@ afterEach(() => {
 const dismissDisclaimer = async (user: ReturnType<typeof userEvent.setup>) => {
     const dialog = await screen.findByRole('dialog');
     await user.click(dialog.querySelector('input[type="checkbox"]')!);
-    await user.click(await screen.findByRole('button', { name: /Let's Get Started/ }));
+    await user.click(await screen.findByRole('button', { name: /Get started/ }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 };
 

@@ -106,7 +106,7 @@ export default function ClientErrorPanel() {
                     type="button"
                     onClick={load}
                     disabled={busy}
-                    className="inline-flex items-center gap-1.5 text-xs text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                    className="btn-outline"
                 >
                     <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} aria-hidden="true" />
                     Refresh
@@ -116,7 +116,7 @@ export default function ClientErrorPanel() {
             <div className="relative">
                 {failed ? (
                     <p className="text-sm text-amber-200/75">
-                        Could not load the error list. That is itself worth investigating.
+                        Could not load the error list.
                     </p>
                 ) : errors === null ? (
                     <p className="text-sm text-white/40">Loading…</p>

@@ -1,0 +1,4 @@
+# Installed with --no-deps (see Dockerfile): the runtime itself needs only
+# numpy at import; its declared deps (sympy, coloredlogs, protobuf,
+# flatbuffers) serve the training/conversion tooling and cost ~100 MB.
+onnxruntime==1.23.2

@@ -284,7 +284,7 @@ class Auth0Service:
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to fetch user info")
+                raise HTTPException(status_code=400, detail="Couldn't fetch your account details from Auth0. Try signing in again.")
             return response.json()
 
         config = await Auth0Service.get_config(db)
@@ -302,7 +302,7 @@ class Auth0Service:
             )
             
             if response.status_code != 200:
-                raise HTTPException(status_code=400, detail="Failed to fetch user info")
+                raise HTTPException(status_code=400, detail="Couldn't fetch your account details from Auth0. Try signing in again.")
             
             return response.json()
     

@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { MapPin, Crosshair, Loader2, AlertTriangle } from 'lucide-react';
 import { MapLayer } from '../services/api';
+import { useContextLayerOutlines } from './useContextLayerOutlines';
+import { humanize } from '../utils/humanize';
 import {
     AddressSuggestion,
     AutocompleteHandle,
@@ -9,6 +11,7 @@ import {
     MapRenderer,
     MarkerHandle,
     MarkerOptions,
+    PopupHandle,
     assetIcon,
     backendGeocodingProvider,
     boundsOfGeoJson,
@@ -36,6 +39,13 @@ interface LocationPickerProps {
     config: MapProviderConfig;
     townshipBoundary?: object | null; // GeoJSON boundary from OpenStreetMap
     customLayers?: MapLayer[]; // Custom GeoJSON layers (parks, storm drains, etc.)
+    /**
+     * The category being reported. When set, the polygon layers an admin put
+     * on the resident portal for this category are drawn as faint, shape-only
+     * outlines (the same public route and style as the Community Requests map),
+     * so a resident can see which parcel or zone their pin is in.
+     */
+    outlineCategory?: string | null;
     defaultCenter?: { lat: number; lng: number };
     defaultZoom?: number;
     value?: { address: string; lat: number | null; lng: number | null };
@@ -54,6 +64,7 @@ export default function LocationPicker({
     config,
     townshipBoundary,
     customLayers = [],
+    outlineCategory = null,
     defaultCenter = CONTINENTAL_US_CENTER,
     defaultZoom = 17,
     value,
@@ -68,6 +79,9 @@ export default function LocationPicker({
     const inputRef = useRef<HTMLInputElement>(null);
     const mapRef = useRef<MapRenderer | null>(null);
     const markerRef = useRef<MarkerHandle | null>(null);
+    // Public outlines have no popup; the hook still takes the ref.
+    const outlinePopupRef = useRef<PopupHandle | null>(null);
+    const [mapReady, setMapReady] = useState(false);
     const geocoderRef = useRef<GeocodingProvider | null>(null);
     const autocompleteRef = useRef<AutocompleteHandle | null>(null);
     // Our own suggestion list, used when the provider has no widget of its own.
@@ -99,6 +113,12 @@ export default function LocationPicker({
     // gracefully. The canvas is the only part that goes; the address box stays
     // and keeps resolving through the backend.
     const mapUnavailable = !!error;
+
+    useContextLayerOutlines(
+        mapRef, outlinePopupRef, mapReady,
+        outlineCategory ? 'public' : 'off',
+        outlineCategory ? [outlineCategory] : null,
+    );
 
     // Sync input value with external value ONLY when address changes from parent
     useEffect(() => {
@@ -340,7 +360,7 @@ export default function LocationPicker({
                                     onClick: (_e, marker) => {
                                         const assetName = props.name || layer.name;
                                         const assetType = props.asset_type
-                                            ? String(props.asset_type).replace(/_/g, ' ')
+                                            ? humanize(String(props.asset_type))
                                             : layer.layer_type || 'asset';
 
                                         const selectAsset = () => {
@@ -387,8 +407,8 @@ export default function LocationPicker({
                                                         style: 'display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; border-bottom: 1px solid #e2e8f0;',
                                                         children: [
                                                             el('span', {
-                                                                style: 'color: #64748b; font-size: 12px; text-transform: capitalize;',
-                                                                text: key.replace(/_/g, ' '),
+                                                                style: 'color: #64748b; font-size: 12px;',
+                                                                text: humanize(key),
                                                             }),
                                                             el('span', {
                                                                 style: 'font-size: 12px; color: #334155; font-weight: 500; text-align: right;',
@@ -474,9 +494,10 @@ export default function LocationPicker({
                 }
 
                 setIsLoading(false);
+                setMapReady(true);
             } catch (err) {
                 if (isMounted) {
-                    setError('Failed to load the map');
+                    setError("The map didn't load.");
                     // No provider widget attached, so this component's own
                     // suggestion list is the only autocomplete left.
                     setNeedsOwnList(true);
@@ -489,6 +510,7 @@ export default function LocationPicker({
 
         return () => {
             isMounted = false;
+            setMapReady(false);
             autocompleteRef.current?.destroy();
             autocompleteRef.current = null;
             markerRef.current = null;
@@ -515,7 +537,7 @@ export default function LocationPicker({
            relevant and stays on screen to be re-read. */
         setGeoError(null);
         if (!navigator.geolocation) {
-            setGeoError("This browser cannot share your location. Please type the address above.");
+            setGeoError("This browser can't share your location. Type the address above.");
             return;
         }
 
@@ -540,7 +562,7 @@ export default function LocationPicker({
             },
             (error) => {
                 console.error('Geolocation error:', error);
-                setGeoError("We could not get your location. Please enter an address above instead.");
+                setGeoError("We couldn't get your location. Enter an address above.");
                 setIsLocating(false);
             },
             { enableHighAccuracy: true, timeout: 10000 }
@@ -796,9 +818,9 @@ export default function LocationPicker({
                     role="alert"
                     className="flex items-center gap-2 text-sm bg-red-500/10 rounded-xl px-4 py-3 border border-red-500/30"
                 >
-                    <span className="text-red-400" aria-hidden="true">⚠️</span>
+                    <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" aria-hidden="true" />
                     <span className="text-red-300">
-                        This location is outside the municipality boundary. Please select a location within the jurisdiction.
+                        This location is outside the municipal boundary. Choose a location within the municipality.
                     </span>
                 </div>
             )}
@@ -806,7 +828,7 @@ export default function LocationPicker({
             {/* Instructions or Selected location info - shown BELOW the map */}
             {!value?.lat && !value?.lng && !isLoading && !mapUnavailable ? (
                 <div className="flex items-center justify-center gap-2 text-sm bg-white/5 rounded-xl px-4 py-3 border border-white/10">
-                    <span className="text-primary-400" aria-hidden="true">📍</span>
+                    <MapPin className="w-4 h-4 text-primary-400 shrink-0" aria-hidden="true" />
                     <span className="text-white/70">Tap the map to select a location, or search above</span>
                 </div>
             ) : value?.lat && value?.lng ? (
@@ -818,8 +840,8 @@ export default function LocationPicker({
                         </span>
                     </div>
                     <span className="hidden sm:block text-white/20">•</span>
-                    <span className="text-primary-400 text-xs sm:text-sm font-medium">
-                        <span aria-hidden="true">📍</span> Drag the pin to fine-tune
+                    <span className="inline-flex items-center gap-1 text-primary-400 text-xs sm:text-sm font-medium">
+                        <Crosshair className="w-3.5 h-3.5" aria-hidden="true" /> Drag the pin to fine-tune
                     </span>
                 </div>
             ) : null}

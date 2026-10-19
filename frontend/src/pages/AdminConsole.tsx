@@ -25,49 +25,23 @@ import {
     ExternalLink,
     GitFork,
     Edit,
-    Phone,
     UserCheck,
     AlertCircle,
-    Car,
-    Trash,
-    Lightbulb,
-    TreePine,
-    Building,
-    Hammer,
-    Droplet,
-    Bug,
-    PaintBucket,
-    Wrench,
     Route,
     MapPin,
     Home,
-    Zap,
     Shield,
-    Heart,
-    Star,
-    Flag,
-    Bell,
-    Camera,
     Clock,
-    FileText,
     Settings,
-    HelpCircle,
     Info,
     Layers,
     Upload,
     BarChart3,
     Terminal,
-
-
     ChevronDown,
     GripVertical,
     User as UserIcon,
     Globe,
-    Facebook,
-    Instagram,
-    Youtube,
-    Twitter,
-    Linkedin,
     type LucideIcon,
     FlaskConical,
     Search,
@@ -77,22 +51,38 @@ import {
     MessageSquareHeart,
     CircleCheck,
     Pencil,
+    MapPinned,
+    MapPinOff,
+    UserSearch,
 } from 'lucide-react';
-import { Button, Card, Modal, Input, Select, Badge, AccordionSection } from '../components/ui';
+import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge } from '../components/ui';
+import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
-import { api, MapLayer, ResearchPackSwitch } from '../services/api';
-import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact } from '../types';
+import { api, MapLayer, ResearchPackSwitch, RoadLimit } from '../services/api';
+import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact, LocationMode } from '../types';
+import CategoryIconPicker from '../components/CategoryIconPicker';
+import { categoryIconFor, DEFAULT_CATEGORY_ICON, isDefaultOrUnknownIcon, suggestCategoryIcon } from '../components/categoryIcons';
 import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
+import AgencyReusePicker from '../components/AgencyReusePicker';
+import { combinedRoadList } from '../utils/agencyLibrary';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
+import Open311ApiKeys from '../components/Open311ApiKeys';
+import { ContextLayerSettingsModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import { CategoryScopePicker } from '../components/CategoryScopePicker';
+import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
+import SignInProviderNote from '../components/SignInProviderNote';
+import { useSignInProvider } from '../hooks/useSignInProvider';
+import BackupRestore from '../components/BackupRestore';
 import VersionSwitcher from '../components/VersionSwitcher';
 import StayInformedHost from '../components/StayInformed';
+import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -112,37 +102,7 @@ export function formatSlaTarget(hours: number): string {
 }
 
 // Icon library for service categories
-const ICON_LIBRARY: { name: string; icon: LucideIcon }[] = [
-    { name: 'AlertCircle', icon: AlertCircle },
-    { name: 'Car', icon: Car },
-    { name: 'Trash', icon: Trash },
-    { name: 'Lightbulb', icon: Lightbulb },
-    { name: 'TreePine', icon: TreePine },
-    { name: 'Building', icon: Building },
-    { name: 'Hammer', icon: Hammer },
-    { name: 'Droplet', icon: Droplet },
-    { name: 'Bug', icon: Bug },
-    { name: 'PaintBucket', icon: PaintBucket },
-    { name: 'Wrench', icon: Wrench },
-    { name: 'Route', icon: Route },
-    { name: 'MapPin', icon: MapPin },
-    { name: 'Home', icon: Home },
-    { name: 'Zap', icon: Zap },
-    { name: 'Shield', icon: Shield },
-    { name: 'Heart', icon: Heart },
-    { name: 'Star', icon: Star },
-    { name: 'Flag', icon: Flag },
-    { name: 'Bell', icon: Bell },
-    { name: 'Camera', icon: Camera },
-    { name: 'Mail', icon: Mail },
-    { name: 'Phone', icon: Phone },
-    { name: 'Clock', icon: Clock },
-    { name: 'FileText', icon: FileText },
-    { name: 'Settings', icon: Settings },
-    { name: 'HelpCircle', icon: HelpCircle },
-    { name: 'Info', icon: Info },
-    { name: 'Users', icon: Users },
-];
+// Category icons come from the shared municipal set in components/categoryIcons.ts.
 
 type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
 
@@ -255,13 +215,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
         opacity: isDragging ? 0.85 : 1,
     };
 
-    const getIconComponent = (iconName?: string) => {
-        if (!iconName) return Grid3X3;
-        const found = ICON_LIBRARY.find(i => i.name === iconName);
-        return found ? found.icon : Grid3X3;
-    };
-
-    const IconComp = getIconComponent((service as any).icon);
+    const IconComp = categoryIconFor((service as any).icon);
 
     const getModeBadge = (mode?: string) => {
         if (mode === 'third_party') return (
@@ -334,7 +288,7 @@ function BubblyServiceCard({ service, onEdit, onDelete }: {
                         onClick={() => onEdit(service)}
                         className="rounded-2xl px-5"
                     >
-                        Configure Routing
+                        Edit category
                     </Button>
                     <button
                         onClick={() => onDelete(service.id)}
@@ -388,6 +342,29 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
         }
     };
 
+    // Categories still on the default (or a retired) icon that the shared set
+    // has a confident suggestion for. Applied only on request, and never to an
+    // icon somebody chose.
+    const iconSuggestions = services
+        .filter(s => isDefaultOrUnknownIcon(s.icon))
+        .map(s => ({ service: s, icon: suggestCategoryIcon(s.service_name, s.description) }))
+        .filter((x): x is { service: ServiceDefinition; icon: string } => !!x.icon);
+    const [applyingIcons, setApplyingIcons] = useState(false);
+    const applyIconSuggestions = async () => {
+        setApplyingIcons(true);
+        try {
+            for (const { service, icon } of iconSuggestions) {
+                await api.updateService(service.id, { icon });
+            }
+        } catch (err) {
+            console.error('Failed to apply icon suggestions:', err);
+            alert("Couldn't apply every suggested icon. Try again.");
+        } finally {
+            setApplyingIcons(false);
+            loadTabData();
+        }
+    };
+
     const roadBasedCount = services.filter(s => s.routing_mode === 'road_based').length;
     const thirdPartyCount = services.filter(s => s.routing_mode === 'third_party').length;
     const municipalCount = services.filter(s => !s.routing_mode || s.routing_mode === 'township').length;
@@ -418,13 +395,27 @@ export function ServiceCategoriesTab({ services, setServices, loadTabData, setSh
                     <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">Service Categories</h1>
                     <p className="text-sm text-white/50 mt-1">Configure portal categories, assignment rules, and automated spatial routing</p>
                 </div>
-                <Button
-                    leftIcon={<Plus className="w-4 h-4" />}
-                    onClick={() => setShowServiceModal(true)}
-                    className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
-                >
-                    Add Category
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    {iconSuggestions.length > 0 && (
+                        <Button
+                            variant="secondary"
+                            leftIcon={<Sparkles className="w-4 h-4" />}
+                            onClick={applyIconSuggestions}
+                            disabled={applyingIcons}
+                            className="w-full sm:w-auto"
+                            title="Pick an icon from each category's name, for categories still using the default icon"
+                        >
+                            {applyingIcons ? 'Applying…' : `Suggest icons (${iconSuggestions.length})`}
+                        </Button>
+                    )}
+                    <Button
+                        leftIcon={<Plus className="w-4 h-4" />}
+                        onClick={() => setShowServiceModal(true)}
+                        className="w-full sm:w-auto bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-400 hover:to-primary-500 shadow-lg shadow-primary-500/25"
+                    >
+                        Add Category
+                    </Button>
+                </div>
             </div>
 
             {/* 3 Premium Stat Cards (Matching User Management Page) */}
@@ -626,7 +617,7 @@ export function DepartmentsTab({
                                         <Building2 className="w-12 h-12 mx-auto text-white/20 mb-3" />
                                         <p className="text-white/60">No departments yet.</p>
                                         <p className="text-white/40 text-sm mt-1">
-                                            Add one to organise staff and route reports to the right team.
+                                            Add one to organize staff and route reports to the right team.
                                         </p>
                                     </div>
                                 )}
@@ -657,7 +648,7 @@ export default function AdminConsole() {
     const reportError = (context: string, err: unknown) => {
         console.error(`${context}:`, err);
         const detail = err instanceof Error ? err.message : String(err ?? '');
-        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Please try again.`);
+        setErrorMessage(detail ? `${context}: ${detail}` : `${context}. Try again.`);
         setTimeout(() => setErrorMessage(null), 12000);
     };
     const contentRef = useRef<HTMLDivElement>(null);
@@ -708,6 +699,8 @@ export default function AdminConsole() {
     // Users state
     const [users, setUsers] = useState<User[]>([]);
     const [showUserModal, setShowUserModal] = useState(false);
+    // Who staff sign in with, by the name the town knows it by.
+    const signIn = useSignInProvider();
     const [newUser, setNewUser] = useState({
         username: '',
         email: '',
@@ -784,6 +777,11 @@ export default function AdminConsole() {
         icon: 'AlertCircle',
         // Optional SLA target in hours; '' means no SLA for this category.
         sla_hours: '' as string,
+        // Whether residents are asked where. See backend services/location_policy.
+        location_mode: 'optional' as LocationMode,
+        hidden_from_public: false,
+        service_name: '',
+        description: '',
         routing_config: {
             // Township mode
             route_to: 'all_staff' as 'all_staff' | 'specific_staff',
@@ -814,6 +812,8 @@ export default function AdminConsole() {
         severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[];
     }[]>([]);
     const [routingCanSave, setRoutingCanSave] = useState(true);
+    // Roads limited to a stretch, as the server resolved them on the map.
+    const [roadLimits, setRoadLimits] = useState<RoadLimit[]>([]);
     // Stretches the clerk switched off, keyed to the publisher's feature ids so
     // a monthly data refresh keeps the corrections while still picking up newly
     // built sections of the same road.
@@ -827,6 +827,7 @@ export default function AdminConsole() {
         if (serviceRouting.routing_mode !== 'road_based') {
             setRoutingIssues([]);
             setRoutingCanSave(true);
+            setRoadLimits([]);
             return;
         }
         const split = (v: string) => v.split(',').map(r => r.trim()).filter(Boolean);
@@ -835,10 +836,18 @@ export default function AdminConsole() {
                 default_handler: serviceRouting.routing_config.default_handler,
                 exclusion_list: split(serviceRouting.routing_config.exclusion_list),
                 inclusion_list: split(serviceRouting.routing_config.inclusion_list),
+                // Per agency, so a road claimed by two agencies is caught and
+                // each agency's limited stretches are resolved on the map.
+                third_party_contacts: (serviceRouting.routing_config.third_party_contacts || [])
+                    .map(a => ({ name: a?.name || '', road_list: a?.road_list || '', roads: a?.roads || [] })),
             })
-                .then(result => { setRoutingIssues(result.issues); setRoutingCanSave(result.can_save); })
+                .then(result => {
+                    setRoutingIssues(result.issues);
+                    setRoutingCanSave(result.can_save);
+                    setRoadLimits(result.limits || []);
+                })
                 // A check that cannot run must not lock a clerk out of saving.
-                .catch(() => { setRoutingIssues([]); setRoutingCanSave(true); });
+                .catch(() => { setRoutingIssues([]); setRoutingCanSave(true); setRoadLimits([]); });
         }, 350);
         return () => clearTimeout(timer);
     }, [
@@ -846,6 +855,7 @@ export default function AdminConsole() {
         serviceRouting.routing_config.default_handler,
         serviceRouting.routing_config.exclusion_list,
         serviceRouting.routing_config.inclusion_list,
+        serviceRouting.routing_config.third_party_contacts,
     ]);
 
     // Department management state
@@ -871,7 +881,7 @@ export default function AdminConsole() {
      * another. They live in `capability_switches` now, with the ticks in Setup
      * Instructions; what is left here has no provider, no credentials and
      * nothing to switch off at the dispatch layer. */
-    const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false, platform_feedback: false });
+    const [modules, setModules] = useState({ research_portal: false, unlisted_reports: false, platform_feedback: false, resident_history: false });
     // Where longer platform feedback is emailed. Held as a string because the
     // input is a text box and '' is a meaningful answer: it is how an admin
     // says "make no such offer", and the server stores '' as NULL.
@@ -917,6 +927,9 @@ export default function AdminConsole() {
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
     const [showLayerModal, setShowLayerModal] = useState(false);
     const [editingLayer, setEditingLayer] = useState<MapLayer | null>(null);
+    // An upload in progress in the Add Layer dialog; closing then would orphan it.
+    const [layerUploadBusy, setLayerUploadBusy] = useState(false);
+    const [polygonSettingsLayer, setPolygonSettingsLayer] = useState<MapLayer | null>(null);
     const [newLayer, setNewLayer] = useState({
         name: '',
         description: '',
@@ -943,10 +956,10 @@ export default function AdminConsole() {
     const [isSearchingNominatim, setIsSearchingNominatim] = useState(false);
 
 
-    // SSO users don't have passwords - authentication handled by Auth0
+    // SSO users don't have passwords - authentication is the identity provider's job
 
 
-    // SSO users don't have passwords - authentication handled by Auth0
+    // SSO users don't have passwords - authentication is the identity provider's job
 
     // Document Retention state
     /* There is no list of states any more. It populated a picker that looked up
@@ -1074,6 +1087,7 @@ export default function AdminConsole() {
                 research_portal: settings.modules?.research_portal || false,
                 unlisted_reports: settings.modules?.unlisted_reports ?? (settings.modules as any)?.private_reports ?? false,
                 platform_feedback: settings.modules?.platform_feedback || false,
+                resident_history: settings.modules?.resident_history || false,
             });
             setPlatformFeedbackEmail(settings.platform_feedback_email || '');
             setPublicArchiveDays(settings.public_archive_days ? String(settings.public_archive_days) : '');
@@ -1202,7 +1216,7 @@ export default function AdminConsole() {
         setIsLoading(true);
         try {
             await api.updateSettings(brandingForm);
-            setSaveMessage('Settings saved!');
+            setSaveMessage('Settings saved');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err) {
             reportError('Could not save branding', err);
@@ -1229,7 +1243,7 @@ export default function AdminConsole() {
             }
         } catch (err) {
             console.error('OSM search failed:', err);
-            alert("Failed to search for municipality");
+            alert("Municipality search failed. Try again.");
         } finally {
             setIsSearchingTownship(false);
         }
@@ -1264,11 +1278,11 @@ export default function AdminConsole() {
 
             setTownshipBoundary(geojson);
             setSelectedOsmResult(null);
-            setSaveMessage('Municipality boundary saved successfully!');
+            setSaveMessage('Municipality boundary saved');
             setTimeout(() => setSaveMessage(null), 3000);
         } catch (err) {
             console.error('Failed to fetch boundary:', err);
-            alert("Failed to fetch boundary. The boundary may not be available for this location.");
+            alert("Couldn't fetch a boundary for this location.");
         } finally {
             setIsFetchingBoundary(false);
         }
@@ -1316,7 +1330,11 @@ export default function AdminConsole() {
     const handleCreateService = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
-            await api.createService(newService);
+            // A new category gets an icon from its name unless one was chosen.
+            const icon = newService.icon && newService.icon !== DEFAULT_CATEGORY_ICON
+                ? newService.icon
+                : (suggestCategoryIcon(newService.service_name, newService.description) || DEFAULT_CATEGORY_ICON);
+            await api.createService({ ...newService, icon });
             setShowServiceModal(false);
             setNewService({ service_code: '', service_name: '', description: '', icon: 'AlertCircle' });
             loadTabData();
@@ -1354,6 +1372,10 @@ export default function AdminConsole() {
             assigned_department_id: service.assigned_department_id || null,
             icon: service.icon || 'AlertCircle',
             sla_hours: service.sla_hours ? String(service.sla_hours) : '',
+            location_mode: service.location_mode || 'optional',
+            hidden_from_public: service.hidden_from_public === true,
+            service_name: service.service_name || '',
+            description: service.description || '',
             routing_config: {
                 // Township mode
                 route_to: config.route_to || 'all_staff',
@@ -1451,12 +1473,16 @@ export default function AdminConsole() {
                 icon: serviceRouting.icon,
                 // 0 explicitly clears the SLA; a value sets it.
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
+                location_mode: serviceRouting.location_mode,
+                hidden_from_public: serviceRouting.hidden_from_public,
+                service_name: serviceRouting.service_name.trim() || editingService.service_name,
+                description: serviceRouting.description,
             });
 
             setShowServiceEditModal(false);
             setEditingService(null);
             loadTabData();
-            setSaveMessage('Service routing updated!');
+            setSaveMessage('Service routing updated');
             setTimeout(() => setSaveMessage(''), 3000);
         } catch (err: any) {
             console.error('Failed to update service:', err);
@@ -1477,8 +1503,11 @@ export default function AdminConsole() {
             setEditingDepartment(null);
             setNewDepartment({ name: '', description: '', routing_email: '' });
             loadTabData();
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to save department:', err);
+            // Said, not swallowed: a rejected save used to leave the modal
+            // open with no sign anything had gone wrong.
+            alert(err?.message || "Couldn't save the department. Check the name and routing email.");
         }
     };
 
@@ -1554,12 +1583,20 @@ export default function AdminConsole() {
         navigate('/login');
     };
 
-    // Note: Password reset functionality removed - using Auth0 SSO
+    // Note: Password reset functionality removed - sign-in goes through the town's identity provider
 
     // Tabs are now rendered using SidebarGroup/SidebarItem components in the sidebar
 
     return (
-        <div className="min-h-screen flex">
+        // Fixed to the viewport, like the staff dashboard: only the content pane
+        // (contentRef) scrolls. With min-h-screen the pane never overflowed, so a
+        // tall section -- opening Audit Logs -- scrolled the whole window and
+        // the sidebar and header moved with it. `relative` (here and on the
+        // pane) matters as much: an absolutely positioned descendant with no
+        // positioned ancestor -- every sr-only label in the audit table -- is
+        // laid out against the page, not clipped by overflow, and stretched
+        // the document until the whole frame scrolled away.
+        <div className="relative h-screen flex overflow-hidden">
             {/* The one voluntary outbound call this application makes. Gated on
               * a configured deployment rather than on sign-in: `township_name`
               * only leaves its placeholder once somebody has been through
@@ -1600,6 +1637,7 @@ export default function AdminConsole() {
 
             {/* Sidebar */}
             <aside
+                id="admin-sidebar"
                 className={`fixed lg:static inset-y-0 left-0 z-50 w-72 glass-sidebar transform transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
                     }`}
                 aria-label="Admin console navigation"
@@ -1628,6 +1666,8 @@ export default function AdminConsole() {
                                 onClick={() => setSidebarOpen(false)}
                                 className="lg:hidden p-2 hover:bg-white/10 rounded-lg"
                                 aria-label="Close navigation menu"
+                                aria-expanded={sidebarOpen}
+                                aria-controls="admin-sidebar"
                             >
                                 <X className="w-5 h-5 text-white/60" aria-hidden="true" />
                             </button>
@@ -1781,6 +1821,8 @@ export default function AdminConsole() {
                         onClick={() => setSidebarOpen(true)}
                         className="p-2 hover:bg-white/10 rounded-lg"
                         aria-label="Open navigation menu"
+                        aria-expanded={sidebarOpen}
+                        aria-controls="admin-sidebar"
                     >
                         <Menu className="w-6 h-6 text-white" aria-hidden="true" />
                     </button>
@@ -1789,7 +1831,7 @@ export default function AdminConsole() {
                 </header>
 
                 {/* Content */}
-                <div ref={contentRef} className="flex-1 p-4 md:p-6 overflow-auto">
+                <div ref={contentRef} className="relative flex-1 p-4 md:p-6 overflow-auto overscroll-contain">
                     <div className="max-w-4xl mx-auto">
                         {/* Save message */}
                         <AnimatePresence>
@@ -1827,378 +1869,13 @@ export default function AdminConsole() {
 
                         {/* Branding Tab */}
                         {currentTab === 'branding' && (
-                            <div className="space-y-6">
-                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                    <h1 className="text-xl sm:text-2xl font-bold text-white">Branding Settings</h1>
-                                    <Button className="w-full sm:w-auto" leftIcon={<Save className="w-4 h-4" />} onClick={handleSaveBranding} isLoading={isLoading}>
-                                        Save Changes
-                                    </Button>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
-                                    <Card>
-                                        <div className="space-y-4">
-                                            <Input
-                                                label="Municipality Name"
-                                                value={brandingForm.township_name || ''}
-                                                onChange={(e) => setBrandingForm((p) => ({ ...p, township_name: e.target.value }))}
-                                            />
-                                            <Input
-                                                label="Hero Text"
-                                                value={brandingForm.hero_text || ''}
-                                                onChange={(e) => setBrandingForm((p) => ({ ...p, hero_text: e.target.value }))}
-                                            />
-                                            <div>
-                                                <label className="block text-sm font-medium text-white/70 mb-2">
-                                                    Logo
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    {brandingForm.logo_url && (
-                                                        <img src={brandingForm.logo_url} alt="Logo" className="h-10 rounded" />
-                                                    )}
-                                                    <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer transition-all">
-                                                        <Upload className="w-4 h-4 text-white/60" />
-                                                        <span className="text-sm text-white/70">Upload Logo</span>
-                                                        <input
-                                                            type="file"
-                                                            accept="image/*"
-                                                            className="hidden"
-                                                            onChange={async (e) => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    try {
-                                                                        const result = await api.uploadImage(file);
-                                                                        setBrandingForm((p) => ({ ...p, logo_url: result.url }));
-                                                                    } catch (err) {
-                                                                        console.error('Logo upload failed:', err);
-                                                                    }
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    {brandingForm.logo_url && (
-                                                        <button
-                                                            onClick={() => setBrandingForm((p) => ({ ...p, logo_url: '' }))}
-                                                            className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                            title="Remove logo"
-                                                            aria-label="Remove logo"
-                                                        >
-                                                            <X className="w-4 h-4" aria-hidden="true" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div>
-                                                <label className="block text-sm font-medium text-white/70 mb-2">
-                                                    Favicon
-                                                </label>
-                                                <div className="flex items-center gap-3">
-                                                    {brandingForm.favicon_url && (
-                                                        <img src={brandingForm.favicon_url} alt="Favicon" className="h-8 w-8 rounded" />
-                                                    )}
-                                                    <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer transition-all">
-                                                        <Upload className="w-4 h-4 text-white/60" />
-                                                        <span className="text-sm text-white/70">Upload Favicon</span>
-                                                        <input
-                                                            type="file"
-                                                            accept="image/*,.ico"
-                                                            className="hidden"
-                                                            onChange={async (e) => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    try {
-                                                                        const result = await api.uploadImage(file);
-                                                                        setBrandingForm((p) => ({ ...p, favicon_url: result.url }));
-                                                                    } catch (err) {
-                                                                        console.error('Favicon upload failed:', err);
-                                                                    }
-                                                                }
-                                                            }}
-                                                        />
-                                                    </label>
-                                                    {brandingForm.favicon_url && (
-                                                        <button
-                                                            onClick={() => setBrandingForm((p) => ({ ...p, favicon_url: '' }))}
-                                                            className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                            title="Remove favicon"
-                                                            aria-label="Remove favicon"
-                                                        >
-                                                            <X className="w-4 h-4" aria-hidden="true" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </Card>
-
-                                    <Card>
-                                        <h3 className="text-lg font-semibold text-white mb-4">Preview</h3>
-                                        <div className="p-4 rounded-xl bg-black/20 space-y-4">
-                                            {brandingForm.logo_url ? (
-                                                <img src={brandingForm.logo_url} alt="Logo preview" className="h-16" />
-                                            ) : (
-                                                <div
-                                                    className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                                                    style={{ background: 'linear-gradient(135deg, #6366f1, #6366f1dd)' }}
-                                                >
-                                                    <Sparkles className="w-8 h-8 text-white" />
-                                                </div>
-                                            )}
-                                            <h2 className="text-xl font-bold text-white">{brandingForm.township_name}</h2>
-                                            <p className="text-white/60">{brandingForm.hero_text}</p>
-                                        </div>
-                                    </Card>
-                                </div>
-
-
-                                {/* Domain Connection */}
-                                <Card className="mt-6">
-                                    <h3 className="text-lg font-semibold text-white mb-4">Custom Domain</h3>
-                                    <p className="text-sm text-white/50 mb-4">
-                                        Connect your own domain (e.g., 311.yourtownship.gov) to this 311 portal.
-                                    </p>
-
-                                    <div className="space-y-4">
-                                        <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                                            <p className="text-sm font-medium text-white mb-2">Current URL</p>
-                                            <code className="text-primary-300 text-sm bg-black/30 px-2 py-1 rounded break-all">
-                                                {window.location.origin}
-                                            </code>
-                                        </div>
-
-                                        {/* Auto-Configure Domain */}
-                                        <div className="p-4 rounded-xl bg-primary-500/10 border border-primary-500/20">
-                                            <p className="text-sm font-medium text-primary-300 mb-3">Auto-Configure Domain</p>
-                                            <p className="text-xs text-white/60 mb-3">
-                                                After setting up your DNS records, enter your domain below and we'll configure Nginx + SSL automatically.
-                                            </p>
-                                            <div className="flex gap-2">
-                                                <Input
-                                                    placeholder="311.yourtownship.gov"
-                                                    value={(brandingForm as any).custom_domain || ''}
-                                                    onChange={(e) => setBrandingForm(p => ({ ...p, custom_domain: e.target.value }))}
-                                                    className="flex-1"
-                                                />
-                                                <Button
-                                                    onClick={async () => {
-                                                        const domain = (brandingForm as any).custom_domain;
-                                                        if (!domain) { alert("Please enter a domain"); return; }
-                                                        setIsLoading(true);
-                                                        try {
-                                                            const result = await api.configureDomain(domain);
-                                                            if (result.status === 'success') {
-                                                                alert(
-                                                                    `✅ ${result.message}\n\n` +
-                                                                    `Your site will be available at:\n${result.url}\n\n` +
-                                                                    `HTTPS certificate is being automatically provisioned by Caddy.`
-                                                                );
-                                                            } else if (result.status === 'partial') {
-                                                                alert(
-                                                                    `⚠️ ${result.message}\n\n` +
-                                                                    `Next step: ${result.next_step || 'Restart Caddy container'}\n\n` +
-                                                                    `Run on server:\nssh ubuntu@132.226.32.116\ncd ~/WWF-Open-Source-311-Template\ndocker-compose restart caddy`
-                                                                );
-                                                            } else {
-                                                                alert(`Error: ${result.message}`);
-                                                            }
-                                                        } catch (err: any) { alert(`Error: ${err.message}`); }
-                                                        finally { setIsLoading(false); }
-                                                    }}
-                                                    isLoading={isLoading}
-                                                >
-                                                    Configure Domain
-                                                </Button>
-                                            </div>
-                                        </div>
-
-                                        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20">
-                                            <p className="text-sm font-medium text-amber-300 mb-3">Step 1: Set up DNS Records first</p>
-                                            <ol className="text-sm text-white/70 space-y-2 list-decimal list-inside">
-                                                <li>Log into your domain registrar (GoDaddy, Namecheap, etc.)</li>
-                                                <li>Add an <strong className="text-white">A Record</strong> pointing to: <code className="text-primary-300 bg-black/30 px-1 rounded">132.226.32.116</code></li>
-                                                <li>Wait 5-30 minutes for DNS propagation</li>
-                                                <li>Then enter domain above & click "Configure SSL"</li>
-                                            </ol>
-                                        </div>
-
-                                        <div className="p-4 rounded-xl bg-white/5 border border-white/10">
-                                            <p className="text-sm font-medium text-white mb-3">DNS Records to Add</p>
-                                            <table className="w-full text-sm">
-                                                <thead>
-                                                    <tr className="text-white/50">
-                                                        <th className="text-left py-1">Type</th>
-                                                        <th className="text-left py-1">Host</th>
-                                                        <th className="text-left py-1">Value</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="text-white/80">
-                                                    <tr>
-                                                        <td className="py-1">A</td>
-                                                        <td className="py-1">@ or 311</td>
-                                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
-                                                    </tr>
-                                                    <tr>
-                                                        <td className="py-1">A</td>
-                                                        <td className="py-1">www</td>
-                                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
-                                                    </tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </div>
-                                </Card>
-
-                                {/* Social Links */}
-                                <Card className="mt-6">
-                                    <div className="flex items-center justify-between mb-4">
-                                        <div>
-                                            <h3 className="text-lg font-semibold text-white">Social Links</h3>
-                                            <p className="text-sm text-white/50">Add links to display in the resident portal footer</p>
-                                        </div>
-                                        <Button
-                                            size="sm"
-                                            leftIcon={<Plus className="w-4 h-4" />}
-                                            onClick={() => {
-                                                const currentLinks = (brandingForm as any).social_links || [];
-                                                setBrandingForm(p => ({
-                                                    ...p,
-                                                    social_links: [...currentLinks, { platform: 'website', url: '', icon: 'Globe' }]
-                                                }));
-                                            }}
-                                        >
-                                            Add Link
-                                        </Button>
-                                    </div>
-
-                                    <div className="space-y-3">
-                                        {((brandingForm as any).social_links || []).map((link: { platform: string; url: string; icon: string }, index: number) => (
-                                            <div key={index} className="flex items-center gap-3 p-3 rounded-xl bg-white/5 border border-white/10">
-                                                {/* Platform/Icon selector */}
-                                                <div className="w-10 h-10 rounded-lg bg-white/10 flex items-center justify-center">
-                                                    {link.icon === 'Globe' && <Globe className="w-5 h-5 text-blue-400" />}
-                                                    {link.icon === 'Facebook' && <Facebook className="w-5 h-5 text-blue-500" />}
-                                                    {link.icon === 'Instagram' && <Instagram className="w-5 h-5 text-pink-500" />}
-                                                    {link.icon === 'Youtube' && <Youtube className="w-5 h-5 text-red-500" />}
-                                                    {link.icon === 'Twitter' && <Twitter className="w-5 h-5 text-sky-400" />}
-                                                    {link.icon === 'Linkedin' && <Linkedin className="w-5 h-5 text-blue-600" />}
-                                                </div>
-                                                <Select
-                                                    value={link.platform}
-                                                    onChange={(e) => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        const iconMap: Record<string, string> = {
-                                                            website: 'Globe',
-                                                            facebook: 'Facebook',
-                                                            instagram: 'Instagram',
-                                                            youtube: 'Youtube',
-                                                            twitter: 'Twitter',
-                                                            linkedin: 'Linkedin',
-                                                        };
-                                                        currentLinks[index] = {
-                                                            ...currentLinks[index],
-                                                            platform: e.target.value,
-                                                            icon: iconMap[e.target.value] || 'Globe'
-                                                        };
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="w-36"
-                                                    options={[
-                                                        { value: 'website', label: 'Website' },
-                                                        { value: 'facebook', label: 'Facebook' },
-                                                        { value: 'instagram', label: 'Instagram' },
-                                                        { value: 'youtube', label: 'YouTube' },
-                                                        { value: 'twitter', label: 'X (Twitter)' },
-                                                        { value: 'linkedin', label: 'LinkedIn' },
-                                                    ]}
-                                                />
-                                                <Input
-                                                    placeholder="https://..."
-                                                    value={link.url}
-                                                    onChange={(e) => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        currentLinks[index] = { ...currentLinks[index], url: e.target.value };
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="flex-1"
-                                                />
-                                                <button
-                                                    onClick={() => {
-                                                        const currentLinks = [...((brandingForm as any).social_links || [])];
-                                                        currentLinks.splice(index, 1);
-                                                        setBrandingForm(p => ({ ...p, social_links: currentLinks }));
-                                                    }}
-                                                    className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                                                    title="Remove link"
-                                                >
-                                                    <X className="w-4 h-4" />
-                                                </button>
-                                            </div>
-                                        ))}
-                                        {((brandingForm as any).social_links || []).length === 0 && (
-                                            <div className="text-center py-8 text-white/40">
-                                                <Globe className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                                                <p className="text-sm">No social links configured</p>
-                                                <p className="text-xs mt-1">Click "Add Link" to add your social media profiles</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </Card>
-
-                                {/* Legal Documents */}
-                                <Card className="mt-6">
-                                    <div className="mb-4">
-                                        <h3 className="text-lg font-semibold text-white">Legal Documents</h3>
-                                        <p className="text-sm text-white/50">Customize your Privacy Policy, Terms of Service, and Accessibility Statement</p>
-                                    </div>
-
-                                    <div className="space-y-6">
-                                        {/* Privacy Policy */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Privacy Policy</label>
-                                                <a href="/privacy" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).privacy_policy || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, privacy_policy: e.target.value || null }))}
-                                                placeholder="Leave blank to use default privacy policy with 311 best practices..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Supports Markdown formatting. Leave blank for sensible defaults.</p>
-                                        </div>
-
-                                        {/* Terms of Service */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Terms of Service</label>
-                                                <a href="/terms" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).terms_of_service || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, terms_of_service: e.target.value || null }))}
-                                                placeholder="Leave blank to use default terms with non-emergency disclaimer..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Default includes prominent non-emergency disclaimer. Supports Markdown.</p>
-                                        </div>
-
-                                        {/* Accessibility Statement */}
-                                        <div>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <label className="text-sm font-medium text-white/70">Accessibility Statement</label>
-                                                <a href="/accessibility" target="_blank" className="text-xs text-primary-400 hover:text-primary-300">Preview →</a>
-                                            </div>
-                                            <textarea
-                                                value={(brandingForm as any).accessibility_statement || ''}
-                                                onChange={(e) => setBrandingForm(p => ({ ...p, accessibility_statement: e.target.value || null }))}
-                                                placeholder="Leave blank to use default WCAG/ADA compliant accessibility statement..."
-                                                className="w-full h-32 px-4 py-3 rounded-xl bg-white/5 border border-white/10 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-primary-500/50 font-mono text-sm resize-y"
-                                            />
-                                            <p className="text-xs text-white/40 mt-1">Default covers WCAG 2.1 AA, Section 508, and ADA requirements.</p>
-                                        </div>
-                                    </div>
-                                </Card>
-                            </div>
+                            <BrandingSettings
+                                form={brandingForm as BrandingForm}
+                                setForm={setBrandingForm as React.Dispatch<React.SetStateAction<BrandingForm>>}
+                                onSave={handleSaveBranding}
+                                isLoading={isLoading}
+                                setIsLoading={setIsLoading}
+                            />
                         )}
 
                         {/* Users Tab */}
@@ -2208,7 +1885,10 @@ export default function AdminConsole() {
                                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                     <div>
                                         <h1 className="text-xl sm:text-2xl font-bold text-white">User Management</h1>
-                                        <p className="text-sm text-white/50 mt-1">Manage staff and administrator accounts</p>
+                                        <p className="text-sm text-white/50 mt-1">
+                                            Manage staff and administrator accounts
+                                            {signIn.name ? <> · Staff sign in with <span className="text-white/70">{signIn.name}</span></> : null}
+                                        </p>
                                     </div>
                                     <Button
                                         leftIcon={<Plus className="w-4 h-4" />}
@@ -2295,17 +1975,7 @@ export default function AdminConsole() {
                                                                 <p className="text-xs text-white/40">@{u.username}</p>
                                                             </div>
                                                         </div>
-                                                        {u.role === 'admin' ? (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30">
-                                                                <Shield className="w-3 h-3" />
-                                                                Admin
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30">
-                                                                <UserIcon className="w-3 h-3" />
-                                                                Staff
-                                                            </span>
-                                                        )}
+                                                        <RoleChip role={u.role} size="sm" />
                                                     </div>
                                                     <p className="text-xs text-white/50 truncate">{u.email}</p>
                                                     <div className="flex items-center justify-between">
@@ -2366,17 +2036,7 @@ export default function AdminConsole() {
 
                                                     {/* Role Badge */}
                                                     <div className="col-span-2 flex justify-center">
-                                                        {u.role === 'admin' ? (
-                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-amber-500/20 to-orange-500/20 text-amber-300 border border-amber-500/30 shadow-lg shadow-amber-500/10">
-                                                                <Shield className="w-3 h-3" />
-                                                                Admin
-                                                            </span>
-                                                        ) : (
-                                                            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-gradient-to-r from-blue-500/20 to-cyan-500/20 text-blue-300 border border-blue-500/30 shadow-lg shadow-blue-500/10">
-                                                                <UserIcon className="w-3 h-3" />
-                                                                Staff
-                                                            </span>
-                                                        )}
+                                                        <RoleChip role={u.role} size="sm" />
                                                     </div>
 
                                                     {/* Departments */}
@@ -2472,11 +2132,14 @@ export default function AdminConsole() {
 
                         {/* Integrations Tab - Card-based Setup & Integrations */}
                         {currentTab === 'integration' && (
-                            <SetupIntegrationsPage
-                                secrets={secrets}
-                                onSaveSecret={handleSaveSecretDirect}
-                                onRefresh={loadTabData}
-                            />
+                            <div className="space-y-6">
+                                <SetupIntegrationsPage
+                                    secrets={secrets}
+                                    onSaveSecret={handleSaveSecretDirect}
+                                    onRefresh={loadTabData}
+                                />
+                                <Open311ApiKeys />
+                            </div>
                         )}
 
 
@@ -2526,15 +2189,20 @@ export default function AdminConsole() {
                                                nothing about whether they were
                                                set up. They are ticks in Setup &
                                                Integrations now. */
-                                            { key: 'research_portal' as const, label: 'Research Portal', desc: 'Enable researcher access to anonymized data exports', icon: FlaskConical, color: 'violet' },
-                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map and feed. The tracking link still works and staff always see it', icon: EyeOff, color: 'slate' },
+                                            { key: 'research_portal' as const, label: 'Research Portal', desc: 'Give researchers access to anonymized data exports.', icon: FlaskConical, color: 'violet' },
+                                            { key: 'unlisted_reports' as const, label: 'Unlisted Reports', desc: 'Let residents keep a report off the public map. Staff still see it.', icon: EyeOff, color: 'slate' },
                                             /* The description is deliberately explicit about what lands
                                                in the town's database, because that is the records
                                                question a clerk has to be able to answer: one
                                                multiple-choice answer and a timestamp, no free text, no
                                                identity. Longer feedback goes to email instead, so it
                                                never becomes a record this town holds. */
-                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous multiple-choice question about whether this platform made reporting easier. Stores only the answer and the date \u2014 no comments, no name, no email, no IP \u2014 so there is nothing resident-written in your records. Longer feedback goes by email to the address below. Aggregates appear on Statistics', icon: MessageSquareHeart, color: 'sky' },
+                                            { key: 'platform_feedback' as const, label: 'Platform Feedback', desc: 'Ask residents one anonymous question about how easy reporting was. Stores only the answer: no name, no comments. Longer feedback goes to the email below.', icon: MessageSquareHeart, color: 'sky' },
+                                            /* Spelled out because it is the one module that reads
+                                               resident PII across reports, and an administrator
+                                               turning it on is making a privacy decision. Every
+                                               clause below is enforced on the server, not here. */
+                                            { key: 'resident_history' as const, label: 'Resident History', desc: 'Show staff a resident\u2019s other reports and allow search by email or name. Every lookup is logged.', icon: UserSearch, color: 'blue' },
                                         ].map((mod, idx) => {
                                             const Icon = mod.icon;
                                             const isOn = modules[mod.key];
@@ -2561,7 +2229,7 @@ export default function AdminConsole() {
                                                             </div>
                                                             <div className="min-w-0">
                                                                 <h3 className="text-sm font-semibold text-white">{mod.label}</h3>
-                                                                <p className="text-xs text-white/50 mt-0.5 truncate">{mod.desc}</p>
+                                                                <p className="text-xs text-white/50 mt-0.5 leading-relaxed">{mod.desc}</p>
                                                             </div>
                                                         </div>
                                                         <button
@@ -2607,7 +2275,7 @@ export default function AdminConsole() {
                                                             />
                                                             <p id="platform-feedback-email-help" className="text-white/50 text-xs mt-2">
                                                                 {platformFeedbackEmail.trim()
-                                                                    ? `Residents who answer are offered a "want to tell us more?" link that opens their mail app addressed to ${platformFeedbackEmail.trim()}. Those messages go to that mailbox, never into this database.`
+                                                                    ? `Residents who answer see a "Want to tell us more?" link that emails ${platformFeedbackEmail.trim()}. Those messages are not stored here.`
                                                                     : 'Leave empty and no "tell us more" link is shown. Residents can still answer the one question.'}
                                                             </p>
                                                         </div>
@@ -2692,12 +2360,12 @@ export default function AdminConsole() {
                                             aria-describedby="public-archive-days-help"
                                         />
                                         <p id="public-archive-days-help" className="text-white/50 text-xs mt-2">
-                                            Remove closed reports from the public tracker and map after N days. They stay available by direct link and to staff. Leave empty to keep everything listed.
+                                            Remove closed reports from the public tracker and map after this many days. Staff and direct links still reach them. Leave empty to keep everything listed.
                                         </p>
                                         <p className="text-white/40 text-xs mt-2">
                                             {publicArchiveDays && Number(publicArchiveDays) > 0
-                                                ? `Closed reports drop off the public tracker and map ${publicArchiveDays} days after they are closed. Nothing is deleted, staff keep seeing everything, tracking links keep working, and research exports still include them \u2014 raise or clear this number and the reports come straight back.`
-                                                : 'Not set \u2014 every report a resident has not chosen to unlist stays on the public tracker and map.'}
+                                                ? `Closed reports leave the public tracker and map ${publicArchiveDays} days after closing. Nothing is deleted, and clearing this number brings them back.`
+                                                : 'Not set. All closed reports stay on the public tracker and map unless a resident unlisted them.'}
                                         </p>
                                     </div>
                                 </div>
@@ -2865,7 +2533,7 @@ export default function AdminConsole() {
                                                                 <div className="min-w-0">
                                                                     <p className="text-sm text-white font-medium truncate">{result.display_name}</p>
                                                                     <p className="text-xs text-white/30 mt-0.5">
-                                                                        ID {result.osm_id} &middot; {result.type}
+                                                                        ID {result.osm_id} &middot; {humanize(result.type)}
                                                                     </p>
                                                                 </div>
                                                             </div>
@@ -2935,7 +2603,7 @@ export default function AdminConsole() {
                                                             try { await api.seedRoads(true); } catch (e) { console.warn("Road seed failed:", e); }
                                                             setTownshipBoundary(geojson);
                                                             setSelectedOsmResult(null);
-                                                            setSaveMessage('GeoJSON boundary uploaded successfully!');
+                                                            setSaveMessage('GeoJSON boundary uploaded');
                                                             setTimeout(() => setSaveMessage(null), 3000);
                                                         } catch (err) {
                                                             console.error('Failed to upload GeoJSON:', err);
@@ -2962,9 +2630,10 @@ export default function AdminConsole() {
                                                     </div>
                                                     <div className="min-w-0">
                                                         <h2 className="text-sm font-semibold text-white">Custom Map Layers</h2>
-                                                        <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map</p>
+                                                        <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map, and polygon layers (parcels, zones) recorded on reports</p>
                                                     </div>
                                                 </div>
+                                                <div className="flex flex-wrap justify-end gap-2">
                                                 <Button
                                                     size="sm"
                                                     className="shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
@@ -2991,6 +2660,7 @@ export default function AdminConsole() {
                                                 >
                                                     Add Layer
                                                 </Button>
+                                                </div>
                                     </div>
                                     <div className="px-5 sm:px-6 py-5">
                                             {mapLayers.length === 0 ? (
@@ -3023,14 +2693,16 @@ export default function AdminConsole() {
                                                                     <div className="flex items-center gap-2">
                                                                         <span className="text-sm font-semibold text-white">{layer.name}</span>
                                                                         {layer.layer_type && (
-                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-white/[0.06] text-white/40 border border-white/[0.06]">
-                                                                                {layer.layer_type}
-                                                                            </span>
+                                                                            <Chip tone="neutral" value={layer.layer_type} />
+                                                                        )}
+                                                                        {layerPurposeLabel(layer) && (
+                                                                            <Chip tone="info">{layerPurposeLabel(layer)}</Chip>
+                                                                        )}
+                                                                        {layer.feature_storage === 'table' && layer.feature_count != null && (
+                                                                            <span className="text-xs text-white/40">{layer.feature_count.toLocaleString()} polygons</span>
                                                                         )}
                                                                         {!layer.is_active && (
-                                                                            <span className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider rounded-full bg-red-500/10 text-red-400/60 border border-red-500/10">
-                                                                                Disabled
-                                                                            </span>
+                                                                            <Chip tone="danger">Disabled</Chip>
                                                                         )}
                                                                     </div>
                                                                     {layer.description && (
@@ -3060,6 +2732,11 @@ export default function AdminConsole() {
                                                                     </button>
                                                                     <button
                                                                         onClick={() => {
+                                                                            // Polygon layers built from an upload have their own settings.
+                                                                            if (layer.feature_storage === 'table') {
+                                                                                setPolygonSettingsLayer(layer);
+                                                                                return;
+                                                                            }
                                                                             setEditingLayer(layer);
                                                                             setNewLayer({
                                                                                 name: layer.name,
@@ -3143,18 +2820,14 @@ export default function AdminConsole() {
                                             <AlertTriangle className="w-5 h-5 text-amber-300 flex-shrink-0 mt-0.5" aria-hidden="true" />
                                             <div className="space-y-2">
                                                 <h3 className="text-white font-semibold">
-                                                    Resident personal data is being kept indefinitely
+                                                    No retention period is set
                                                 </h3>
                                                 <p className="text-white/75 text-sm leading-relaxed">
                                                     {retentionPolicy.detail}
                                                 </p>
                                                 <p className="text-white/60 text-sm leading-relaxed">
-                                                    Nothing has been deleted or redacted in the meantime, so no
-                                                    record has been lost to this — closed requests are all still
-                                                    here, including any past the date your published policy gives.
-                                                    That is the safer of the two failures, and it is still a
-                                                    failure: keeping personal data longer than you need it is its
-                                                    own obligation.
+                                                    Nothing has been deleted or redacted. Closed requests are kept,
+                                                    including any older than your published retention schedule allows.
                                                 </p>
                                                 <p className="text-white/50 text-sm leading-relaxed">
                                                     Set a retention period below to start it.
@@ -3187,7 +2860,7 @@ export default function AdminConsole() {
                                             </div>
                                             <div className="bg-white/5 rounded-lg p-4">
                                                 <div className="text-white/60 text-sm">Mode</div>
-                                                <div className="text-2xl font-bold text-white capitalize">{activeRetention.mode}</div>
+                                                <div className="text-2xl font-bold text-white">{humanize(activeRetention.mode)}</div>
                                                 <div className="text-white/40 text-sm">{activeRetention.mode === 'purge' ? 'Every field cleared, row kept' : 'Chosen fields cleared, row kept'}</div>
                                             </div>
                                         </div>
@@ -3329,7 +3002,7 @@ export default function AdminConsole() {
                                             <p className="text-white/50 text-xs mt-1">
                                                 {retentionDays && parseInt(retentionDays) > 0
                                                     ? `${formatYears(parseInt(retentionDays))} — records are cleared once they have been closed this long.`
-                                                    : 'Not set, so nothing is ever cleared. Enter the period in days: 5 years is 1825, 7 years is 2555.'}
+                                                    : 'Not set, so nothing is cleared. Enter days: 5 years is 1825, 7 years is 2555.'}
                                             </p>
                                         </div>
 
@@ -3371,8 +3044,7 @@ export default function AdminConsole() {
                                             <h4 className="font-semibold text-white">What gets cleared</h4>
                                             <p className="text-white/55 text-xs mt-1 mb-4">
                                                 The record stays and still counts in your statistics. Only the
-                                                fields ticked here are emptied, and nothing is ticked until you
-                                                tick it — this list is what a run destroys for good.
+                                                fields you check are permanently cleared.
                                             </p>
                                             {/* auto-rows-fr plus h-full: every card in a row is
                                                 the height of the tallest, so a two-line
@@ -3408,10 +3080,7 @@ export default function AdminConsole() {
                                             </div>
                                             {!scrubFields.some(f => f.selected) && (
                                                 <p className="text-amber-300 text-xs mt-3">
-                                                    Nothing is ticked, so retention will not run at all. A run that
-                                                    cleared nothing would still mark records archived, which takes
-                                                    them out of every future run — the personal data would stay on
-                                                    them permanently, with nothing left to notice.
+                                                    Check at least one field. Retention does not run until you do.
                                                 </p>
                                             )}
                                         </div>
@@ -3444,15 +3113,15 @@ export default function AdminConsole() {
                                                                     </p>
                                                                 )}
                                                                 <p className="text-white/45 text-xs mt-1">
-                                                                    One period for every request, whatever it was about.
-                                                                    Anything you must keep longer needs a legal hold on it.
+                                                                    This period applies to every request. To keep a request
+                                                                    longer, place a legal hold on it.
                                                                 </p>
                                                             </>
                                                         ) : (
                                                             <p className="text-white/70 text-sm">
                                                                 {days > 0
-                                                                    ? 'A period is set but nothing is ticked, so retention will not run.'
-                                                                    : 'No period is set, so retention will not run and resident personal data is kept indefinitely.'}
+                                                                    ? 'A period is set but no fields are checked, so retention will not run.'
+                                                                    : 'No period is set, so retention will not run and closed requests are kept indefinitely.'}
                                                             </p>
                                                         )}
                                                     </div>
@@ -3525,7 +3194,7 @@ export default function AdminConsole() {
                                                 if (plan.blocked === 'legal_hold') {
                                                     await dialog.alert({
                                                         title: 'Legal hold is on',
-                                                        message: 'Nothing will be archived or deleted while the instance-wide legal hold is active. Lift it first if this run is meant to happen.',
+                                                        message: 'Nothing is archived or deleted while the instance-wide legal hold is on. Lift the hold to run retention.',
                                                         variant: 'info',
                                                     });
                                                     return;
@@ -3538,7 +3207,7 @@ export default function AdminConsole() {
                                                     await dialog.alert({
                                                         title: 'No retention schedule is set',
                                                         message: plan.detail
-                                                            || 'Set how long records are kept and what a run removes before running retention. Until both are set there is nothing to measure a record against.',
+                                                            || 'Set a retention period and the fields to clear before running retention.',
                                                         variant: 'warning',
                                                     });
                                                     return;
@@ -3546,7 +3215,7 @@ export default function AdminConsole() {
                                                 if (!plan.eligible) {
                                                     await dialog.alert({
                                                         title: 'Nothing is due yet',
-                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period, so this run would do nothing.`,
+                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period.`,
                                                         variant: 'info',
                                                     });
                                                     return;
@@ -3567,8 +3236,8 @@ export default function AdminConsole() {
                                                             </p>
                                                             <p>
                                                                 {purging
-                                                                    ? 'Every field is emptied — names, contact details, what the resident wrote, photos, comments and the map pin. The rows stay so your totals do not change, but nothing about the people is recoverable.'
-                                                                    : 'Only the fields you ticked are cleared. The rows stay, so the counts and anything you have not ticked are untouched.'}
+                                                                    ? 'Every field is cleared, including names, contact details, descriptions, photos, comments and the map pin. The rows stay so your totals don\u2019t change. This can\u2019t be undone.'
+                                                                    : 'Only the fields you checked are cleared. The rows and all other fields stay.'}
                                                             </p>
                                                             {/* Named, from the server's own list. A
                                                                 clerk approving this should not have
@@ -3582,11 +3251,11 @@ export default function AdminConsole() {
                                                             {!!plan.on_legal_hold && (
                                                                 <p className="text-amber-300">
                                                                     {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under
-                                                                    legal hold and will be left alone.
+                                                                    legal hold and will be skipped.
                                                                 </p>
                                                             )}
                                                             <p className="text-slate-400 text-sm">
-                                                                It works through every eligible record, not the first hundred.
+                                                                The run covers every eligible record.
                                                             </p>
                                                         </div>
                                                     ),
@@ -3697,7 +3366,7 @@ export default function AdminConsole() {
                                                             {v === 'in_progress' ? 'In progress' : v.charAt(0).toUpperCase() + v.slice(1)}
                                                         </label>
                                                     ))}
-                                                    <span className="text-white/40 text-xs self-center">None ticked means all.</span>
+                                                    <span className="text-white/40 text-xs self-center">None checked means all.</span>
                                                 </div>
                                             </div>
 
@@ -3739,9 +3408,8 @@ export default function AdminConsole() {
                                             {/* Said before the download, not after. */}
                                             {exportFields.some(f => f.sensitive && exportChosen.has(f.id)) && (
                                                 <p role="alert" className="text-sm text-amber-200 bg-amber-500/10 border border-amber-500/30 rounded-lg p-3">
-                                                    This export will identify the people who filed these reports. Release
-                                                    it only if the request covers their details. It is recorded in the
-                                                    audit log either way.
+                                                    This export identifies the people who filed these reports. Release it
+                                                    only if the request covers their details. Every export is logged.
                                                 </p>
                                             )}
 
@@ -3786,8 +3454,8 @@ export default function AdminConsole() {
                                         <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
                                             {retentionPreview.blocked === 'legal_hold' ? (
                                                 <p className="p-4 text-sm text-amber-200">
-                                                    The instance-wide legal hold is on, so nothing is eligible. Lift it
-                                                    first if this run is meant to happen.
+                                                    The instance-wide legal hold is on, so nothing is eligible. Lift the
+                                                    hold to run retention.
                                                 </p>
                                             ) : retentionPreview.blocked === 'unconfigured' ? (
                                                 /* Not "nothing is eligible". Nothing has been *measured* —
@@ -3795,12 +3463,12 @@ export default function AdminConsole() {
                                                    record is still here regardless of age. */
                                                 <p className="p-4 text-sm text-amber-200">
                                                     {retentionPreview.detail
-                                                        || 'No retention period is set, so there is nothing to measure records against and nothing can run.'}
+                                                        || 'No retention period is set, so retention can\u2019t run.'}
                                                 </p>
                                             ) : !retentionPreview.summary || retentionPreview.summary.total === 0 ? (
                                                 <p className="p-4 text-sm text-white/70">
                                                     Nothing has passed the {(retentionPreview.retention_days ?? 0).toLocaleString()}-day
-                                                    retention period yet. This run would do nothing.
+                                                    retention period yet.
                                                 </p>
                                             ) : (
                                                 <>
@@ -3821,7 +3489,7 @@ export default function AdminConsole() {
                                                         {retentionPreview.summary.truncated && (
                                                             <p className="text-xs text-amber-200/90 mt-1">
                                                                 Showing the {retentionPreview.summary.showing} oldest. The run
-                                                                works through all {retentionPreview.summary.total.toLocaleString()}.
+                                                                covers all {retentionPreview.summary.total.toLocaleString()}.
                                                             </p>
                                                         )}
                                                         {!!retentionPreview.scrub_fields?.length && (
@@ -4021,12 +3689,12 @@ export default function AdminConsole() {
                                                                         {new Date(backup.created_at).toLocaleString()} · {(backup.size_bytes / 1024 / 1024).toFixed(2)} MB
                                                                     </div>
                                                                 </div>
-                                                                <span className={`text-xs px-2 py-1 rounded ${backup.age_days === 0 ? 'bg-green-500/20 text-green-400' :
-                                                                    backup.age_days < 7 ? 'bg-blue-500/20 text-blue-400' :
-                                                                        'bg-white/10 text-white/60'
-                                                                    }`}>
-                                                                    {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
-                                                                </span>
+                                                                <div className="flex items-center gap-2 shrink-0">
+                                                                    <Chip tone={backup.age_days === 0 ? 'success' : backup.age_days < 7 ? 'info' : 'neutral'}>
+                                                                        {backup.age_days === 0 ? 'Today' : `${backup.age_days}d ago`}
+                                                                    </Chip>
+                                                                    <BackupRestore name={backup.name} createdAt={backup.created_at} />
+                                                                </div>
                                                             </div>
                                                         ))}
                                                     </div>
@@ -4114,7 +3782,7 @@ export default function AdminConsole() {
                         <p className="text-xs text-white/40">Username</p>
                         <p className="text-sm text-white/70 font-mono">@{editingUser?.username}</p>
                         <p className="text-[11px] text-white/35 mt-1">
-                            Cannot be changed — it is how this person&apos;s history is recorded.
+                            The username can&apos;t be changed because this person&apos;s history is tied to it.
                         </p>
                     </div>
                     <Input
@@ -4143,7 +3811,7 @@ export default function AdminConsole() {
                         options={[
                             { value: 'staff', label: 'Staff — works reports' },
                             { value: 'admin', label: 'Admin — full access, including this page' },
-                            { value: 'researcher', label: 'Researcher — read-only, anonymised data' },
+                            { value: 'researcher', label: 'Researcher — read-only, anonymized data' },
                         ]}
                     />
                     <div>
@@ -4179,8 +3847,8 @@ export default function AdminConsole() {
                             Active
                             <span className="block text-[11px] text-white/40">
                                 {editingUser?.id === user?.id
-                                    ? 'You cannot deactivate your own account.'
-                                    : 'Unticking keeps all their history but stops them signing in.'}
+                                    ? 'You can\u2019t deactivate your own account.'
+                                    : 'Turn off to block sign-in. Their history is kept.'}
                             </span>
                         </span>
                     </label>
@@ -4213,13 +3881,9 @@ export default function AdminConsole() {
                         required
                     />
 
-                    {/* SSO Info */}
-                    <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm text-blue-200">
-                        <p className="font-medium">🔐 SSO Authentication</p>
-                        <p className="text-blue-200/70 mt-1">
-                            Users log in via Auth0 SSO using their email address. No password is required.
-                        </p>
-                    </div>
+                    {/* How this person will sign in -- names the town's
+                        configured identity provider, not a fixed vendor. */}
+                    <SignInProviderNote />
 
                     <Select
                         label="Role"
@@ -4298,7 +3962,7 @@ export default function AdminConsole() {
                             {eligiblePreview.summary.truncated && (
                                 <p className="text-xs text-amber-200/90">
                                     Showing the {eligiblePreview.summary.showing} oldest of{' '}
-                                    {eligiblePreview.summary.total.toLocaleString()}. A run works through all of them.
+                                    {eligiblePreview.summary.total.toLocaleString()}. A run covers all of them.
                                 </p>
                             )}
                             <div className="space-y-3 max-h-[60vh] overflow-y-auto">
@@ -4382,12 +4046,7 @@ export default function AdminConsole() {
                                             <span className="font-mono text-amber-400 font-semibold">
                                                 {req.service_request_id}
                                             </span>
-                                            <span className={`text-xs px-2 py-1 rounded capitalize ${req.status === 'open' ? 'bg-emerald-500/20 text-emerald-400' :
-                                                req.status === 'in_progress' ? 'bg-blue-500/20 text-blue-400' :
-                                                    'bg-gray-500/20 text-gray-400'
-                                                }`}>
-                                                {req.status.replace('_', ' ')}
-                                            </span>
+                                            <StatusBadge status={req.status} size="xs" />
                                         </div>
                                         <div className="text-white font-medium">{req.service_name}</div>
                                         {req.description && (
@@ -4451,9 +4110,33 @@ export default function AdminConsole() {
                     setShowServiceEditModal(false);
                     setEditingService(null);
                 }}
-                title={`Configure Routing: ${editingService?.service_name || ''}`}
+                title={`Edit category: ${editingService?.service_name || ''}`}
             >
                 <form onSubmit={handleSaveServiceRouting} className="space-y-5 max-h-[70vh] overflow-y-auto pr-2">
+                    {/* Name and description, as residents see them */}
+                    <div className="space-y-3 p-4 rounded-3xl bg-slate-800/50 border border-white/20">
+                        <Input
+                            label="Category name"
+                            value={serviceRouting.service_name}
+                            onChange={(e) => setServiceRouting(p => ({ ...p, service_name: e.target.value }))}
+                            required
+                            minLength={2}
+                            maxLength={100}
+                        />
+                        <div>
+                            <label htmlFor="service-edit-description" className="block text-sm font-medium text-white/70 mb-1.5">Description</label>
+                            <textarea
+                                id="service-edit-description"
+                                value={serviceRouting.description}
+                                onChange={(e) => setServiceRouting(p => ({ ...p, description: e.target.value }))}
+                                rows={2}
+                                placeholder="What residents should report here"
+                                className="w-full rounded-xl bg-white/[0.06] border border-white/15 text-sm text-white placeholder-white/35 px-3 py-2 focus:outline-none focus:border-primary-400/60"
+                            />
+                            <p className="text-xs text-white/40 mt-1">Shown to residents under the category name. Renaming also updates existing reports in this category.</p>
+                        </div>
+                    </div>
+
                     {/* Routing Mode */}
                     <div className="space-y-2.5">
                         <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Routing Mode</label>
@@ -4469,7 +4152,14 @@ export default function AdminConsole() {
                                     <button
                                         type="button"
                                         key={mode.value}
-                                        onClick={() => setServiceRouting(p => ({ ...p, routing_mode: mode.value as any }))}
+                                        onClick={() => setServiceRouting(p => ({
+                                            ...p,
+                                            routing_mode: mode.value as any,
+                                            // Road rules are decided from the pin, so a road-routed
+                                            // category cannot go without one.
+                                            location_mode: mode.value === 'road_based' && p.location_mode === 'hidden'
+                                                ? 'optional' : p.location_mode,
+                                        }))}
                                         className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
                                             ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
                                             : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
@@ -4486,25 +4176,111 @@ export default function AdminConsole() {
                         </div>
                     </div>
 
+                    {/* Location: whether residents are asked where */}
+                    <div className="space-y-2.5">
+                        <div>
+                            <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Location</label>
+                            <p className="text-xs text-white/45 mt-1">What residents are asked for when they pick this category.</p>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" role="radiogroup" aria-label="Location">
+                            {([
+                                { value: 'required', label: 'Required', desc: 'A pin or an address is needed to submit', icon: MapPinned, color: 'text-rose-300' },
+                                { value: 'optional', label: 'Optional', desc: 'Map is shown and can be skipped', icon: MapPin, color: 'text-sky-300' },
+                                { value: 'hidden', label: 'Not collected', desc: 'No map on the form', icon: MapPinOff, color: 'text-slate-300' },
+                            ] as const).map(option => {
+                                const IconComponent = option.icon;
+                                const isSelected = serviceRouting.location_mode === option.value;
+                                const unavailable = option.value === 'hidden' && serviceRouting.routing_mode === 'road_based';
+                                return (
+                                    <button
+                                        type="button"
+                                        key={option.value}
+                                        role="radio"
+                                        aria-checked={isSelected}
+                                        aria-disabled={unavailable}
+                                        onClick={() => {
+                                            if (unavailable) return;
+                                            setServiceRouting(p => ({ ...p, location_mode: option.value }));
+                                        }}
+                                        className={`p-4 rounded-2xl border text-left transition-all duration-200 ${isSelected
+                                            ? 'bg-gradient-to-br from-primary-500/20 via-indigo-500/15 to-purple-500/10 border-primary-400 text-white shadow-[0_0_25px_rgba(99,102,241,0.2)] ring-1 ring-primary-400/40'
+                                            : unavailable
+                                                ? 'bg-white/[0.02] border-white/5 text-white/30 cursor-not-allowed'
+                                                : 'bg-white/[0.03] border-white/10 text-white/70 hover:border-white/25 hover:bg-white/[0.06]'
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-2.5 mb-1.5">
+                                            <IconComponent className={`w-4 h-4 ${isSelected ? 'text-primary-300' : option.color}`} />
+                                            <div className="font-semibold text-sm text-white tracking-tight">{option.label}</div>
+                                        </div>
+                                        <div className="text-xs text-white/50 leading-relaxed">{option.desc}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        {serviceRouting.routing_mode === 'road_based' && (
+                            <p className="text-xs text-amber-300/80">
+                                Road-based routing decides from the pin, so this category always offers the map.
+                            </p>
+                        )}
+                        {serviceRouting.location_mode === 'hidden' && (
+                            <p className="text-xs text-white/45">
+                                These reports won't appear on the map, and any location an outside app sends is discarded.
+                            </p>
+                        )}
+                    </div>
+
+                    {/* Public visibility for the whole category */}
+                    <div className="space-y-2.5">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-white/60">Public visibility</label>
+                        <button
+                            type="button"
+                            role="switch"
+                            aria-checked={serviceRouting.hidden_from_public}
+                            onClick={() => setServiceRouting(p => ({ ...p, hidden_from_public: !p.hidden_from_public }))}
+                            className={`w-full p-4 rounded-2xl border text-left transition-all duration-200 flex items-start gap-3 ${serviceRouting.hidden_from_public
+                                ? 'bg-gradient-to-br from-slate-500/20 via-indigo-500/10 to-purple-500/10 border-primary-400 ring-1 ring-primary-400/40'
+                                : 'bg-white/[0.03] border-white/10 hover:border-white/25 hover:bg-white/[0.06]'}`}
+                        >
+                            <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 border ${serviceRouting.hidden_from_public
+                                ? 'bg-slate-500/25 border-slate-400/30 text-slate-200' : 'bg-white/5 border-white/10 text-white/50'}`}>
+                                <EyeOff className="w-4 h-4" aria-hidden="true" />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-semibold text-sm text-white tracking-tight">Hide reports for {serviceRouting.service_name || editingService?.service_name || 'this category'} from standard public view</div>
+                                <div className="text-xs text-white/50 mt-0.5">Keeps every report in this category off the public map and list.</div>
+                            </div>
+                            <span className={`mt-1 w-10 h-6 rounded-full p-0.5 transition-colors shrink-0 ${serviceRouting.hidden_from_public ? 'bg-primary-500' : 'bg-white/15'}`} aria-hidden="true">
+                                <span className={`block w-5 h-5 rounded-full bg-white shadow transition-transform ${serviceRouting.hidden_from_public ? 'translate-x-4' : ''}`} />
+                            </span>
+                        </button>
+                        {serviceRouting.hidden_from_public && (
+                            <div className="p-4 rounded-2xl bg-slate-800/50 border border-white/10 space-y-2">
+                                <p className="text-xs font-semibold text-white/80">What this does</p>
+                                <ul className="text-xs text-white/60 space-y-1.5 list-disc pl-4">
+                                    <li>Reports in this category, including ones already filed, don't appear on the public map or list. Turning this off brings them back.</li>
+                                    <li>Staff see and work these reports as usual.</li>
+                                    <li>Residents can still open their own report with its tracking link, and anyone they share the link with can see it.</li>
+                                    <li>Residents see a notice about this when they choose the category.</li>
+                                </ul>
+                                <p className="text-xs font-semibold text-white/80 pt-1">What it doesn't do</p>
+                                <ul className="text-xs text-white/60 space-y-1.5 list-disc pl-4">
+                                    <li>Nothing is deleted, redacted, or encrypted differently.</li>
+                                    <li>These reports are still public records and can be released in response to a records request.</li>
+                                    <li>They're still counted in statistics and included in anonymized research exports.</li>
+                                </ul>
+                            </div>
+                        )}
+                    </div>
+
                     {/* Icon Picker */}
                     <div className="space-y-2.5 p-4 rounded-3xl bg-slate-800/50 border border-white/20 shadow-xl backdrop-blur-xl">
                         <label className="block text-xs font-bold uppercase tracking-wider text-white/70">Category Icon</label>
-                        <div className="grid grid-cols-10 gap-2 p-2.5 rounded-2xl bg-white/[0.04] border border-white/10 max-h-28 overflow-y-auto">
-                            {ICON_LIBRARY.map(({ name, icon: IconComponent }) => (
-                                <button
-                                    type="button"
-                                    key={name}
-                                    onClick={() => setServiceRouting(p => ({ ...p, icon: name }))}
-                                    className={`p-2.5 rounded-2xl transition-all duration-200 flex items-center justify-center ${serviceRouting.icon === name
-                                        ? 'bg-gradient-to-r from-primary-500 to-indigo-600 text-white shadow-lg shadow-primary-500/40 scale-110 ring-2 ring-white/30'
-                                        : 'bg-white/5 text-white/60 hover:bg-white/15 hover:text-white'
-                                        }`}
-                                    title={name}
-                                >
-                                    <IconComponent className="w-4 h-4" />
-                                </button>
-                            ))}
-                        </div>
+                        <CategoryIconPicker
+                            value={serviceRouting.icon}
+                            onChange={(name) => setServiceRouting(p => ({ ...p, icon: name }))}
+                            categoryName={`${serviceRouting.service_name} ${serviceRouting.description}`}
+                        />
                     </div>
 
                     {/* Optional SLA target */}
@@ -4516,8 +4292,8 @@ export default function AdminConsole() {
                             </label>
                         </div>
                         <p className="text-xs text-white/50">
-                            Target time from submission to closure for this category. Leave blank for no
-                            target — categories without one are simply excluded from SLA reporting.
+                            Target time from submission to closure. Leave blank to exclude this category
+                            from SLA reporting.
                         </p>
                         <div className="flex items-center gap-2">
                             <input
@@ -4541,7 +4317,7 @@ export default function AdminConsole() {
                                 <button
                                     type="button"
                                     onClick={() => setServiceRouting(p => ({ ...p, sla_hours: '' }))}
-                                    className="text-xs text-white/40 hover:text-white/70 underline underline-offset-2 ml-auto"
+                                    className="btn-outline ml-auto"
                                 >
                                     Clear
                                 </button>
@@ -4637,7 +4413,7 @@ export default function AdminConsole() {
                                                     ))}
                                             </div>
                                             {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
-                                                <p className="text-xs text-amber-400">No staff selected - will route to all staff</p>
+                                                <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
                                             )}
                                         </div>
                                     )}
@@ -4652,7 +4428,7 @@ export default function AdminConsole() {
                             <h4 className="font-bold text-purple-300 flex items-center gap-2 text-sm tracking-wide">
                                 <AlertTriangle className="w-4 h-4 text-purple-400" /> Third Party Only (Blocks Portal Submission)
                             </h4>
-                            <p className="text-xs text-white/60">Residents cannot submit requests directly in portal; they are provided redirection links & contacts.</p>
+                            <p className="text-xs text-white/60">Residents can’t submit this category in the portal. They see your message and the contacts below instead.</p>
 
                             <div className="space-y-2">
                                 <label className="block text-sm font-medium text-white/70">Message to Display</label>
@@ -4702,7 +4478,7 @@ export default function AdminConsole() {
                                 <button type="button" onClick={() => setServiceRouting(p => ({
                                     ...p,
                                     routing_config: { ...p.routing_config, contacts: [...p.routing_config.contacts, { name: '', phone: '', url: '' }] }
-                                }))} className="text-sm text-primary-400 hover:text-primary-300 flex items-center gap-1">
+                                }))} className="btn-outline btn-outline-md">
                                     <Plus className="w-4 h-4" /> Add Contact
                                 </button>
                             </div>
@@ -4851,7 +4627,7 @@ export default function AdminConsole() {
                                                     ))}
                                             </div>
                                             {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
-                                                <p className="text-xs text-amber-400">No staff selected - will route to all staff</p>
+                                                <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
                                             )}
                                         </div>
                                     )}
@@ -4909,6 +4685,26 @@ export default function AdminConsole() {
                                         <Plus className="w-4 h-4" /> Add 3rd Party Agency
                                     </button>
                                 </div>
+
+                                {/* Reuse an agency already set up on another category, or
+                                    import a ready-made set. Always a copy -- see
+                                    AgencyReusePicker -- so categories never share one. */}
+                                <AgencyReusePicker
+                                    services={services}
+                                    currentServiceId={editingService?.id}
+                                    currentAgencies={serviceRouting.routing_config.third_party_contacts || []}
+                                    onApply={(added) => setServiceRouting(p => {
+                                        const updated = [...(p.routing_config.third_party_contacts || []), ...added];
+                                        return {
+                                            ...p,
+                                            routing_config: {
+                                                ...p.routing_config,
+                                                third_party_contacts: updated,
+                                                exclusion_list: combinedRoadList(updated) || p.routing_config.exclusion_list,
+                                            },
+                                        };
+                                    })}
+                                />
 
                                 {(serviceRouting.routing_config.third_party_contacts || []).map((agency: any, idx: number) => {
                                     return (
@@ -5026,6 +4822,29 @@ export default function AdminConsole() {
                                                         }));
                                                     }}
                                                 />
+                                                <p className="text-[11px] text-white/45 mt-1.5">
+                                                    Only part of a road? Write it as &ldquo;Oak Road (Elm Street to Route 10)&rdquo;.
+                                                </p>
+                                                {(() => {
+                                                    const mine = roadLimits.filter(l => (l.agency || '') === (agency.name || 'Another agency'));
+                                                    if (!mine.length) return null;
+                                                    return (
+                                                        <ul className="mt-2 space-y-1.5" aria-label={`Road limits for ${agency.name || 'this agency'}`}>
+                                                            {mine.map(limit => (
+                                                                <li key={limit.entry} className="flex items-start gap-2 text-xs">
+                                                                    <Chip tone={limit.resolved ? 'success' : 'warning'}>
+                                                                        {limit.resolved ? 'Limits found' : 'Whole road'}
+                                                                    </Chip>
+                                                                    <span className={limit.resolved ? 'text-white/70' : 'text-amber-200'}>
+                                                                        {limit.resolved
+                                                                            ? limit.message
+                                                                            : `${limit.entry}: Limits not found on the map, so the whole road is treated as theirs.`}
+                                                                    </span>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                     );
@@ -5033,7 +4852,7 @@ export default function AdminConsole() {
 
                                 {(serviceRouting.routing_config.third_party_contacts || []).length === 0 && (
                                     <div className="p-5 rounded-3xl bg-white/[0.02] border border-dashed border-white/15 text-center text-xs text-white/40">
-                                        No 3rd party agencies added yet. Click "+ Add 3rd Party Agency" above to list agencies like PennDOT or Mercer County DPW.
+                                        No 3rd party agencies added yet. Select "+ Add 3rd Party Agency" above to add agencies like PennDOT or Mercer County DPW.
                                     </div>
                                 )}
 
@@ -5093,7 +4912,7 @@ export default function AdminConsole() {
                                             ]
                                         }
                                     }))}
-                                    className="text-sm text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                                    className="btn-outline btn-outline-md"
                                 >
                                     <Plus className="w-4 h-4" /> Add Question
                                 </button>
@@ -5205,17 +5024,47 @@ export default function AdminConsole() {
                 </form>
             </Modal>
 
+            {/* Polygon (context) layer settings: the step after a polygon upload */}
+            <ContextLayerSettingsModal
+                layer={polygonSettingsLayer}
+                isOpen={!!polygonSettingsLayer}
+                onClose={() => setPolygonSettingsLayer(null)}
+                onSaved={(layer) => {
+                    setPolygonSettingsLayer(layer);
+                    loadTabData();
+                }}
+            />
+
             {/* Layer Upload/Edit Modal */}
             <Modal
                 isOpen={showLayerModal}
-                onClose={() => setShowLayerModal(false)}
+                onClose={() => { if (!layerUploadBusy) setShowLayerModal(false); }}
                 title={editingLayer ? `Edit Layer: ${editingLayer.name}` : 'Add New Layer'}
             >
+                {/* One way in for every kind of layer. The type is chosen first,
+                    and decides the rest of the dialog: points are drawn in the
+                    browser and saved whole; polygons (parcels, zoning, wards) can
+                    be far larger, so they go up in parts and are built on the
+                    server, then continue straight to choosing what staff see. */}
+                <AddLayerTypeStep
+                    editing={!!editingLayer}
+                    layerType={newLayer.layer_type as NewLayerType}
+                    onTypeChange={(type) => setNewLayer(p => ({ ...p, layer_type: type }))}
+                    onCancel={() => setShowLayerModal(false)}
+                    onBusyChange={setLayerUploadBusy}
+                    onPolygonCreated={(layer) => {
+                        setLayerUploadBusy(false);
+                        setShowLayerModal(false);
+                        loadTabData();
+                        // Straight on to choosing what staff see: nothing is shown until then.
+                        setPolygonSettingsLayer(layer);
+                    }}
+                >
                 <form
                     onSubmit={async (e) => {
                         e.preventDefault();
                         if (!newLayer.name || !newLayer.geojson) {
-                            alert("Please provide a name and upload a GeoJSON file");
+                            alert("Enter a name and upload a GeoJSON file.");
                             return;
                         }
                         try {
@@ -5234,7 +5083,7 @@ export default function AdminConsole() {
                                     routing_config: newLayer.routing_config,
                                     visible_on_map: newLayer.visible_on_map,
                                 });
-                                setSaveMessage('Layer updated!');
+                                setSaveMessage('Layer updated');
                             } else {
                                 await api.createMapLayer({
                                     name: newLayer.name,
@@ -5250,7 +5099,7 @@ export default function AdminConsole() {
                                     routing_config: newLayer.routing_config,
                                     visible_on_map: newLayer.visible_on_map,
                                 });
-                                setSaveMessage('Layer created!');
+                                setSaveMessage('Layer created');
                             }
                             setShowLayerModal(false);
                             loadTabData();
@@ -5276,27 +5125,6 @@ export default function AdminConsole() {
                         value={newLayer.description}
                         onChange={(e) => setNewLayer(p => ({ ...p, description: e.target.value }))}
                     />
-
-                    {/* Layer Type Selection - Must choose first */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">
-                            Layer Type <span className="text-red-400">*</span>
-                        </label>
-                        <div className="grid grid-cols-1 gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setNewLayer(p => ({ ...p, layer_type: 'point' }))}
-                                className={`p-4 rounded-lg border-2 transition-all ${newLayer.layer_type === 'point'
-                                    ? 'border-primary-500 bg-primary-500/20 text-white'
-                                    : 'border-white/20 bg-white/5 text-white/60 hover:border-white/40'
-                                    }`}
-                            >
-                                <div className="text-2xl mb-1">📍</div>
-                                <div className="font-semibold">Points</div>
-                                <div className="text-xs opacity-60">Individual locations (trees, lights, signs, etc.)</div>
-                            </button>
-                        </div>
-                    </div>
 
                     {/* Only show rest of form after layer type is selected */}
                     {newLayer.layer_type && (
@@ -5500,77 +5328,20 @@ export default function AdminConsole() {
                                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                 />
                                 {newLayer.geojson && (
-                                    <p className="text-xs text-green-400 mt-1">✓ GeoJSON loaded</p>
+                                    <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />GeoJSON loaded</p>
                                 )}
                             </div>
 
-                            {/* Category selector */}
-                            <div>
-                                <div className="flex items-center justify-between mb-2">
-                                    <label className="block text-sm font-medium text-white/70">
-                                        Show for Categories
-                                    </label>
-                                    <div className="flex gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewLayer(p => ({ ...p, service_codes: services.map(s => s.service_code) }))}
-                                            className="text-xs text-primary-400 hover:text-primary-300"
-                                        >
-                                            Select All
-                                        </button>
-                                        <span className="text-white/20">|</span>
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewLayer(p => ({ ...p, service_codes: [] }))}
-                                            className="text-xs text-white/40 hover:text-white/60"
-                                        >
-                                            Clear All
-                                        </button>
-                                    </div>
-                                </div>
-                                {services.length === 0 ? (
-                                    <p className="text-sm text-white/40 p-3 rounded-lg bg-white/5 border border-white/10">
-                                        Loading categories...
-                                    </p>
-                                ) : (
-                                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {services.map((service) => (
-                                            <label
-                                                key={service.service_code}
-                                                className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={newLayer.service_codes.includes(service.service_code)}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setNewLayer(p => ({
-                                                                ...p,
-                                                                service_codes: [...p.service_codes, service.service_code]
-                                                            }));
-                                                        } else {
-                                                            setNewLayer(p => ({
-                                                                ...p,
-                                                                service_codes: p.service_codes.filter(c => c !== service.service_code)
-                                                            }));
-                                                        }
-                                                    }}
-                                                    className="w-4 h-4 rounded border-white/30 bg-white/10 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                                />
-                                                {service.service_name}
-                                            </label>
-                                        ))}
-                                    </div>
-                                )}
-                                <p className="text-xs text-white/40 mt-1">
-                                    {newLayer.service_codes.length === 0
-                                        ? '⚠️ Layer will be hidden (select at least one category)'
-                                        : newLayer.service_codes.length === services.length
-                                            ? '✓ Layer visible for all categories'
-                                            : `Layer visible for ${newLayer.service_codes.length} ${newLayer.service_codes.length === 1 ? 'category' : 'categories'}`
-                                    }
-                                </p>
-                            </div>
+                            {/* Category selector. Empty = every category, which is
+                                how the resident form and call intake read it. */}
+                            <CategoryScopePicker
+                                label="Show for categories"
+                                description="The report categories this layer is used in."
+                                services={services}
+                                loading={services.length === 0}
+                                value={newLayer.service_codes}
+                                onChange={codes => setNewLayer(p => ({ ...p, service_codes: codes }))}
+                            />
 
                             <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
                                 <Button variant="ghost" onClick={() => setShowLayerModal(false)}>Cancel</Button>
@@ -5579,9 +5350,10 @@ export default function AdminConsole() {
                         </>
                     )}
                 </form>
+                </AddLayerTypeStep>
             </Modal>
 
-            {/* Password management handled by Auth0 SSO */}
+            {/* Password management is handled by the town's identity provider */}
         </div>
     );
 }

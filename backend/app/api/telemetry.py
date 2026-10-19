@@ -36,7 +36,9 @@ def require_panel_token(x_panel_token: str = Header(default="")) -> str:
     settings = get_settings()
     if not settings.provisioning_token:
         raise HTTPException(status_code=404, detail="Telemetry API is not enabled")
-    if not hmac.compare_digest(x_panel_token, settings.provisioning_token):
+    # Bytes, not str: compare_digest raises TypeError on a str holding non-ASCII,
+    # which turned a junk header from an unauthenticated caller into a 500.
+    if not hmac.compare_digest(x_panel_token.encode("utf-8"), settings.provisioning_token.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid panel token")
     return "panel"
 
@@ -46,6 +48,11 @@ async def get_telemetry(
     db: AsyncSession = Depends(get_db),
     _: str = Depends(require_panel_token),
 ):
+    """Usage and health counters for the hosting panel (orchestrator only).
+
+    Requires the `X-Panel-Token` header (the deployment's PROVISIONING_TOKEN),
+    not a user JWT; 404s when no token is configured. Returns aggregate counts only.
+    """
     settings = get_settings()
 
     db_revision = None

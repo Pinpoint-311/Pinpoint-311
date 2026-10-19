@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import BackLink from '../components/BackLink';
 import { ArrowLeft, Accessibility, Check } from 'lucide-react';
 import { useSettings } from '../context/SettingsContext';
 
@@ -47,25 +47,24 @@ If you are unable to use this web portal, you can submit service requests via:
 
 ## Known Limitations
 
-We would rather name these than imply they are solved. We are aware of and
-working to address:
+We're working to address these known issues:
 
 - Placing a pin by dragging it on the map is a pointer gesture with no keyboard equivalent. Typing an address, or using "Use my current location", sets the same location, so a report can always be filed without the map — but the map itself is not keyboard operable
 - Map tiles, markers and the map provider's own controls come from a third party and have not been audited by us
-- The staff and administrator console has not been through the same review as the resident portal, and should not be assumed to meet AA
+- The staff and administrator console has not been through the same review as the resident portal, and isn't yet confirmed to meet AA
 - Photos uploaded by other residents carry generic descriptions ("Submitted photo 2"), because the person who uploaded them is not asked for alternative text
-- Automatic translations are machine-generated; wording and phrasing may be less clear than the English original
+- Automatic translations are machine-generated and can read less clearly than the English original
 - This statement describes our own assessment. It has not yet been confirmed by an independent audit
 
 ## Feedback
 
-We welcome your feedback on the accessibility of this portal. Please let us know if you encounter accessibility barriers:
+We welcome feedback on the accessibility of this portal. Tell us about any barriers you encounter:
 
 - Report an accessibility issue through the service request form
 - Contact your municipal clerk's office
 - Email the IT department
 
-We try to respond to accessibility feedback within 5 business days.
+We aim to respond to accessibility feedback within 5 business days.
 
 ## Continuous Improvement
 
@@ -159,13 +158,12 @@ export default function AccessibilityPage() {
             {/* Header */}
             <header className="glass-sidebar border-b border-white/10">
                 <div className="max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-                    <Link
-                        to="/"
+                    <BackLink
                         className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-                        aria-label="Back to home"
+                        label="Go back"
                     >
-                        <ArrowLeft className="w-5 h-5 text-white/70" />
-                    </Link>
+                        <ArrowLeft className="w-5 h-5 text-white/70" aria-hidden="true" />
+                    </BackLink>
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
                             <Accessibility className="w-5 h-5 text-emerald-400" />

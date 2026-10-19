@@ -13,6 +13,7 @@ Secrets are bundled into 6 groups to fit the free tier:
 - secret-config: Township-specific settings
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -51,6 +52,42 @@ def _cache_get(name: str) -> Optional[Dict[str, str]]:
 
 def _cache_put(name: str, data: Dict[str, str]) -> None:
     _secret_cache[name] = (data, time.time() + _cache_ttl())
+
+
+# Azure Key Vault and AWS Secrets Manager are read one key at a time, so each
+# key is cached on its own under this prefix: {"v": value}, or {} when the
+# vault answered that it has no such key. Without this every get_secret was a
+# live HTTPS call -- a settings page reads dozens -- made synchronously on the
+# event loop, so one slow vault answer stalled every request in the process.
+# Live, that held DB sessions until the pool ran out ("QueuePool limit of size
+# 10 overflow 20 reached") and pages took 20-30 s. Same TTL as Google's bundles.
+_VAULT_CACHE_PREFIX = "vault:"
+
+
+def _forget_vault_value(key_name: str) -> None:
+    _secret_cache.pop(_VAULT_CACHE_PREFIX + key_name, None)
+
+
+def _read_vault(store: str, key_name: str) -> Tuple[bool, Optional[str]]:
+    """(answered, value) from the external vault. Blocking; run in a thread.
+
+    `answered` is False when the vault could not be asked or failed, which must
+    not be cached -- a blip would otherwise hide a key for the whole TTL.
+    """
+    from app.core.sanitize import sanitize_for_log
+    if store == "azure":
+        from app.core import azure_keyvault as vault
+        label = "Azure Key Vault secret read"
+    else:
+        from app.core import aws_secretsmanager as vault
+        label = "AWS Secrets Manager read"
+    try:
+        if not vault.is_configured():
+            return False, None
+        return True, vault.get_secret(key_name)
+    except Exception:
+        logger.warning(f"{label} failed for {sanitize_for_log(key_name)}")
+        return False, None
 
 
 def _bundle_lock(name: str) -> threading.Lock:
@@ -272,14 +309,8 @@ def _get_secret_from_gcp(secret_name: str, force_refresh: bool = False) -> Optio
                         api_calls=1
                     )
 
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is not None:
-                loop.create_task(_track())
-            else:
+            from app.core.background import spawn
+            if not spawn(_track()):
                 logger.debug(
                     "Secret Manager read not metered: no event loop in this thread. "
                     "This is the secret-write path; metering it would cross event loops."
@@ -371,30 +402,20 @@ async def get_secret(key_name: str) -> Optional[str]:
     if _secrets_provider() == "database":
         return await _get_secret_from_db(key_name)
 
-    # Azure Key Vault backend (host-selected via SECRETS_PROVIDER=azure)
-    if _secrets_provider() == "azure":
-        try:
-            from app.core import azure_keyvault
-            if azure_keyvault.is_configured():
-                val = azure_keyvault.get_secret(key_name)
-                if val is not None:
-                    return val
-        except Exception as e:
-            from app.core.sanitize import sanitize_for_log
-            logger.warning(f"Azure Key Vault secret read failed for {sanitize_for_log(key_name)}")
-        return await _get_secret_from_db(key_name)
-
-    # AWS Secrets Manager backend (host-selected via SECRETS_PROVIDER=aws)
-    if _secrets_provider() == "aws":
-        try:
-            from app.core import aws_secretsmanager
-            if aws_secretsmanager.is_configured():
-                val = aws_secretsmanager.get_secret(key_name)
-                if val is not None:
-                    return val
-        except Exception:
-            from app.core.sanitize import sanitize_for_log
-            logger.warning(f"AWS Secrets Manager read failed for {sanitize_for_log(key_name)}")
+    # Azure Key Vault / AWS Secrets Manager (SECRETS_PROVIDER=azure|aws).
+    # Cached per key and read off the event loop; see _VAULT_CACHE_PREFIX.
+    store = _secrets_provider()
+    if store in ("azure", "aws"):
+        cache_key = _VAULT_CACHE_PREFIX + key_name
+        cached = _cache_get(cache_key)
+        if cached is None:
+            answered, val = await asyncio.to_thread(_read_vault, store, key_name)
+            if answered:
+                _cache_put(cache_key, {"v": val} if val is not None else {})
+        else:
+            val = cached.get("v")
+        if val is not None:
+            return val
         return await _get_secret_from_db(key_name)
 
     if _is_gcp_available():
@@ -518,6 +539,8 @@ def clear_cache(bundle: Optional[str] = None, key_name: Optional[str] = None) ->
     secret they just wrote, not which bundle it belongs to.
     """
     global _secret_cache
+    if key_name:
+        _forget_vault_value(key_name)
     if key_name and not bundle:
         bundle = _get_bundle_name(key_name)
     if bundle:
@@ -660,7 +683,9 @@ def set_secret_sync(key_name: str, value: str) -> bool:
         try:
             from app.core import azure_keyvault
             if azure_keyvault.is_configured():
-                return azure_keyvault.set_secret(key_name, value)
+                ok = azure_keyvault.set_secret(key_name, value)
+                _forget_vault_value(key_name)
+                return ok
         except Exception as e:
             logger.error(f"Azure Key Vault secret write failed for {key_name}: {e}")
         return False
@@ -670,7 +695,9 @@ def set_secret_sync(key_name: str, value: str) -> bool:
         try:
             from app.core import aws_secretsmanager
             if aws_secretsmanager.is_configured():
-                return aws_secretsmanager.set_secret(key_name, value)
+                ok = aws_secretsmanager.set_secret(key_name, value)
+                _forget_vault_value(key_name)
+                return ok
         except Exception as e:
             logger.error(f"AWS Secrets Manager write failed for {key_name}: {e}")
         return False
@@ -765,7 +792,9 @@ def delete_secret_sync(key_name: str) -> bool:
             from app.core import azure_keyvault
             if not azure_keyvault.is_configured():
                 return False
-            return azure_keyvault.delete_secret(key_name)
+            gone = azure_keyvault.delete_secret(key_name)
+            _forget_vault_value(key_name)
+            return gone
         except Exception as e:
             logger.warning(f"Azure Key Vault delete failed for {key_name}: {e}")
             return False
@@ -775,7 +804,9 @@ def delete_secret_sync(key_name: str) -> bool:
             from app.core import aws_secretsmanager
             if not aws_secretsmanager.is_configured():
                 return False
-            return aws_secretsmanager.delete_secret(key_name)
+            gone = aws_secretsmanager.delete_secret(key_name)
+            _forget_vault_value(key_name)
+            return gone
         except Exception as e:
             logger.warning(f"AWS Secrets Manager delete failed for {key_name}: {e}")
             return False

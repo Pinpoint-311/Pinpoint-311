@@ -184,8 +184,10 @@ def test_modules_no_longer_carries_a_provider_backed_flag():
     # The provider-free product features, and only those. `platform_feedback`
     # joined the list in 2026-08: one anonymous question asked by the app
     # itself, with no vendor, no credential and no card to configure.
+    # `resident_history` joined in 2026-10 on the same terms: staff lookups over
+    # the town's own records, nothing external to set up.
     assert set(default) == {
-        "unlisted_reports", "research_portal", "platform_feedback",
+        "unlisted_reports", "research_portal", "platform_feedback", "resident_history",
     }, default
     # The specific regression: none of the capability-backed switches may
     # reappear here, whatever else the list grows.
@@ -364,7 +366,9 @@ def test_crash_reporting_answers_without_touching_the_database():
     import ast
     from pathlib import Path
 
-    main_py = Path(cs.__file__).resolve().parent.parent / "main.py"
+    # Lives in core/crash_reporting.py since the saved-DSN fix: the API and the
+    # worker both start Sentry through it.
+    main_py = Path(cs.__file__).resolve().parent.parent / "core" / "crash_reporting.py"
     tree = ast.parse(main_py.read_text(encoding="utf-8"))
 
     hook = next(

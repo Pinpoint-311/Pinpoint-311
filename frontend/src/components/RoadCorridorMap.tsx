@@ -504,9 +504,8 @@ export default function RoadCorridorMap({
                     </div>
 
                     <p className="text-[11px] text-white/40 leading-relaxed">
-                        Trimming is for where the road data splits in the wrong place — the
-                        boundaries in the data are wherever the publisher happened to cut them,
-                        not where responsibility actually changes.
+                        Trim a stretch when the road data splits it somewhere other than where
+                        responsibility changes.
                     </p>
                 </div>
             )}
@@ -531,19 +530,16 @@ export default function RoadCorridorMap({
                     aria-describedby="corridor-width-hint"
                 />
                 <p id="corridor-width-hint" className="text-[11px] text-white/40 mt-1.5 leading-relaxed">
-                    A report within this distance of the centreline is treated as being on the road.
-                    Narrow it in dense areas where roads run close together; widen it where shoulders
-                    are broad. It also absorbs small differences between the road data and the map
-                    imagery.
+                    A report within this distance of the centerline is treated as being on the road.
+                    Narrow it where roads run close together; widen it where shoulders are broad.
                 </p>
             </div>
 
             {excludedCount > 0 && (
                 <p className="flex items-start gap-2 text-[11px] text-white/45 leading-relaxed">
                     <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-white/30" aria-hidden="true" />
-                    {excludedCount} stretch{excludedCount === 1 ? '' : 'es'} switched off. These are remembered
-                    against the road name, so a future data update keeps your changes while still picking up
-                    newly built sections.
+                    {excludedCount} stretch{excludedCount === 1 ? '' : 'es'} switched off. Your changes are saved
+                    by road name, so they carry over when road data is updated.
                 </p>
             )}
         </div>

@@ -69,6 +69,10 @@ export interface RoutingContact {
     roads?: string[];
 }
 
+/** Whether a category asks residents for a location. `hidden` means no map on
+ *  the form, and the server drops a location sent anyway. */
+export type LocationMode = 'required' | 'optional' | 'hidden';
+
 export interface ServiceDefinition {
     id: number;
     service_code: string;
@@ -79,6 +83,9 @@ export interface ServiceDefinition {
     display_order: number;
     /** Optional SLA target in hours from submission to closure. null = no SLA. */
     sla_hours?: number | null;
+    location_mode?: LocationMode;
+    /** Every report in this category is kept off the public map and list. */
+    hidden_from_public?: boolean;
     departments: Department[];
     routing_mode?: 'township' | 'third_party' | 'road_based';
     routing_config?: {
@@ -126,6 +133,29 @@ export interface ServiceCreate {
     routing_mode?: string;
     routing_config?: Record<string, any>;
     assigned_department_id?: number;
+    location_mode?: LocationMode;
+}
+
+/** One row of the resident-history card or a resident search: the minimum a
+ *  clerk needs to recognise a report and open it. Never another report's
+ *  description, address or contact details. */
+export interface ResidentHistoryItem {
+    service_request_id: string;
+    service_name: string | null;
+    status: string | null;
+    requested_datetime: string | null;
+}
+
+export interface ResidentHistory {
+    matched_by: 'email' | null;
+    total: number;
+    reports: ResidentHistoryItem[];
+}
+
+export interface ResidentSearchResult {
+    searched_by: 'email' | 'name';
+    total: number;
+    reports: ResidentHistoryItem[];
 }
 
 // Service Request types
@@ -147,7 +177,12 @@ export interface ServiceRequest {
     requested_datetime: string;
     updated_datetime: string | null;
     source: string;
+    /** Set by the content screen (profanity etc.), with flag_reason. Not a hold. */
     flagged: boolean;
+    /** Admin-placed legal hold: exempt from the retention policy. */
+    legal_hold?: boolean;
+    /** The language the resident asked for; notifications go out in it. */
+    preferred_language?: string | null;
     /** false = unlisted: hidden from public feeds/APIs (staff always see it).
      *  The RESIDENT's choice, made at submission. Staff never write it. */
     is_public?: boolean;
@@ -206,6 +241,19 @@ export interface PendingReviewPhoto {
 }
 
 export interface ServiceRequestDetail extends ServiceRequest {
+    /** Due time under the category's SLA, and where it stands. Absent with no SLA. */
+    sla_due_datetime?: string | null;
+    sla_state?: 'on_track' | 'at_risk' | 'overdue' | 'met' | 'breached' | null;
+    /** Context-layer features (parcel, zone) the report fell inside, snapshotted
+     *  at intake with each layer's staff allowlist. Staff detail only. */
+    gis_context?: {
+        layer_id: number;
+        layer_name: string;
+        feature_id: number;
+        feature_key: string;
+        label: string;
+        properties: Record<string, unknown>;
+    }[] | null;
     first_name: string | null;
     last_name: string | null;
     email: string;
@@ -258,7 +306,7 @@ export interface RequestComment {
 export interface AuditLogEntry {
     id: number;
     service_request_id: number;
-    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added' | 'legal_hold' | 'public_archive' | 'deleted' | 'restored' | 'priority_accepted';
+    action: 'submitted' | 'status_change' | 'department_assigned' | 'staff_assigned' | 'comment_added' | 'legal_hold' | 'public_archive' | 'deleted' | 'restored' | 'priority_accepted' | 'priority_changed';
     old_value: string | null;
     new_value: string | null;
     actor_type: 'resident' | 'staff' | 'admin';
@@ -308,13 +356,24 @@ export interface ManualIntakeCreate {
     phone?: string;
     preferred_language?: string;
     media_urls?: string[];
+    /** Photos the content screen flagged; held for staff review, not published. */
+    media_flagged?: string[];
     matched_asset?: Record<string, any> | null;
     custom_fields?: Record<string, string | string[]>;
     /** false = unlisted: excluded from public feeds/APIs, still viewable by direct link. */
     is_public?: boolean;
     /** Staff may knowingly log a report on a road another agency maintains. */
     override_jurisdiction?: boolean;
-    source: 'phone' | 'walk_in' | 'email';
+    source: 'phone' | 'walk_in' | 'email' | 'other';
+    /** Staff choices at intake. Left out, each falls back to what a resident
+     *  submission gets: category routing, AI triage, no note. */
+    assigned_department_id?: number;
+    assigned_to?: string;
+    /** 1-10, the same scale as every other priority edit. */
+    manual_priority_score?: number;
+    staff_notes?: string;
+    /** Email the caller a confirmation. Only ever sent to a real address. */
+    send_confirmation?: boolean;
 }
 
 // System Settings types
@@ -344,6 +403,10 @@ export interface SystemSettings {
          *  town says otherwise; the server 404s the endpoints when it is off,
          *  so this flag only decides whether the UI is drawn. */
         platform_feedback?: boolean;
+        /** Staff see a resident's other reports and can search by resident
+         *  email or full name. Off by default; the server 404s the endpoints
+         *  when it is off and audits every lookup when it is on. */
+        resident_history?: boolean;
     };
     /** Where "want to tell us more?" points when platform_feedback is on.
      *  null/'' means no such line is rendered — a dead mailto is worse than
@@ -400,7 +463,14 @@ export interface HeatmapData {
     report_points: HeatmapPoint[];
     reporter_points: HeatmapPoint[];
     total_reports: number;
-    total_unique_reporters: number;
+    /** Distinct identified reporters (keyed email fingerprint); null = unknown. */
+    total_unique_reporters: number | null;
+    /** Reports attributable to an identified reporter: the average's numerator. */
+    identified_reports?: number | null;
+    /** Reports with no attributable reporter (no email, placeholder, scrubbed). */
+    anonymous_reports?: number | null;
+    /** False when the town keeps no reporter fingerprints (Resident history off). */
+    reporter_identity_available?: boolean;
 }
 
 export interface HotspotData {
@@ -410,7 +480,8 @@ export interface HotspotData {
     cluster_id: number;
     sample_address?: string;  // Representative address for the cluster
     top_categories?: string[];  // Most common issue types in cluster
-    unique_reporters?: number;  // Count of distinct reporters (for bias detection)
+    unique_reporters?: number | null;  // Distinct identified reporters; null/absent = unknown
+    identified_reports?: number | null;  // Reports in the cluster with an identified reporter
     oldest_days?: number;  // Age of oldest open request in this cluster
 }
 

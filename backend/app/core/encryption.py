@@ -367,7 +367,7 @@ def decrypt_pii(ciphertext: str) -> str:
     if ciphertext.startswith(AZURE_ENCRYPTED_PREFIX):
         from app.core import azure_keyvault
         try:
-            return azure_keyvault.decrypt(ciphertext[len(AZURE_ENCRYPTED_PREFIX):])
+            return azure_keyvault.decrypt_any_version(ciphertext[len(AZURE_ENCRYPTED_PREFIX):])
         except Exception as e:
             logger.error(f"Azure Key Vault decryption failed: {e}")
             return ""

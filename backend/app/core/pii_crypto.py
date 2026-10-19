@@ -24,14 +24,24 @@ Ciphertext format (self-describing, versioned):
 Every value records which wrapped DEK produced it, so DEK rotation is safe:
 old rows keep referencing their old wrapped DEK, and unwrapping is cached per
 distinct wrapped DEK. The wrapped DEK's first byte tags the backend that can
-unwrap it ('g' Google, 'a' Azure, 'l' local), so a value stays decryptable as
-long as that backend is reachable.
+unwrap it ('g' Google, 'A'/'a' Azure, 'w' AWS, 'l' local), so a value stays
+decryptable as long as that backend is reachable.
+
+Key rotation. Google and AWS record the key version inside their own
+ciphertext and unwrap across versions on their own. Azure does not: an unwrap
+names a key version or gets the current one. So an Azure wrap ('A') records
+the version that wrapped it, and the unwrap asks that version. Values from
+before that ('a') try the current version and then each older enabled one.
+After a rotation, new data keys are wrapped with the new version within ten
+minutes, and the nightly re-wrap moves older ones across
+(`wrapped_is_current`), after which the old version can be disabled.
 """
 
 import base64
 import logging
 import os
 import threading
+import time
 from collections import OrderedDict
 from typing import Optional, Tuple
 
@@ -45,7 +55,8 @@ PII_V2_PREFIX = "pii2:"
 
 # Backend tags stored as the first byte of a wrapped DEK.
 _WRAP_GOOGLE = b"g"
-_WRAP_AZURE = b"a"
+_WRAP_AZURE = b"a"           # unversioned (before versions were recorded)
+_WRAP_AZURE_V = b"A"         # b"A" + key version + b"." + wrapped token
 _WRAP_AWS = b"w"
 _WRAP_LOCAL = b"l"
 
@@ -54,8 +65,13 @@ _WRAP_LOCAL = b"l"
 _AAD_PII = b"pinpoint-pii-v2"
 _AAD_DEK = b"pinpoint-dek-v2"
 
+BACKEND_BY_TAG = {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure", _WRAP_AZURE_V: "azure",
+                  _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}
+
 _lock = threading.Lock()
 _active: Optional[Tuple[str, bytes]] = None            # (wrapped_dek_b64, dek_bytes)
+_active_checked = 0.0                                   # last time the active DEK's key version was checked
+_ACTIVE_RECHECK_SECONDS = 600.0
 _unwrap_cache: "OrderedDict[str, bytes]" = OrderedDict()  # wrapped_dek_b64 -> dek
 _UNWRAP_CACHE_MAX = 32
 
@@ -104,9 +120,11 @@ def _wrap_dek(dek: bytes) -> bytes:
         from app.core import azure_keyvault
         if azure_keyvault.is_configured():
             # Key Vault RSA-OAEP wraps a base64 string; store the returned token.
-            wrapped_token = azure_keyvault.encrypt(_b64(dek))
+            version, wrapped_token = azure_keyvault.wrap_versioned(_b64(dek))
             _track("wrap")
-            return _WRAP_AZURE + wrapped_token.encode("ascii")
+            if not version:
+                return _WRAP_AZURE + wrapped_token.encode("ascii")
+            return _WRAP_AZURE_V + version.encode("ascii") + b"." + wrapped_token.encode("ascii")
         if _kms_required():
             raise RuntimeError("REQUIRE_KMS is set but Azure Key Vault is not configured.")
         return _WRAP_LOCAL + _local_wrap(dek)
@@ -152,9 +170,15 @@ def _unwrap_dek(wrapped: bytes) -> bytes:
         resp = client.decrypt(request={"name": key_name, "ciphertext": payload})
         _track("unwrap")
         return resp.plaintext
+    if tag == _WRAP_AZURE_V:
+        from app.core import azure_keyvault
+        version, token = payload.decode("ascii").split(".", 1)
+        dek_b64 = azure_keyvault.decrypt(token, version)
+        _track("unwrap")
+        return _unb64(dek_b64)
     if tag == _WRAP_AZURE:
         from app.core import azure_keyvault
-        dek_b64 = azure_keyvault.decrypt(payload.decode("ascii"))
+        dek_b64 = azure_keyvault.decrypt_any_version(payload.decode("ascii"))
         _track("unwrap")
         return _unb64(dek_b64)
     if tag == _WRAP_AWS:
@@ -183,16 +207,37 @@ def _local_unwrap(payload: bytes) -> bytes:
 def _get_active_dek() -> Tuple[str, bytes]:
     """Return (wrapped_dek_b64, dek) for new writes, generating and wrapping a
     fresh DEK once per process. Thread-safe."""
-    global _active
-    if _active is not None:
+    global _active, _active_checked
+    rotated = _active_key_rotated()
+    if _active is not None and not rotated:
         return _active
     with _lock:
+        if rotated:
+            _active = None
         if _active is None:
             dek = AESGCM.generate_key(bit_length=256)
             wrapped_b64 = _b64(_wrap_dek(dek))
             _unwrap_cache[wrapped_b64] = dek
             _active = (wrapped_b64, dek)
+            _active_checked = time.time()   # just wrapped with the current version
     return _active
+
+
+def _active_key_rotated() -> bool:
+    """Whether the key that wrapped the active DEK has since been rotated (Azure).
+
+    Checked at most every ten minutes. New writes then get a fresh DEK wrapped
+    with the new version instead of reusing one wrapped with the old version
+    for the life of the process.
+    """
+    global _active_checked
+    if _active is None or time.time() - _active_checked < _ACTIVE_RECHECK_SECONDS:
+        return False
+    _active_checked = time.time()
+    try:
+        return not wrapped_is_current(_active[0], "azure") if wrapped_backend(_active[0]) == "azure" else False
+    except Exception:
+        return False
 
 
 def _dek_for(wrapped_b64: str) -> bytes:
@@ -213,6 +258,36 @@ def _dek_for(wrapped_b64: str) -> bytes:
 # --------------------------------------------------------------------------
 # Public API
 # --------------------------------------------------------------------------
+
+def wrapped_backend(wrapped_b64: str) -> Optional[str]:
+    """Which key service wrapped this data key, from its tag; None if unreadable."""
+    try:
+        return BACKEND_BY_TAG.get(base64.b64decode(wrapped_b64 + "==")[:1])
+    except Exception:
+        return None
+
+
+def wrapped_is_current(wrapped_b64: str, current_backend: str) -> bool:
+    """Whether this data key is wrapped by the key currently in use.
+
+    False for another backend, for an Azure key wrapped before versions were
+    recorded, and for one wrapped by an Azure key version other than the
+    current one -- the rows the nightly re-wrap moves. When the current Azure
+    version cannot be read the answer is True: re-wrapping on a guess would be
+    churn, never a fix.
+    """
+    if wrapped_backend(wrapped_b64) != current_backend:
+        return False
+    if current_backend != "azure":
+        return True
+    raw = base64.b64decode(wrapped_b64 + "==")
+    if raw[:1] == _WRAP_AZURE:
+        return False
+    from app.core import azure_keyvault
+    current = azure_keyvault.current_key_version()
+    version = raw[1:].split(b".", 1)[0].decode("ascii", "replace")
+    return current is None or version == current
+
 
 def is_v2(value: Optional[str]) -> bool:
     return bool(value) and value.startswith(PII_V2_PREFIX)
@@ -255,7 +330,7 @@ def active_backend() -> str:
     management is actually in effect."""
     wrapped_b64, _ = _get_active_dek()
     tag = base64.b64decode(wrapped_b64)[:1]
-    return {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure", _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(tag, "unknown")
+    return BACKEND_BY_TAG.get(tag, "unknown")
 
 
 def probe_backend() -> str:
@@ -290,8 +365,7 @@ def probe_wrap() -> dict:
     try:
         dek = AESGCM.generate_key(bit_length=256)
         blob = _wrap_dek(dek)
-        backend = {_WRAP_GOOGLE: "google", _WRAP_AZURE: "azure",
-                   _WRAP_AWS: "aws", _WRAP_LOCAL: "local"}.get(blob[:1], "unknown")
+        backend = BACKEND_BY_TAG.get(blob[:1], "unknown")
         return {"backend": backend, "wrapped_len": len(blob), "peek": blob[1:9].hex()}
     except Exception as exc:
         # REQUIRE_KMS raises here rather than falling back, which is the point

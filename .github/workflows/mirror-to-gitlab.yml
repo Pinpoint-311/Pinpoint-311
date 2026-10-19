@@ -1,0 +1,74 @@
+name: Mirror to GitLab
+
+# GitHub is the primary repository; this keeps GitLab in step on every push.
+#
+# Optional. GitLab's own *pull* mirroring (GitLab fetching from GitHub) works
+# too, on the plans that include it; it stops syncing when the two repositories
+# diverge unless "Overwrite diverged branches" is on. Use this workflow instead
+# when pull mirroring is unavailable: it pushes within seconds and carries tags.
+# Use one or the other, not both.
+#
+# Setup (once):
+#   1. GitLab: Settings -> Access tokens -> project access token, role
+#      Maintainer, scope write_repository, with an expiry. Maintainer is needed to
+#      push to the protected main branch and to create protected v* tags.
+#   2. GitHub: Settings -> Secrets and variables -> Actions
+#        secret   GITLAB_MIRROR_TOKEN = that token
+#        variable GITLAB_MIRROR_URL   = https://gitlab.com/<group>/<project>.git
+#   3. GitLab: delete any pull mirror on the project, so two writers do not fight.
+#
+# Never force-pushes. If GitLab's branch has commits GitHub doesn't, the push
+# fails loudly instead of overwriting them -- reconcile by hand, then re-run.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['**']
+  delete:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror-to-gitlab
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    if: vars.GITLAB_MIRROR_URL != ''
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Push to GitLab
+        env:
+          TOKEN: ${{ secrets.GITLAB_MIRROR_TOKEN }}
+          URL: ${{ vars.GITLAB_MIRROR_URL }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.event.ref }}
+          REF_TYPE: ${{ github.event.ref_type }}
+        run: |
+          set -euo pipefail
+          [ -n "$TOKEN" ] || { echo "::error::GITLAB_MIRROR_TOKEN is not set"; exit 1; }
+          case "$URL" in https://*) ;; *) echo "::error::GITLAB_MIRROR_URL must be https://"; exit 1 ;; esac
+          # The token goes in a credential helper, never in the remote URL, so
+          # it cannot appear in git's output or the job log.
+          git config --global credential.helper '!f() { echo username=oauth2; echo "password=$TOKEN"; }; f'
+          git remote add gitlab "$URL"
+          if [ "$EVENT" = "delete" ]; then
+            kind=heads; [ "$REF_TYPE" = "tag" ] && kind=tags
+            git push gitlab ":refs/$kind/$REF" || echo "::warning::could not delete $REF on GitLab"
+          elif [ "$EVENT" = "workflow_dispatch" ]; then
+            # Manual run: bring every branch and tag across (still no force).
+            # origin/HEAD is a pointer, not a branch, so it is skipped.
+            git for-each-ref --format='%(refname:strip=3)' refs/remotes/origin \
+              | grep -vx HEAD | while read -r b; do
+                  git push gitlab "refs/remotes/origin/$b:refs/heads/$b"
+                done
+            git push gitlab --tags
+          else
+            git push gitlab "$GITHUB_REF:$GITHUB_REF"
+          fi

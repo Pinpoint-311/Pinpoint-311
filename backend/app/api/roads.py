@@ -156,13 +156,34 @@ async def config_check(
         names = []  # cannot tell a typo from a real road; suppress those warnings
 
     issues = check_config(payload.routing_config or {}, names)
+    issue_dicts = [
+        {"severity": i.severity, "kind": i.kind, "message": i.message, "roads": i.roads}
+        for i in issues
+    ]
+
+    # Roads limited to a stretch ("Oak Rd (Elm St to Route 10)"). Each is
+    # resolved against the map so the clerk sees how much road it claims, and
+    # one that cannot be resolved -- which falls back to the whole road -- says
+    # so rather than quietly claiming more than was meant.
+    from app.services import road_limits
+
+    limits = []
+    for agency, entry in road_limits.limited_entries(payload.routing_config or {}):
+        resolution = await road_limits.resolve_limits(db, entry, known_names=names)
+        limits.append({"agency": agency, **resolution.as_dict()})
+        if not resolution.resolved:
+            issue_dicts.append({
+                "severity": "warning",
+                "kind": "road_limits_unresolved",
+                "message": resolution.message,
+                "roads": [entry.label],
+            })
+
     return {
-        "issues": [
-            {"severity": i.severity, "kind": i.kind, "message": i.message, "roads": i.roads}
-            for i in issues
-        ],
+        "issues": issue_dicts,
         "can_save": not any(i.severity == "error" for i in issues),
         "roads_known": len(names),
+        "limits": limits,
     }
 
 
@@ -381,6 +402,10 @@ async def trigger_road_seed(
     db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_admin),
 ):
+    """Re-seed the road network for the town boundary (admin only).
+
+    Rebuilds the local road table used by road-check and corridor matching.
+    """
     from app.tasks.road_data import seed_roads_for_boundary
     result = await seed_roads_for_boundary(db, force=force)
     return result

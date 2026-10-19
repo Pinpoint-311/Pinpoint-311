@@ -89,7 +89,7 @@ def test_a_credential_is_refused_until_a_store_is_chosen(unset):
     assert caught.value.status_code == 409
     # The refusal has to say what to do about it, and that the database is an
     # allowed answer -- otherwise it reads as "go and buy a cloud vault".
-    assert "encrypted database is one of the answers" in caught.value.detail
+    assert "encrypted database is one of the options" in caught.value.detail
 
 
 def test_choosing_the_encrypted_database_lets_credentials_through(chose):
@@ -153,6 +153,15 @@ _UNGATED_BY_DESIGN = {
     # is_configured=False. It never sets `key_value`, so there is no credential
     # here to put in the wrong place.
     "sync_secrets",
+    # Two character counts (the translation spend budget), stored beside
+    # TRANSLATION_PROVIDER for the same reason that is: a setting, not a
+    # credential. Gating it would leave a town that has not picked a store
+    # unable to lower its own spend cap.
+    "update_translation_budget",
+    # Which on-server photo detector runs (yolo/ocr/off, yunet/opencv/off) and
+    # one boolean. Settings, not credentials -- same reasoning as the budget:
+    # a town without a chosen store must still be able to change them.
+    "update_redaction_detectors",
 }
 
 

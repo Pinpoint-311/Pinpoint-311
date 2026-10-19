@@ -1,0 +1,72 @@
+# /etc/systemd/system/pinpoint-updater.service
+#
+# One pass over the configured instances (`pinpoint-updater poll`): records each
+# instance's status and, for instances with a token_file, claims and runs requests filed in
+# the console. Started by pinpoint-updater.timer. Operator upgrades use the
+# same binary from a shell: sudo -u pinpoint-updater pinpoint-updater upgrade …
+#
+# The updater needs the Docker socket, which is root-equivalent: membership of
+# the docker group is the one privilege this unit grants. Everything else is
+# locked down. List every managed instance directory in ReadWritePaths (the
+# updater writes release.lock and its per-instance flock there, nothing else).
+
+[Unit]
+Description=Pinpoint 311 host updater (one pass)
+Documentation=file:///opt/pinpoint-updater/README.md
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=pinpoint-updater
+Group=pinpoint-updater
+SupplementaryGroups=docker
+Environment=PINPOINT_UPDATER_CONFIG=/etc/pinpoint-updater/instances.yml
+# cosign's TUF cache and docker's client config live here, not in a home dir.
+Environment=HOME=/var/lib/pinpoint-updater
+StateDirectory=pinpoint-updater
+StateDirectoryMode=0750
+LogsDirectory=pinpoint-updater
+LogsDirectoryMode=0750
+ExecStart=/opt/pinpoint-updater/venv/bin/pinpoint-updater --json poll
+TimeoutStartSec=2h
+
+# --- sandbox -------------------------------------------------------------
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+# Read-only by default, in case instance dirs live under /home; list every
+# managed instance directory below, one line each.
+ProtectHome=read-only
+ReadWritePaths=/var/log/pinpoint-updater /var/lib/pinpoint-updater
+ReadWritePaths=/srv/pinpoint/springfield
+# ReadWritePaths=/srv/pinpoint/<other-instance>
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0027
+ProtectProc=invisible
+RemoveIPC=yes
+# The updater reads answers from the internet-facing backend and the registry.
+# A hostile or broken one must not be able to grow this process (which holds
+# the Docker socket) until the host's OOM killer picks a database instead.
+# Image pulls and one-off containers run under dockerd, not in this cgroup.
+MemoryMax=1G
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

@@ -11,47 +11,12 @@ import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
-# Initialize Sentry for error tracking (optional - set SENTRY_DSN env var)
-SENTRY_DSN = os.environ.get("SENTRY_DSN")
+# Crash reporting. From SENTRY_DSN when the host sets it; otherwise from the DSN
+# saved on the setup page, loaded in lifespan below. See core/crash_reporting.
+from app.core import crash_reporting
+crash_reporting.init_from_env()
 
-
-def _crash_reporting_wanted(event, hint):
-    """Drop the event when the town has switched crash reporting off.
-
-    "Crash reporting" is one of the ticks on the setup page, and unticking it
-    used to do nothing at all: the DSN is an environment variable read once at
-    import, so the box was cosmetic and reports kept leaving the building. This
-    is the only choke point -- there is no per-call site to gate.
-
-    Deliberately reading a cached snapshot rather than the database. This runs on
-    the error path, and the error being reported may be that the database is
-    unreachable; opening a session here would fail exactly when it matters, and
-    `before_send` has no event loop to await one with. A process that has not yet
-    read the switch sends the event, because swallowing the crash that stopped it
-    from reading is the worse failure.
-    """
-    try:
-        from app.services.capability_switches import wanted_sync
-
-        if not wanted_sync("errors"):
-            return None
-    except Exception:
-        # Never let this decide to lose a crash report.
-        pass
-    return event
-
-
-if SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=SENTRY_DSN,
-        traces_sample_rate=0.1,  # 10% of requests for performance monitoring
-        profiles_sample_rate=0.1,
-        environment=os.environ.get("ENVIRONMENT", "production"),
-        send_default_pii=False,  # Don't send personally identifiable info
-        before_send=_crash_reporting_wanted,
-    )
-
-from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates
+from app.api import auth, users, departments, services, system, open311, gis, map_layers, comments, research, health, audit, setup, api_usage, data_export, integrations, provisioning, telemetry, roads, feedback, deploy_templates, resident_history
 from app.db.init_db import seed_database
 
 # Rate limiting setup
@@ -413,6 +378,9 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database with default data
     await seed_database()
 
+    # The DSN saved on the setup page, when the host did not set SENTRY_DSN.
+    await crash_reporting.init_from_saved_credential()
+
     # Load the panel-set lifecycle state (managed hosting suspend/resume)
     from app.core.managed import load_lifecycle_state
     async with SessionLocal() as _lifecycle_db:
@@ -420,13 +388,29 @@ async def lifespan(app: FastAPI):
     if _state == "suspended":
         logger.warning("[Managed] Instance is SUSPENDED — API serves 503 until the state resumes it")
 
+    # Resident-history fingerprints follow the module switch: built while it is
+    # on, erased when it is off (core/resident_index.maintain). Always in a
+    # thread -- it reads the key through the town's KMS and decrypts older rows,
+    # none of which may run on the event loop -- and repeated so that a KMS
+    # outage at startup, or a report written before the key was loaded, is
+    # picked up within minutes. Settings saves also trigger it immediately.
+    from app.core import resident_index as _resident_index
+
+    async def resident_index_maintenance():
+        while True:
+            await asyncio.to_thread(_resident_index.maintain)
+            await asyncio.sleep(300)
+
+    index_task = asyncio.create_task(resident_index_maintenance())
+
     # Start background uptime monitoring task
     uptime_task = asyncio.create_task(uptime_monitor())
     logger.info("[Uptime Monitor] Started background health monitoring (every 5 minutes)")
     
     yield
     
-    # Shutdown: Cancel background task
+    # Shutdown: Cancel background tasks
+    index_task.cancel()
     uptime_task.cancel()
     try:
         await uptime_task
@@ -573,6 +557,12 @@ app.include_router(setup.router, prefix="/api/setup", tags=["Setup"])
 app.include_router(provisioning.router, prefix="/api/provisioning", tags=["Provisioning (orchestrator)"])
 app.include_router(telemetry.router, prefix="/api/telemetry", tags=["Telemetry (orchestrator)"])
 app.include_router(api_usage.router, prefix="/api/system/api-usage", tags=["API Usage"])
+# Secure upgrades, Phase 3 (docs/design/secure-upgrades.md): admins request and
+# approve in the console; the host updater claims and reports over
+# /api/internal/updater/* with its own token. Caddy refuses /api/internal/*.
+from app.api import upgrades as _upgrades, updater_internal as _updater_internal  # noqa: E402
+app.include_router(_upgrades.router, prefix="/api/system", tags=["Upgrades"])
+app.include_router(_updater_internal.router, prefix="/api/internal/updater", tags=["Updater (host, internal)"])
 
 # Mounted at /api because the router declares its own /export prefix --
 # FastAPI concatenates the two, so the served paths are /api/export/requests
@@ -586,6 +576,9 @@ app.include_router(integrations.router, prefix="/api/integrations", tags=["GovTe
 # on it checks system_settings.modules.platform_feedback and 404s when the
 # town has not enabled it, so mounting it costs a disabled town nothing.
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Platform Feedback"])
+# Optional module, off by default, same shape as feedback: always mounted, every
+# route 404s unless system_settings.modules.resident_history is on.
+app.include_router(resident_history.router, prefix="/api/resident-history", tags=["Resident History"])
 # Public and unauthenticated by design: Azure and AWS fetch the file themselves,
 # anonymously, when an operator presses a deploy button on the setup page. The
 # templates hold resource definitions and no secret -- see the module docstring
@@ -596,15 +589,19 @@ app.include_router(deploy_templates.router, prefix="/api/deploy-templates", tags
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/project/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/api/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
-@app.get("/api/health")
+@app.get("/api/health", tags=["Health Check"])
 async def health_check():
-    """Health check endpoint"""
+    """Liveness probe (public). Always `{"status": "healthy"}` while the process serves.
+
+    For dependency checks use the admin-only `GET /api/health/`; for a cheap
+    public readiness check use `GET /api/health/quick`.
+    """
     return {"status": "healthy", "version": "1.0.0"}
 
 
-@app.get("/")
+@app.get("/", tags=["Health Check"])
 async def root():
-    """Root endpoint - redirect info"""
+    """API name and pointers to the health check (public)."""
     return {
         "message": "Township 311 API",
         "docs": "/api/docs",
@@ -612,14 +609,15 @@ async def root():
     }
 
 
-@app.get("/api/sentry-debug")
+@app.get("/api/sentry-debug", tags=["System"])
 async def sentry_debug():
     """Test endpoint to verify Sentry integration. Only available in debug mode."""
     from app.core.config import get_settings
     if not get_settings().debug:
         raise HTTPException(status_code=404, detail="Not found")
-    if not SENTRY_DSN:
-        return {"status": "sentry_not_configured", "message": "Set SENTRY_DSN env var to enable"}
+    if not crash_reporting.is_active():
+        return {"status": "sentry_not_configured",
+                "message": "Add a Sentry DSN on the setup page, or set SENTRY_DSN."}
     # Intentional error for testing
     raise Exception("Sentry test error - this is intentional!")
 
@@ -648,9 +646,13 @@ class ClientError(BaseModel):
     timestamp: Optional[str] = None
     userAgent: Optional[str] = None
 
-@app.post("/api/system/client-errors", status_code=204)
+@app.post("/api/system/client-errors", status_code=204, tags=["System"])
 async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db)):
-    """Log frontend errors for monitoring."""
+    """Record a browser-side error report (public; default rate limit).
+
+    Stored deduplicated and capped (app/services/client_errors) for admins to
+    read at `GET /api/system/client-errors`.
+    """
     # The shared sanitizer rather than a local one: it strips the full control
     # range, not just \r\n, and it is the barrier the rest of the codebase uses.
     from app.core.sanitize import sanitize_for_log
@@ -694,3 +696,41 @@ async def log_client_error(error: ClientError, db: AsyncSession = Depends(get_db
         user_agent=error.userAgent,
     )
     return Response(status_code=204)
+
+
+# Label every operation in the schema with who may call it, derived from the
+# route's own dependencies (app/core/route_access) so the documented rule is
+# the enforced one. Schema generation only -- no request is affected, and the
+# schema itself is served only when debug is on (see _docs_enabled above).
+from fastapi.openapi.utils import get_openapi
+from fastapi.routing import APIRoute
+from app.core.route_access import access_note, route_access
+
+
+def _openapi_with_access():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        description=(
+            app.description
+            + "\n\nEvery operation states who may call it (`x-pinpoint-access`). "
+            "Tokens: see docs/API.md."
+        ),
+        routes=app.routes,
+    )
+    for route in app.routes:
+        if not isinstance(route, APIRoute) or not route.include_in_schema:
+            continue
+        for method in route.methods:
+            operation = schema.get("paths", {}).get(route.path_format, {}).get(method.lower())
+            if operation is None:
+                continue
+            note = access_note(route)
+            operation["x-pinpoint-access"] = route_access(route)
+            operation["description"] = f"**Access:** {note}\n\n" + operation.get("description", "")
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi_with_access

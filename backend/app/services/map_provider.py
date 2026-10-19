@@ -43,7 +43,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         "name": "Google Maps",
         "description": (
             "The default. One API key, about ten minutes to set up, and the "
-            "imagery residents already recognise from their phones."
+            "imagery residents already recognize from their phones."
         ),
         "boundary": "Commercial (Google Cloud)",
         "credential_fields": [
@@ -54,12 +54,13 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
         "field_help": {
             "GOOGLE_MAPS_API_KEY": (
                 "Server-side only, for geocoding -- never sent to a browser. "
-                "Restrict it to this server's IP address."
+                "Restrict it to this server's IP address, with Geocoding API "
+                "and Places API (New)."
             ),
             "GOOGLE_MAPS_BROWSER_API_KEY": (
                 "Goes into the page residents load, so restrict it by HTTP "
-                "referrer to your domain. It needs Maps Embed API, Maps "
-                "JavaScript API, Places API (New) and Places API. The same "
+                "referrer to your domain. It needs Maps JavaScript API, Maps "
+                "Embed API, Places API (New) and Geocoding API. The same "
                 "value in both boxes works if you would rather run one key."
             ),
             "GOOGLE_MAPS_MAP_ID": (
@@ -90,7 +91,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
             ),
             "ARCGIS_API_KEY": (
                 "ArcGIS Developers -> Dashboard -> API keys -> New API key. Scope "
-                "it to 'Basemaps' and 'Geocoding'. If your organisation has an "
+                "it to 'Basemaps' and 'Geocoding'. If your organization has an "
                 "ArcGIS Online account, your GIS staff can issue this."
             ),
             "ARCGIS_BASEMAP_ID": (
@@ -106,7 +107,7 @@ MAP_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure Maps",
-        "description": "Fits a town already standardised on Azure for its other services.",
+        "description": "Fits a town already standardized on Azure for its other services.",
         "boundary": "Commercial (Microsoft Azure)",
         "credential_fields": [
             {"key": "AZURE_MAPS_KEY", "label": "Server subscription key", "secret": True, "required": True},

@@ -161,7 +161,7 @@ def test_creating_a_request_does_not_reveal_who_it_was_assigned_to():
 
 def test_the_create_route_is_bound_to_the_narrow_model():
     """The model being right does not help if the route serves the old one."""
-    route = _route("POST", "/requests.json")
+    route = _route("POST", "/portal/requests")
     assert route.response_model is schemas.Open311CreatedRequestResponse
     assert route.response_model is not schemas.ServiceRequestResponse
 

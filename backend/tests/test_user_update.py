@@ -46,6 +46,18 @@ def test_the_handler_no_longer_setattrs_department_ids():
         "departments must be assigned as a relationship"
 
 
+def test_departments_are_loaded_before_they_are_replaced():
+    """Assigning a relationship makes SQLAlchemy load the old value to diff it,
+    and a lazy load in an async session raises. Live, every edit from the form
+    (which always sends department_ids) was a 500 "Request failed"."""
+    import inspect
+    from app.api import users
+
+    src = inspect.getsource(users.update_user)
+    assert src.count("selectinload(User.departments)") >= 2, \
+        "load departments before assigning them, and again for the response"
+
+
 # ---- what the schema accepts -------------------------------------------------
 
 def test_phone_is_editable():
@@ -94,3 +106,43 @@ def test_departments_can_be_cleared():
     absent field."""
     sent = UserUpdate(department_ids=[]).model_dump(exclude_unset=True)
     assert sent == {"department_ids": []}
+
+
+def test_a_department_with_no_routing_email_can_be_saved():
+    """The form sends "" for an empty routing email; that was a 422 the admin
+    console swallowed, so the department silently never saved."""
+    from app.schemas import DepartmentCreate
+    assert DepartmentCreate(name="Public Works", routing_email="").routing_email is None
+    assert DepartmentCreate(name="Public Works", routing_email="  ").routing_email is None
+    assert DepartmentCreate(name="Public Works", routing_email="dpw@town.gov").routing_email == "dpw@town.gov"
+    import pytest
+    with pytest.raises(Exception):
+        DepartmentCreate(name="Public Works", routing_email="not-an-email")
+
+
+def test_every_category_endpoint_loads_the_assigned_department():
+    """ServiceResponse serialises `assigned_department`; a lazy load of it in an
+    async session raises, so once any category had a department assigned the
+    whole category list was a 500 (live, on a fresh install)."""
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "api" / "services.py").read_text()
+    assert src.count("selectinload(ServiceDefinition.departments)") == \
+        src.count("selectinload(ServiceDefinition.assigned_department)")
+
+
+def test_departments_can_be_edited():
+    """The admin console's Edit Department form called PUT /departments/{id},
+    which did not exist, so every edit failed."""
+    from app.api.departments import router
+    assert any(r.path == "/{dept_id}" and "PUT" in r.methods for r in router.routes)
+    from app.schemas import DepartmentUpdate
+    assert DepartmentUpdate(routing_email="").routing_email is None
+    assert DepartmentUpdate(name="Public Works").model_dump(exclude_unset=True) == {"name": "Public Works"}
+
+
+def test_renaming_a_category_follows_through_to_its_reports():
+    import inspect
+    from app.api import services
+    src = inspect.getsource(services.update_service)
+    assert "ServiceRequest.service_code == service.service_code" in src
+    assert 'event_type="service_updated"' in src

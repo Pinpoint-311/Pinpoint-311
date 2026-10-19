@@ -110,7 +110,7 @@ describe('a credential field', () => {
         render(<Harness initial="example.com" kind="url" />);
 
         expect(screen.getByText(/looks like example text/i)).toBeTruthy();
-        expect(screen.getByText(/usually start with https:\/\//i)).toBeTruthy();
+        expect(screen.getByText(/start with https:\/\//i)).toBeTruthy();
     });
 
     it('describes the box with both notes, and gives each its own id', () => {
@@ -122,7 +122,7 @@ describe('a credential field', () => {
 
         const described = textOf(box.getAttribute('aria-describedby'));
         expect(described).toMatch(/looks like example text/i);
-        expect(described).toMatch(/usually start with https:\/\//i);
+        expect(described).toMatch(/start with https:\/\//i);
     });
 
     it('shows a passing verdict too, so example-looking values are not silently unjudged', () => {

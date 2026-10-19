@@ -20,7 +20,8 @@ import {
     Users,
     UserCircle,
 } from 'lucide-react';
-import { Card, Input, Button, Textarea } from './ui';
+import { Card, Input, Button, Textarea, Chip } from './ui';
+import { humanize } from '../utils/humanize';
 import { api } from '../services/api';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { PublicServiceRequest, RequestComment, AuditLogEntry } from '../types';
@@ -309,7 +310,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
             setCommentError(
                 err instanceof Error && err.message
                     ? err.message
-                    : "Your comment could not be posted. Please try again."
+                    : "Your comment wasn't posted. Try again."
             );
         } finally {
             setIsSubmittingComment(false);
@@ -421,7 +422,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                 <div className="flex items-center justify-between mb-8">
                     <button
                         onClick={handleBackToList}
-                        className="flex items-center gap-2 text-white/60 hover:text-white transition-colors group"
+                        className="btn-outline btn-outline-md group"
                     >
                         <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
                         <span className="font-medium">{"Back to all requests"}</span>
@@ -437,7 +438,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         {copied ? (
                             <>
                                 <Check className="w-4 h-4" />
-                                <span className="font-medium">Link Copied!</span>
+                                <span className="font-medium">Link copied</span>
                             </>
                         ) : (
                             <>
@@ -575,11 +576,11 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                                     const substatus = entry.extra_data?.substatus;
                                                     statusText = `Closed ${substatus === 'resolved' ? '- Resolved' : substatus === 'no_action' ? '- No Action Needed' : substatus === 'third_party' ? '- Third Party' : ''}`;
                                                 } else if (newStatus === 'in_progress') {
-                                                    statusText = oldStatus === 'closed' ? 'Reopened as In Progress' : oldStatus === 'open' ? 'Marked as In Progress' : `Status: ${oldStatus} → In Progress`;
+                                                    statusText = oldStatus === 'closed' ? 'Reopened as In Progress' : oldStatus === 'open' ? 'Marked as In Progress' : `Status: ${humanize(oldStatus)} → In Progress`;
                                                 } else if (newStatus === 'open') {
                                                     statusText = oldStatus === 'closed' ? 'Reopened' : oldStatus === 'in_progress' ? 'Reverted to Open' : 'Status set to Open';
                                                 } else {
-                                                    statusText = `Status: ${oldStatus} → ${newStatus}`;
+                                                    statusText = `Status: ${humanize(oldStatus)} → ${humanize(newStatus)}`;
                                                 }
 
                                                 actionConfig = {
@@ -593,7 +594,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                             } else if (entry.action === 'comment_added') {
                                                 actionConfig = { color: 'bg-teal-500', text: "Comment added" };
                                             } else {
-                                                actionConfig = { color: 'bg-gray-500', text: entry.action };
+                                                actionConfig = { color: 'bg-gray-500', text: humanize(entry.action) };
                                             }
 
                                             const isLast = idx === auditLog.length - 1;
@@ -604,9 +605,9 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                                     <div className="flex-1 min-w-0 -mt-0.5">
                                                         <div className="flex items-center gap-2 flex-wrap">
                                                             <span className="text-white/90 text-sm font-medium">{actionConfig.text}</span>
-                                                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${entry.actor_type === 'staff' ? 'bg-purple-500/20 text-purple-300' : 'bg-blue-500/20 text-blue-300'}`}>
+                                                            <Chip tone={entry.actor_type === 'staff' ? 'accent' : 'info'}>
                                                                 {entry.actor_type === 'staff' ? 'Staff' : 'Resident'}
-                                                            </span>
+                                                            </Chip>
                                                         </div>
                                                         <div className="text-white/40 text-xs mt-0.5">
                                                             {entry.created_at ? new Date(entry.created_at).toLocaleString() : 'No timestamp'}
@@ -621,7 +622,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                             <div className="flex-1 min-w-0 -mt-0.5">
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="text-white/90 text-sm font-medium">{"Request submitted"}</span>
-                                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-blue-500/20 text-blue-300">Resident</span>
+                                                    <Chip tone="info">Resident</Chip>
                                                 </div>
                                                 <div className="text-white/40 text-xs mt-0.5">{new Date(selectedRequest.requested_datetime).toLocaleString()}</div>
                                             </div>
@@ -684,7 +685,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                                     : `${selectedRequest.photos_pending_review} photos are waiting to be checked`}
                             </h3>
                             <p className="text-sm text-amber-200/70">
-                                Faces and licence plates could not be blurred automatically, so
+                                Faces and license plates could not be blurred automatically, so
                                 {selectedRequest.photos_pending_review === 1 ? ' it is ' : ' they are '}
                                 not shown here. A staff member will look and either publish or
                                 delete {selectedRequest.photos_pending_review === 1 ? 'it' : 'them'}.
@@ -840,7 +841,7 @@ export default function TrackRequests({ initialRequestId, selectedRequestId, onR
                         ) : comments.length === 0 ? (
                             <CommentEmptyState
                                 title="No comments yet"
-                                hint="Be the first to share an update!"
+                                hint="Share an update about this request."
                             />
                         ) : (
                             comments.map((comment, index) => (

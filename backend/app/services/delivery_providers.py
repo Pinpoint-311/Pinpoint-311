@@ -59,9 +59,8 @@ EMAIL_CATALOG: Dict[str, Dict[str, Any]] = {
             # and every other value mean STARTTLS. The help says so because a
             # value like "no" or "0" would silently still negotiate TLS.
             "SMTP_USE_TLS": (
-                "Leave blank for STARTTLS, which is what port 587 expects. Enter exactly "
-                "\"false\" only for a server using implicit SSL on port 465, or a relay that "
-                "does neither — any other value still means STARTTLS."
+                "Leave blank for STARTTLS on port 587. Enter false only for port 465 "
+                "(implicit SSL)."
             ),
         },
     },
@@ -283,7 +282,7 @@ DEFAULT_REDACTION_PROVIDER = "local"
 
 _REDACTION_TOGGLES = [
     {"key": "REDACT_FACES", "label": "Blur faces (true/false)", "required": False},
-    {"key": "REDACT_PLATES", "label": "Blur licence plates (true/false)", "required": False},
+    {"key": "REDACT_PLATES", "label": "Blur license plates (true/false)", "required": False},
 ]
 
 # Every entry below used to declare the two toggles and nothing else, and every
@@ -336,16 +335,16 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
         # Google and AWS reuse credentials entered elsewhere -- vision_annotate
         # takes the GCP service account, _aws_kwargs takes the AWS keys. Azure
         # does not: `_azure_face_creds` and `_azure_vision_creds` read four keys
-        # of their own, because Face and Vision are separate resources with
-        # separate endpoints and separate keys.
+        # of their own: a Face pair and a Vision pair. One Azure AI Services
+        # account serves both, so the two pairs usually hold the same values.
         #
         # Those four were read by the dispatch code and offered by no card, so
         # selecting Azure here stored a provider choice, reported success, and
         # then found no credentials and blurred nothing -- with no error and
         # nowhere on the page to fix it.
         "description": (
-            "Microsoft's detector. Needs two Azure resources of its own — AI Face for faces and "
-            "AI Vision for plates — which are not the same endpoint and not the same key."
+            "Microsoft's detector. One Azure AI Services resource serves faces and plates: put its "
+            "endpoint in both endpoint boxes and its key in both key boxes."
         ),
         "boundary": "Azure — Government available",
         "credential_fields": list(_REDACTION_TOGGLES) + [
@@ -357,8 +356,7 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
         # None of the four is individually required and all four together are
         # too many, so neither flag can say what this provider needs. `_usable`
         # calls Azure when *either* pair is complete, deliberately: a town may
-        # have only Vision because Microsoft's Limited Access review has not
-        # cleared Face. Marking all four required would report a working
+        # want only plates, or only faces. Marking all four required would report a working
         # plates-only setup as unconfigured; leaving all four optional is what
         # made an Azure card with nothing in it read as ready.
         "requires_any": [
@@ -366,7 +364,7 @@ REDACTION_CATALOG: Dict[str, Dict[str, Any]] = {
             ["AZURE_VISION_ENDPOINT", "AZURE_VISION_KEY"],
         ],
         "field_help": {
-            "AZURE_FACE_ENDPOINT": "Only needed if you are blurring faces. Microsoft gates the Face API behind a Limited Access review — detection is the least restricted operation, but the subscription still has to be approved before it will serve traffic.",
+            "AZURE_FACE_ENDPOINT": "Only needed if you are blurring faces. Use the AI Services endpoint, the same one as the Vision box. Face detection needs no Limited Access approval.",
             "AZURE_VISION_ENDPOINT": "Only needed if you are blurring plates. Plates are found by reading text in the photo.",
         },
     },

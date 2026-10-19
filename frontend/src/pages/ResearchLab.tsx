@@ -29,8 +29,9 @@ import {
     Sparkles,
     Send,
     X,
+    AlertTriangle,
 } from 'lucide-react';
-import { CollapsibleSection } from '../components/ui';
+import { CollapsibleSection, Chip, RoleChip } from '../components/ui';
 import { CapabilityTile, StatusPill, Action } from '../components/capabilityUI';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -125,8 +126,8 @@ export const ResearchLab: React.FC = () => {
 
     // AI Chat state
     const [showChat, setShowChat] = useState(false);
-    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([
-        { role: 'assistant', content: '👋 Hi! I\'m the Research Data Assistant. I can help you understand our data fields, suggest statistical analyses, explain methodology, and provide code snippets. What would you like to know?' }
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; content: string; error?: boolean }[]>([
+        { role: 'assistant', content: 'I\'m the Research Data Assistant. Ask about data fields, statistical analyses, methodology, or code snippets.' }
     ]);
     const [chatInput, setChatInput] = useState('');
     const [chatLoading, setChatLoading] = useState(false);
@@ -148,7 +149,7 @@ export const ResearchLab: React.FC = () => {
             const result = await api.researchChat(msg, newMessages.slice(0, -1));
             setChatMessages(prev => [...prev, { role: 'assistant', content: result.response }]);
         } catch (err: any) {
-            setChatMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message || 'Failed to get AI response'}` }]);
+            setChatMessages(prev => [...prev, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }]);
         } finally {
             setChatLoading(false);
         }
@@ -191,7 +192,7 @@ export const ResearchLab: React.FC = () => {
             setAnalytics(data);
             announce(`Query complete. ${data.total_requests.toLocaleString()} requests matched.`);
         } catch (err: any) {
-            const message = err.message || 'Failed to load analytics';
+            const message = err.message || "Couldn't load analytics.";
             setError(message);
             // Assertive: the query the user just asked for did not happen.
             announce(message, 'assertive');
@@ -297,7 +298,7 @@ export const ResearchLab: React.FC = () => {
             announce('Code snippet copied to clipboard.');
         } catch {
             setCopyState('failed');
-            announce('Could not copy to clipboard. Select the code and copy it manually.', 'assertive');
+            announce("Couldn't copy to the clipboard. Select the code and copy it manually.", 'assertive');
         }
         copyResetRef.current = window.setTimeout(() => setCopyState(null), 3000);
     };
@@ -386,7 +387,7 @@ export const ResearchLab: React.FC = () => {
         return (
             <div className="min-h-screen flex items-center justify-center" role="status" aria-label="Loading research portal">
                 <RefreshCw className="w-8 h-8 text-primary-400 animate-spin" aria-hidden="true" />
-                <span className="sr-only">Loading research portal, please wait...</span>
+                <span className="sr-only">Loading research portal…</span>
             </div>
         );
     }
@@ -424,7 +425,8 @@ export const ResearchLab: React.FC = () => {
                         </Action>
                         <div className="hidden sm:flex items-center gap-2 text-sm text-white/60">
                             <Database className="w-4 h-4" aria-hidden="true" />
-                            <span>{user?.username} ({user?.role})</span>
+                            <span>{user?.username}</span>
+                            <RoleChip role={user?.role} />
                         </div>
                     </div>
                 </div>
@@ -552,8 +554,8 @@ export const ResearchLab: React.FC = () => {
                                                                                 {field.name}
                                                                             </code>
                                                                         </td>
-                                                                        <td className="py-2 pr-4 text-white/70 font-mono text-xs">
-                                                                            {field.type}
+                                                                        <td className="py-2 pr-4">
+                                                                            <Chip mono>{field.type}</Chip>
                                                                         </td>
                                                                         <td className="py-2 text-white/60">
                                                                             {field.description}
@@ -939,7 +941,7 @@ export const ResearchLab: React.FC = () => {
                                 ].map(q => (
                                     <button
                                         key={q}
-                                        onClick={() => { setChatInput(q); setTimeout(() => { setChatMessages(prev => [...prev, { role: 'user', content: q }]); setChatLoading(true); api.researchChat(q, chatMessages).then(r => setChatMessages(p => [...p, { role: 'assistant', content: r.response }])).catch(err => setChatMessages(p => [...p, { role: 'assistant', content: '⚠️ ' + (err.message || 'Error') }])).finally(() => setChatLoading(false)); }, 0); }}
+                                        onClick={() => { setChatInput(q); setTimeout(() => { setChatMessages(prev => [...prev, { role: 'user', content: q }]); setChatLoading(true); api.researchChat(q, chatMessages).then(r => setChatMessages(p => [...p, { role: 'assistant', content: r.response }])).catch(err => setChatMessages(p => [...p, { role: 'assistant', content: err.message || "Couldn't get a response. Try again.", error: true }])).finally(() => setChatLoading(false)); }, 0); }}
                                         className="px-3 py-1.5 rounded-2xl bg-primary-500/10 border border-primary-400/25 text-primary-200 text-xs font-medium hover:bg-primary-500/20 transition-colors"
                                     >
                                         {q}
@@ -957,6 +959,12 @@ export const ResearchLab: React.FC = () => {
                                             ? 'bg-primary-500/20 border border-primary-400/25 text-primary-100 rounded-br-md'
                                             : 'bg-white/5 border border-white/10 text-white/80 rounded-bl-md'
                                     }`}>
+                                        {msg.error ? (
+                                            <span className="flex items-start gap-2 text-red-200">
+                                                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-red-300" aria-hidden="true" />
+                                                <span>{msg.content}</span>
+                                            </span>
+                                        ) : (
                                         <div className="whitespace-pre-wrap">
                                             {msg.content.split(/(```\w*\n?[\s\S]*?```)/g).map((segment, si) => {
                                                 // Code blocks
@@ -1041,6 +1049,7 @@ export const ResearchLab: React.FC = () => {
                                                 });
                                             })}
                                         </div>
+                                        )}
                                     </div>
                                 </div>
                             ))}

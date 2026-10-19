@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from enum import Enum
 import re
@@ -39,6 +39,10 @@ class RequestSource(str, Enum):
     phone = "phone"
     walk_in = "walk_in"
     email = "email"
+    # Any other channel staff take a report through -- a letter, a council
+    # meeting, a note left at the front desk. `source` is a plain String(50)
+    # column with no CHECK constraint, so this needs no migration.
+    other = "other"
 
 
 # ============ Auth ============
@@ -116,9 +120,34 @@ class DepartmentBase(BaseModel):
     description: Optional[str] = None
     routing_email: Optional[EmailStr] = None
 
+    # The form sends "" for an empty optional field, and "" is not a valid
+    # email, so every department saved without a routing email was a 422 the
+    # console swallowed. Blank means "none".
+    @field_validator("routing_email", mode="before")
+    @classmethod
+    def _blank_routing_email_is_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class DepartmentCreate(DepartmentBase):
     pass
+
+
+class DepartmentUpdate(BaseModel):
+    """Editable after creation. Omitted fields are left as they are; a blank
+    routing email clears it."""
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    description: Optional[str] = None
+    routing_email: Optional[EmailStr] = None
+
+    @field_validator("routing_email", mode="before")
+    @classmethod
+    def _blank_routing_email_is_none(cls, v):
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
 
 
 class DepartmentResponse(DepartmentBase):
@@ -145,10 +174,14 @@ class ServiceCreate(ServiceBase):
     display_order: Optional[int] = 0
     # Optional SLA target in hours; omit or null for no SLA.
     sla_hours: Optional[int] = Field(default=None, ge=1, le=8760)
+    # Whether residents are asked for a location; see services/location_policy.
+    location_mode: Literal["required", "optional", "hidden"] = "optional"
+    # Keep every report in this category off the public map and list.
+    hidden_from_public: bool = False
 
 
 class ServiceUpdate(BaseModel):
-    service_name: Optional[str] = None
+    service_name: Optional[str] = Field(default=None, min_length=2, max_length=100)
     description: Optional[str] = None
     icon: Optional[str] = None
     is_active: Optional[bool] = None
@@ -159,6 +192,8 @@ class ServiceUpdate(BaseModel):
     display_order: Optional[int] = None
     # Send 0 to explicitly clear the SLA (omitting it leaves the value unchanged).
     sla_hours: Optional[int] = Field(default=None, ge=0, le=8760)
+    location_mode: Optional[Literal["required", "optional", "hidden"]] = None
+    hidden_from_public: Optional[bool] = None
 
 
 class ServiceResponse(ServiceBase):
@@ -166,6 +201,8 @@ class ServiceResponse(ServiceBase):
     is_active: bool
     display_order: int = 0
     sla_hours: Optional[int] = None
+    location_mode: str = "optional"
+    hidden_from_public: bool = False
     departments: List[DepartmentResponse] = []
     routing_mode: Optional[str] = "township"
     routing_config: Optional[Dict[str, Any]] = {}
@@ -189,9 +226,11 @@ class ServiceReorderRequest(BaseModel):
 class ServiceRequestCreate(BaseModel):
     service_code: str
     description: str = Field(..., min_length=10)
-    address: Optional[str] = None
-    lat: Optional[float] = None
-    long: Optional[float] = None
+    # Bounded to the column (String(500)): longer used to reach the INSERT and
+    # come back as a 500 rather than a 422 the client can act on.
+    address: Optional[str] = Field(None, max_length=500)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    long: Optional[float] = Field(None, ge=-180, le=180)
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     email: EmailStr
@@ -255,6 +294,9 @@ class ServiceRequestResponse(BaseModel):
     requested_datetime: Optional[datetime] = None
     updated_datetime: Optional[datetime] = None
     source: str
+    # The language the resident asked for; notifications go out in it. Staff
+    # see it so a callback is made in the right language.
+    preferred_language: Optional[str] = None
     # Content moderation said a human should look at this.
     flagged: bool = False
     # Exempt from the retention schedule until an admin lifts it. Distinct from
@@ -492,10 +534,22 @@ class ServiceRequestDetailResponse(ServiceRequestResponse):
     ai_classification: Optional[str] = None
     manual_priority_score: Optional[float] = None  # Human-approved priority
     ai_analyzed_at: Optional[datetime] = None
+    # When this report is due under its category's SLA, and where it stands
+    # (on_track | at_risk | overdue | met | breached). Absent when the category
+    # has no SLA. Computed per response; not stored.
+    sla_due_datetime: Optional[datetime] = None
+    sla_state: Optional[str] = None
+    # The context-layer features (tax parcel, zone...) the report fell inside,
+    # snapshotted at intake with the layer's staff allowlist only. Staff detail
+    # only -- never on a public or list schema. See app/services/gis_layers.py.
+    gis_context: Optional[List[Dict[str, Any]]] = None
 
 
 # ============ Manual Intake ============
 class ManualIntakeCreate(BaseModel):
+    # Photos the content screen flagged when the clerk attached them. Redacted
+    # and held for staff review (media_pending_review), never published directly.
+    media_flagged: Optional[List[str]] = Field(default_factory=list, max_length=3)
     """Staff-entered request (call taker, walk-in, or email intake).
 
     Mirrors ServiceRequestCreate so manual intake runs through the exact same
@@ -523,6 +577,17 @@ class ManualIntakeCreate(BaseModel):
     override_jurisdiction: bool = False
     source: RequestSource = RequestSource.phone
 
+    # Optional staff choices made at intake. Each one left out falls back to
+    # what a resident submission would get: routing from the category, AI
+    # triage for priority, no internal note, and a confirmation whenever the
+    # caller left an email address.
+    assigned_department_id: Optional[int] = None
+    assigned_to: Optional[str] = Field(default=None, max_length=100)
+    # Same scale and bounds as ServiceRequestUpdate.manual_priority_score.
+    manual_priority_score: Optional[float] = Field(default=None, ge=1, le=10)
+    staff_notes: Optional[str] = Field(default=None, max_length=10000)
+    send_confirmation: bool = True
+
 
 # ============ System Settings ============
 class SystemSettingsBase(BaseModel):
@@ -540,6 +605,7 @@ class SystemSettingsBase(BaseModel):
         "unlisted_reports": False,
         "research_portal": False,
         "platform_feedback": False,
+        "resident_history": False,
     }
     # Where "want to tell us more?" points when the platform-feedback module is
     # on. None or "" means the offer is simply not made -- see the column
@@ -670,7 +736,15 @@ class HeatmapDataResponse(BaseModel):
     report_points: List[HeatmapPoint]
     reporter_points: List[HeatmapPoint]
     total_reports: int
-    total_unique_reporters: int
+    # Distinct identified reporters (keyed email fingerprint). None when the
+    # town keeps no reporter fingerprints (Resident history off): unknown.
+    total_unique_reporters: Optional[int] = None
+    # Reports attributable to an identified reporter -- the numerator of the
+    # reports-per-reporter average -- and those that are not (no email, a
+    # placeholder, or a scrubbed record). Both None when identity is unknown.
+    identified_reports: Optional[int] = None
+    anonymous_reports: Optional[int] = None
+    reporter_identity_available: bool = False
 
 
 class HotspotData(BaseModel):
@@ -680,7 +754,8 @@ class HotspotData(BaseModel):
     cluster_id: int
     sample_address: Optional[str] = None  # Representative address for the cluster
     top_categories: Optional[List[str]] = None  # Most common issue types in cluster
-    unique_reporters: Optional[int] = None  # Count of distinct reporters (for bias detection)
+    unique_reporters: Optional[int] = None  # Distinct identified reporters; None = unknown
+    identified_reports: Optional[int] = None  # Reports in the cluster with an identified reporter
     oldest_days: Optional[int] = None  # Age of oldest open request in this cluster (in days)
 
 
@@ -822,6 +897,9 @@ class PlatformFeedbackStatisticsResponse(BaseModel):
 
 
 # ============ Map Layers ============
+MAP_LAYER_ROUTING_MODES = ("none", "log", "block", "context")
+
+
 class MapLayerBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
@@ -834,8 +912,15 @@ class MapLayerBase(BaseModel):
     visible_on_map: bool = True  # Whether to show layer visually on map
     routing_mode: Optional[str] = "log"  # log, block
     service_codes: Optional[List[str]] = None  # Categories this layer applies to (empty = all)
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None  # { message, contacts }
 
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v is not None and v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
 
 
 class MapLayerCreate(MapLayerBase):
@@ -856,23 +941,80 @@ class MapLayerUpdate(BaseModel):
     routing_mode: Optional[str] = None
     geojson: Optional[Dict[str, Any]] = None
     service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None
+    # Context layers (see app/services/gis_layers.py). Each must name a field
+    # the uploaded file actually has; checked against available_properties.
+    feature_id_property: Optional[str] = Field(None, max_length=100)
+    label_property: Optional[str] = Field(None, max_length=100)
+    staff_properties: Optional[List[str]] = Field(None, max_length=100)
 
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v is not None and v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
+
+
+class MapLayerPolygonCreate(BaseModel):
+    """A table-backed polygon layer, built from a chunked upload."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    upload_id: str = Field(..., min_length=32, max_length=32)
+    fill_color: str = "#f59e0b"
+    stroke_color: str = "#b45309"
+    fill_opacity: float = 0.1
+    stroke_width: int = 1
+    visible_on_map: bool = True
+    routing_mode: str = "context"
+    service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
+    feature_id_property: Optional[str] = Field(None, max_length=100)
+
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
+
+
+class MapLayerFeatureReupload(BaseModel):
+    upload_id: str = Field(..., min_length=32, max_length=32)
 
 
 class MapLayerResponse(MapLayerBase):
+    """A layer as the PUBLIC sees it. No context-layer settings, no field
+    names; a table-backed layer's geojson is an empty FeatureCollection."""
     id: int
     geojson: Dict[str, Any]
     is_active: bool
     visible_on_map: Optional[bool] = True
     routing_mode: Optional[str] = "log"
     service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None
+    feature_storage: Optional[str] = "inline"
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+class MapLayerAdminResponse(MapLayerResponse):
+    """A layer as an admin sees it: the context-layer settings too."""
+    feature_id_property: Optional[str] = None
+    label_property: Optional[str] = None
+    staff_properties: Optional[List[str]] = None
+    available_properties: Optional[List[str]] = None
+    feature_count: Optional[int] = None
+    features_imported_at: Optional[datetime] = None
+    # {field: "owner" | "maybe"} for fields that look personal.
+    field_flags: Dict[str, str] = {}
+    warnings: List[str] = []
+    import_summary: Optional[Dict[str, Any]] = None
 
 
 # ============ Request Comments ============

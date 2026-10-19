@@ -273,9 +273,42 @@ def test_the_public_listing_endpoint_applies_the_shared_rule():
     from app.api import open311
 
     source = inspect.getsource(open311.list_public_requests)
-    assert "publicly_listed_conditions(settings_row)" in source
-    # The cached response must not outlive the policy that produced it.
-    assert "arch" in source and "cache_key" in source
+    assert "publicly_listed_conditions(settings_row, hidden_codes)" in source
+    # The cached response must not outlive the policy that produced it, nor a
+    # category being hidden.
+    assert "arch" in source and "cache_key" in source and ":hide" in source
+
+
+def test_a_hidden_category_is_kept_off_the_public_listing():
+    from sqlalchemy.dialects import postgresql
+    from app.services.public_visibility import publicly_listed_conditions
+
+    sql = " ".join(
+        str(c.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+        for c in publicly_listed_conditions(None, ("ADACONCERNS",))
+    )
+    assert "service_code NOT IN ('ADACONCERNS')" in sql
+
+
+def test_no_hidden_categories_adds_no_clause():
+    from app.services.public_visibility import publicly_listed_conditions
+    assert len(publicly_listed_conditions(None, ())) == len(publicly_listed_conditions(None))
+
+
+def test_hiding_a_category_never_touches_the_direct_link_rule():
+    """The resident's tracking link must keep working, as for every other way
+    a report leaves the public list."""
+    import inspect
+    from app.api import open311
+    src = inspect.getsource(open311.direct_link_filters)
+    assert "hidden_from_public" not in src and "hidden_category_codes" not in src
+
+
+def test_changing_category_visibility_is_audited():
+    import inspect
+    from app.api import services
+    src = inspect.getsource(services.update_service)
+    assert 'event_type="service_public_visibility"' in src
 
 
 # ---------------------------------------------------------------------------

@@ -4,6 +4,8 @@ import { stepsFor } from './setupSteps';
 import './setupStepsContent';
 import type { StepContext } from './setupSteps';
 import ProviderCredentialSteps from './ProviderCredentialSteps';
+import TranslationBudgetPanel from './TranslationBudgetPanel';
+import RedactionDetectorsPanel from './RedactionDetectorsPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -18,6 +20,7 @@ import { StatusPill, CapabilityTile, Action, Switch, ResultNote, hasAlert, type 
 import { PlainSecrets } from './SetupWizard';
 import { api, ProviderCatalog, ProviderInfo, ProviderModelSpec, CloudIdentity } from '../services/api';
 import type { ConnectorHealth } from '../types';
+import { humanize } from '../utils/humanize';
 
 // Relative "updated Xh ago" from an epoch-seconds timestamp.
 function agoLabel(epochSeconds?: number | null): string {
@@ -46,9 +49,9 @@ const CAPS: { key: Capability; title: string; blurb: string; icon: typeof Sparkl
     // between them; PII encryption and photo redaction had no UI at all, so
     // face and plate blurring was a shipped feature a town could not turn on.
     { key: 'email', title: 'Email', blurb: 'Sends confirmations and status updates to residents. SMTP works with the mail server your town already has.', icon: Mail },
-    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts. Residents who give a mobile number get updates without checking email.', icon: MessageSquare },
-    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'Which key service wraps the key that encrypts resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
-    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and licence plates in resident photos before they are stored, so a municipal site never publishes them.', icon: ImageIcon },
+    { key: 'sms', title: 'Text Messages', blurb: 'Optional text alerts for residents who give a mobile number.', icon: MessageSquare },
+    { key: 'kms', title: 'PII Encryption (KMS)', blurb: 'The key service that protects the key encrypting resident personal information. Cloud KMS is stronger than the application key.', icon: Lock },
+    { key: 'redaction', title: 'Photo Redaction', blurb: 'Blurs faces and license plates in resident photos before they are stored.', icon: ImageIcon },
     // The capability every card above depends on, and the last to get a check.
     // A credential saved while the store is unreachable stays in the encrypted
     // database and the card that saved it still shows a tick, so the failure
@@ -653,7 +656,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
     const spotlightDetail = bad
         ? (currentHealth?.last_error || currentHealth?.last_result || currentHealth?.summary || 'The last check failed.')
         : shown === 'unchecked'
-            ? 'Nothing has used this yet, so we cannot say whether it works.'
+            ? 'Not used yet, so it hasn\u2019t been verified.'
             : blurb;
 
     const handleSave = async () => {
@@ -937,7 +940,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                             ? 'bg-amber-500/10 border-amber-400/30 text-amber-100/90'
                             : 'bg-white/[0.04] border-white/12 text-white/65'}`}>
                             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden="true" />
-                            <span><span className="font-semibold">{w.key}</span> — {w.message}</span>
+                            <span><span className="font-semibold">{humanize(w.key)}</span> — {w.message}</span>
                         </div>
                     ))}
                 </div>
@@ -989,6 +992,9 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     </div>
                 )}
 
+                {cap === 'translation' && <TranslationBudgetPanel />}
+                {cap === 'redaction' && <RedactionDetectorsPanel />}
+
                 {/* AI model dropdown — with live discovery */}
                 {cap === 'ai' && active && (() => {
                     const models = liveModels ?? active.models ?? [];
@@ -1008,7 +1014,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                     type="button"
                                     onClick={handleRefreshModels}
                                     disabled={refreshingModels}
-                                    className="shrink-0 inline-flex items-center gap-1 text-[11px] text-white/60 hover:text-white transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-400/60 rounded"
+                                    className="btn-outline shrink-0"
                                 >
                                     <RefreshCw className={`w-3 h-3 ${refreshingModels ? 'animate-spin' : ''}`} aria-hidden="true" />
                                     {refreshingModels ? 'Checking…' : 'Refresh from provider'}
@@ -1202,7 +1208,11 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                         {busy === 'test' ? 'Testing…' : 'Test connection'}
                     </Action>
                     {cap === 'identity' && (
-                        <span className="text-white/60 text-[11px] ml-auto hidden sm:block">Auth0 by default · Entra, Okta and any OIDC provider also supported</span>
+                        <span className="text-white/60 text-[11px] ml-auto hidden sm:block">
+                            {catalog.current_provider
+                                ? `Staff sign in with ${currentName} · Pinpoint never stores a password`
+                                : 'Any OpenID Connect provider works · Pinpoint never stores a password'}
+                        </span>
                     )}
                     {/* On the far side of the row from Save, so a hand reaching
                         for one cannot land on the other. Off means off-and-kept:
@@ -1275,6 +1285,10 @@ export interface PlainSetting {
     body?: ReactNode;
     /** Why saving is refused, if it is. */
     blockedReason?: string | null;
+    /** A live check, where the setting has one (backups). */
+    onTest?: () => Promise<{ ok: boolean; detail: string }>;
+    /** The latest real check, when there has been one. */
+    lastCheck?: { verified: boolean; checkedAt: string; detail?: string | null } | null;
 }
 
 function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
@@ -1283,7 +1297,12 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
     onToggle: () => void;
     secrets: PlainSecretsBridge;
 }) {
-    const { title, subtitle, icon: Icon, fields, configured, body } = setting;
+    const { title, subtitle, icon: Icon, fields, configured, body, lastCheck } = setting;
+    // What the tile says. A real check beats "set up": "set up" only means the
+    // values are saved, and the point of the Test button is to know more.
+    const checkLine = lastCheck
+        ? `${lastCheck.verified ? 'Working' : 'Not working'} · checked ${relativeTime(lastCheck.checkedAt)}`
+        : null;
     return (
         <motion.div
             initial={{ opacity: 0, y: 10 }}
@@ -1317,14 +1336,19 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                     {configured ? subtitle : 'Not set up'}
                                 </span>
                             </span>
-                            <span className={`shrink-0 ${configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
-                                {configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
+                            <span className={`shrink-0 ${lastCheck && !lastCheck.verified ? 'text-red-300' : configured ? 'text-emerald-300' : 'text-white/30'}`} aria-hidden="true">
+                                {lastCheck && !lastCheck.verified
+                                    ? <AlertCircle className="w-4 h-4" />
+                                    : configured ? <Check className="w-4 h-4" /> : <CircleDashed className="w-4 h-4" />}
                             </span>
                         </div>
-                        <span className={`block text-[11px] mt-2.5 ${configured ? 'text-white/45' : 'text-amber-200/85'}`}>
-                            {configured
-                                ? 'Set up. Nothing here reports back, so there is nothing to test.'
-                                : 'Add its details in Setup Instructions, above.'}
+                        <span className={`block text-[11px] mt-2.5 ${checkLine
+                            ? (lastCheck!.verified ? 'text-emerald-200/80' : 'text-red-200/90')
+                            : configured ? 'text-white/45' : 'text-amber-200/85'}`}>
+                            {checkLine
+                                ?? (configured
+                                    ? (setting.onTest ? 'Set up, not tested yet. Open to test it.' : 'Set up. Nothing here reports back, so there is nothing to test.')
+                                    : 'Add its details in Setup Instructions, above.')}
                         </span>
                     </button>
                 ) : (
@@ -1338,6 +1362,11 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                         <StatusPill state={configured ? 'done' : 'unset'} name={title} />
                                     </div>
                                     <p className="text-sm text-white/60 mt-1">{subtitle}</p>
+                                    {checkLine && (
+                                        <p className={`text-xs mt-1 ${lastCheck!.verified ? 'text-emerald-200/80' : 'text-red-200/90'}`}>
+                                            {checkLine}{lastCheck!.detail ? ` — ${lastCheck!.detail.split('\n').pop()}` : ''}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <Action variant="primary" onClick={onToggle} chevron expanded>Close</Action>
@@ -1352,6 +1381,7 @@ function PlainSettingCard({ setting, expanded, onToggle, secrets }: {
                                 isConfigured={secrets.isConfigured}
                                 onSaved={secrets.onSaved}
                                 blockedReason={setting.blockedReason}
+                                onTest={setting.onTest}
                             />
                             {body}
                         </div>
@@ -1579,8 +1609,8 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
      * checked yet" and mean "we could not ask". */
     const healthNotice = healthUnavailable ? (
         <div role="alert" className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-200">
-            The status of these services could not be read, so the badges below
-            show what was last known rather than what is true now.
+            The status of these services could not be read. The badges below show
+            the last known status.
         </div>
     ) : null;
     /* Only what is wrong gets the whole width.
@@ -1722,7 +1752,7 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                         </p>
                                     </div>
                                 </div>
-                                <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed line-clamp-2">{c.blurb}</p>
+                                <p className="text-[11px] text-white/55 mt-2.5 leading-relaxed">{c.blurb}</p>
                                 {stillSaved(c.id) && (
                                     /* Said on the tile, not in the paragraph at
                                        the foot of the section. Whether *this*
@@ -1731,7 +1761,7 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                                        whether to switch it back on is looking
                                        at the tile. */
                                     <p className="text-[11px] text-emerald-200/60 mt-1.5">
-                                        Nothing was deleted. Switch it back on and it works as it did.
+                                        Its settings are kept. Switch it back on to resume.
                                     </p>
                                 )}
                                 {/* The way back, on the tile itself. "Go find
@@ -1759,8 +1789,8 @@ export default function ServiceProviders({ show, statusMap, extras, footer, extr
                         ))}
                     </div>
                     <p className="text-[11px] text-white/55 mt-3.5">
-                        These are built and ready — nothing here needs writing. Switch one back on
-                        and its card returns above; anything never set up also appears in the{' '}
+                        Switch one back on and its card returns above. Anything not yet set up also
+                        appears in the{' '}
                         <strong className="text-white/75">Setup Instructions</strong> guide with its steps.
                     </p>
                 </div>

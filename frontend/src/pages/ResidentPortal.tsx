@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { resolveMapProviderConfig, mapProviderReady, RawMapsConfig } from '../maps';
+import { categoryIconFor } from '../components/categoryIcons';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -7,14 +8,7 @@ import {
     MapPin,
     CheckCircle2,
     Send,
-    AlertCircle,
-    Circle,
-    Lightbulb,
-    Trash2,
-    Footprints,
     SignpostBig,
-    Volume2,
-    HelpCircle,
     Sparkles, Home,
     Phone,
     ClipboardList,
@@ -26,12 +20,17 @@ import {
     Linkedin,
     AlertTriangle,
     Search,
+    MapPinOff,
+    EyeOff,
+    Map as MapIcon,
 } from 'lucide-react';
-import { Button, Input, Textarea, Card } from '../components/ui';
+import { Button, Input, Textarea, Card, Chip } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
-import PhotoUpload, { PhotoState, PhotoStatus } from '../components/PhotoUpload';
+import PhotoUpload from '../components/PhotoUpload';
+import { usePhotoAttachments } from '../hooks/usePhotoAttachments';
 import { filterPhoneInput, isValidPhone } from '../utils/phone';
 import RedirectNotice, { RedirectContact } from '../components/RedirectNotice';
+import CustomQuestionFields from '../components/CustomQuestionFields';
 import TrackRequests from '../components/TrackRequests';
 import PlatformFeedback from '../components/PlatformFeedback';
 import LanguageSelector from '../components/LanguageSelector';
@@ -42,19 +41,17 @@ import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer } from '../services/api';
 import { ServiceDefinition, ServiceRequestCreate, ServiceRequest } from '../types';
 import { usePageNavigation } from '../hooks/usePageNavigation';
+import {
+    saveResidentDraft,
+    loadResidentDraft,
+    clearResidentDraft,
+    draftHasContent,
+    type ResidentDraft,
+} from '../utils/residentDraft';
 
 // Icon mapping for service categories
-const iconMap: Record<string, React.FC<{ className?: string }>> = {
-    Circle,
-    Lightbulb,
-    Trash2,
-    Footprints,
-    SignpostBig,
-    Volume2,
-    HelpCircle,
-    AlertCircle,
-    Spray: AlertCircle, // Fallback
-};
+// Category icons resolve through the shared set (components/categoryIcons.ts),
+// the same one the admin picker offers, so every icon an admin picks shows here.
 
 type Step = 'categories' | 'form' | 'success';
 
@@ -63,7 +60,7 @@ type Step = 'categories' | 'form' | 'success';
 
 export default function ResidentPortal() {
     const { settings } = useSettings();
-    const { language } = useTranslation();
+    const { language, setLanguage } = useTranslation();
     const announce = useAnnounce();
     const { requestId: urlRequestId } = useParams<{ requestId?: string }>();
 
@@ -87,6 +84,9 @@ export default function ResidentPortal() {
     const [step, setStep] = useState<Step>('categories');
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
+    /** Whether this category asks where. Set per category by an administrator;
+     *  absent on an older server, which means the map was always optional. */
+    const locationMode = selectedService?.location_mode || 'optional';
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -104,6 +104,18 @@ export default function ResidentPortal() {
      * here or anywhere on the tracker afterwards.
      */
     const [submittedPhotosHeld, setSubmittedPhotosHeld] = useState(0);
+    /* Read from inside handleHashChange, which is memoised once and so cannot
+     * see the state value directly. */
+    const submittedIdRef = useRef<string | null>(null);
+    submittedIdRef.current = submittedId;
+    /* How many photos a restored draft had attached. Photos are never kept in
+     * the draft (handles expire, originals are megabytes), so after a restore
+     * the form asks for them again; cleared once a photo is added. */
+    const [photosToReadd, setPhotosToReadd] = useState(0);
+    /* Assigned further down, once the setters they use exist. handleHashChange
+     * is memoised with no dependencies and reaches them through these. */
+    const resetFormRef = useRef<() => void>(() => { });
+    const updateHashRef = useRef<(hash: string, replace?: boolean) => void>(() => { });
     const contentRef = useRef<HTMLDivElement>(null);
 
     // Non-emergency disclaimer modal state
@@ -158,7 +170,7 @@ export default function ResidentPortal() {
             e.stopPropagation();
             const checkbox = disclaimerRef.current?.querySelector<HTMLElement>('input[type="checkbox"]');
             checkbox?.focus();
-            announce('Please confirm the non-emergency notice to continue.', 'assertive');
+            announce('Confirm the non-emergency notice to continue.', 'assertive');
             return;
         }
         if (e.key !== 'Tab') return;
@@ -256,16 +268,42 @@ export default function ResidentPortal() {
             // TrackRequests will load the request from its initialRequestId or internal state
             setShowTrackingView(true);
         } else if (hash === '' || hash === 'categories') {
+            /* Home is home whatever was on screen before. This used to leave
+             * `step` alone when arriving from the tracker, so a resident who
+             * went submit -> track -> home saw the stale "Request Submitted!"
+             * screen at the root URL. The in-memory form is cleared too; the
+             * saved draft is NOT -- this is Back/Forward, not a deliberate
+             * "start over", so Forward to the form still brings it back. */
             setShowTrackingView(false);
+            pendingStepFocus.current = 'categories';
             setStep('categories');
             setSelectedService(null);
+            resetFormRef.current();
         } else if (hash.startsWith('report/')) {
             setShowTrackingView(false);
+            if (submittedIdRef.current) {
+                /* Back from the confirmation: that report is filed. Showing
+                 * its filled-in form again invites a duplicate submit, so
+                 * start a fresh one for the same category instead. */
+                resetFormRef.current();
+                setSelectedService(null);
+            }
+            pendingStepFocus.current = 'form';
             setStep('form');
             // Service will be selected based on the hash - handled in useEffect after services load
         } else if (hash === 'success') {
             setShowTrackingView(false);
-            setStep('success');
+            if (submittedIdRef.current) {
+                setStep('success');
+            } else {
+                /* Forward onto a confirmation that no longer exists (it was
+                 * reset, or the page reloaded) -- there is no id to show, so
+                 * go home and take the dead entry out of the way. */
+                pendingStepFocus.current = 'categories';
+                setStep('categories');
+                setSelectedService(null);
+                updateHashRef.current('', true);
+            }
         }
     }, []);
 
@@ -275,6 +313,7 @@ export default function ResidentPortal() {
         scrollContainerRef: contentRef,
         onHashChange: handleHashChange,
     });
+    updateHashRef.current = updateHash;
 
     // Update title based on current state (but DON'T update hash here - that causes loops)
     useEffect(() => {
@@ -296,15 +335,28 @@ export default function ResidentPortal() {
             const service = services.find(s => s.service_code === serviceCode);
             if (service && !selectedService) {
                 setSelectedService(service);
-                // Also set formData.service_code - critical for submission!
-                setFormData((prev) => ({ ...prev, service_code: service.service_code }));
+                applyServiceRouting(service);
+                // Coming back to the form (from the Terms page, a reload, or
+                // Forward) restores what the resident had typed; otherwise
+                // just set formData.service_code - critical for submission!
+                if (!restoreDraftFor(service)) {
+                    setFormData((prev) => ({ ...prev, service_code: service.service_code }));
+                }
                 setStep('form');
             }
         }
+        // restoreDraftFor / applyServiceRouting only read setters and the language.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [services, currentHash, selectedService]);
 
     // Requests for staff map
     const [allRequests, setAllRequests] = useState<ServiceRequest[]>([]);
+    // Counts for the map header's chips, from the same list the map draws.
+    const mapCounts = useMemo(() => ({
+        open: allRequests.filter(r => r.status === 'open').length,
+        inProgress: allRequests.filter(r => r.status === 'in_progress').length,
+        closed: allRequests.filter(r => r.status === 'closed').length,
+    }), [allRequests]);
 
     // Form state
     const [formData, setFormData] = useState<ServiceRequestCreate>({
@@ -333,41 +385,18 @@ export default function ResidentPortal() {
     // Custom question answers
     const [customAnswers, setCustomAnswers] = useState<Record<string, string | string[]>>({});
 
-    /**
-     * Photos, and where each one has got to in screening.
-     *
-     * Screening -- moderation plus the face and plate blur -- used to happen
-     * inside the create-request POST, which put a Google Vision round trip on
-     * the Submit button: attach a 6MB photo and the form sat under a generic
-     * spinner long enough that residents pressed Submit twice. It happens here
-     * instead, the moment the photo is picked, while they are still writing the
-     * description. By the time they submit, the answer is already in.
-     *
-     * Each entry keeps three things that look redundant and are not:
-     *   previewUrl  what the resident sees. Swapped for the REDACTED image once
-     *               screening finishes, so the thumbnail is what the town will
-     *               actually publish rather than the original they chose.
-     *   original    the bytes as picked, in memory only, kept solely so a handle
-     *               that expires mid-form can fall back to the inline path.
-     *   handle      what goes into media_urls in place of megabytes of base64.
-     */
-    type AttachedPhoto = {
-        id: string;
-        previewUrl: string;
-        original: string;
-        state: PhotoState;
-        message?: string;
-        handle?: string;
-    };
-    const [attachedPhotos, setAttachedPhotos] = useState<AttachedPhoto[]>([]);
-    const photoPreviewUrls = attachedPhotos.map((p) => p.previewUrl);
-    const photoStatuses: PhotoStatus[] = attachedPhotos.map(
-        ({ state, message }) => ({ state, message }),
-    );
-    const blockedPhotos = attachedPhotos.filter((p) => p.state === 'blocked');
-    const photosStillChecking = attachedPhotos.some(
-        (p) => p.state === 'uploading' || p.state === 'checking',
-    );
+    /* Photos and their pick-time screening -- see usePhotoAttachments. The
+     * names below are the ones this form has always used. */
+    const {
+        photos: attachedPhotos,
+        previewUrls: photoPreviewUrls,
+        statuses: photoStatuses,
+        blocked: blockedPhotos,
+        stillChecking: photosStillChecking,
+        add: handlePhotoUpload,
+        remove: handleRemovePhoto,
+        reset: resetPhotos,
+    } = usePhotoAttachments();
 
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
     // Selected asset from map layer (for report logging)
@@ -434,10 +463,8 @@ export default function ResidentPortal() {
             s.description?.toLowerCase().includes(searchQuery.toLowerCase())
     );
 
-    const handleSelectService = (service: ServiceDefinition) => {
-        setSelectedService(service);
-        setFormData((prev) => ({ ...prev, service_code: service.service_code }));
-
+    /** Blocking state a category carries before any pin is dropped. */
+    function applyServiceRouting(service: ServiceDefinition) {
         // Clear any previous blocking state and selected asset
         setIsBlocked(false);
         setBlockMessage('');
@@ -458,6 +485,46 @@ export default function ResidentPortal() {
                 || null,
             );
         }
+    }
+
+    /**
+     * Put a saved draft back into the form, if it is for this category.
+     * Returns whether anything was restored. Photos are not part of a draft;
+     * if there were some, the form says to add them again.
+     */
+    function restoreDraftFor(service: ServiceDefinition): boolean {
+        const draft: ResidentDraft | null = loadResidentDraft();
+        if (!draft || draft.service_code !== service.service_code || !draftHasContent(draft)) return false;
+        setFormData({
+            service_code: service.service_code,
+            description: draft.description,
+            address: draft.address,
+            lat: draft.lat ?? undefined,
+            long: draft.lng ?? undefined,
+            first_name: draft.first_name,
+            last_name: draft.last_name,
+            email: draft.email,
+            phone: draft.phone,
+            is_public: draft.is_public,
+        });
+        setLocation({ address: draft.address, lat: draft.lat, lng: draft.lng });
+        setCustomAnswers(draft.custom_answers);
+        setPhotosToReadd(draft.photo_count);
+        if (draft.preferred_language && draft.preferred_language !== language && typeof setLanguage === 'function') {
+            setLanguage(draft.preferred_language);
+        }
+        if (draft.lat != null && draft.lng != null) {
+            void checkRoadBasedBlocking(service, draft.lat, draft.lng);
+        }
+        return true;
+    }
+
+    const handleSelectService = (service: ServiceDefinition) => {
+        setSelectedService(service);
+        if (!restoreDraftFor(service)) {
+            setFormData((prev) => ({ ...prev, service_code: service.service_code }));
+        }
+        applyServiceRouting(service);
 
         pendingStepFocus.current = 'form';
         setStep('form');
@@ -549,13 +616,20 @@ export default function ResidentPortal() {
         const errors: Record<string, string> = {};
 
         if (!formData.description || formData.description.length < 10) {
-            errors.description = 'Please provide a detailed description (at least 10 characters)';
+            errors.description = 'Describe the issue in at least 10 characters.';
         }
         if (!formData.email || !/\S+@\S+\.\S+/.test(formData.email)) {
-            errors.email = 'Please enter a valid email address';
+            errors.email = 'Enter a valid email address.';
         }
         if (formData.phone && !isValidPhone(formData.phone)) {
-            errors.phone = 'Please enter a valid phone number, e.g. (555) 123-4567';
+            errors.phone = 'Enter a valid phone number, such as (555) 123-4567.';
+        }
+        // The server refuses it too; checking here saves the round trip.
+        if (locationMode === 'required') {
+            const hasPin = formData.lat != null && formData.long != null;
+            if (!(formData.address || '').trim() && !hasPin) {
+                errors.address = 'Choose a spot on the map or enter an address.';
+            }
         }
 
         // Validate required custom questions
@@ -604,7 +678,7 @@ export default function ResidentPortal() {
         // refuses it a third time, which is where it actually counts.
         if (blockedPhotos.length) {
             setFormErrors({
-                submit: "One of your photos can't be used. Please remove it and try again.",
+                submit: "One of your photos can't be used. Remove it and submit again.",
             });
             return;
         }
@@ -636,8 +710,14 @@ export default function ResidentPortal() {
             const inlineFallback: Record<string, string> = {};
             usable.forEach((p) => { if (p.handle) inlineFallback[p.handle] = p.original; });
 
+            // A category that collects no location sends none, and an empty
+            // address is no address -- the server normalises both the same way.
+            const blankAddress = !(formData.address || '').trim();
             const result = await api.createRequest({
                 ...formData,
+                address: locationMode === 'hidden' || blankAddress ? undefined : formData.address,
+                lat: locationMode === 'hidden' ? undefined : formData.lat,
+                long: locationMode === 'hidden' ? undefined : formData.long,
                 preferred_language: language,  // Capture user's selected language for notifications
                 media_urls: usable.map((p) => p.handle || p.original),
                 matched_asset: matchedAsset,
@@ -645,6 +725,9 @@ export default function ResidentPortal() {
             }, inlineFallback);
             setSubmittedId(result.service_request_id);
             setSubmittedPhotosHeld(result.photos_pending_review ?? 0);
+            // Filed: the draft (contact details included) has done its job.
+            clearResidentDraft();
+            setPhotosToReadd(0);
             pendingStepFocus.current = 'success';
             // Save to localStorage so Track Requests can identify "your" submissions
             try {
@@ -659,15 +742,13 @@ export default function ResidentPortal() {
             scrollToTop('instant');
         } catch (err) {
             console.error('Failed to submit request:', err);
-            setFormErrors({ submit: 'Failed to submit request. Please try again.' });
+            setFormErrors({ submit: "Your request wasn't submitted. Try again." });
         } finally {
             setIsSubmitting(false);
         }
     };
-    const handleReset = () => {
-        pendingStepFocus.current = 'categories';
-        setStep('categories');
-        setSelectedService(null);
+    /** Empty the form and forget the last submission (in memory only). */
+    const resetForm = () => {
         setFormData({
             service_code: '',
             description: '',
@@ -681,138 +762,78 @@ export default function ResidentPortal() {
         setFormErrors({});
         setErrorSummary([]);
         setSubmittedId(null);
+        submittedIdRef.current = null;
         setSubmittedPhotosHeld(0);
-        setAttachedPhotos([]);
+        resetPhotos();
+        setPhotosToReadd(0);
         setLocation({ address: '', lat: null, lng: null });
+        setSelectedAsset(null);
+        setDetectedRoad(null);
         // Clear blocking state
         setIsBlocked(false);
         setBlockMessage('');
         setBlockContacts([]);
+        setBlockJurisdiction(null);
         // Clear custom answers
         setCustomAnswers({});
-        // Strip hash from URL
-        window.history.replaceState(null, '', window.location.pathname);
     };
+    resetFormRef.current = resetForm;
 
-    /* Screening verdicts that arrived before their photo row existed, keyed by
-     * photo id. Screening and the FileReader preview run in parallel and either
-     * can finish first; this is where the fast one waits. */
-    const pendingPhotoPatches = useRef<Record<string, Partial<AttachedPhoto>>>({});
-
-    /** Update one photo by identity rather than position.
+    /**
+     * Every deliberate "go home" -- the header logo, "Back to Home" on the
+     * tracker, "Back to categories" on the form, "Submit Another Request".
      *
-     * Positions move: a resident can remove the first photo while the third is
-     * still being screened, and an index captured when the upload started would
-     * by then name someone else's photo. Every screening result is applied by
-     * id, and a result for a photo that has since been removed lands nowhere,
-     * which is what should happen. */
-    const updatePhoto = (id: string, patch: Partial<AttachedPhoto>) => {
-        setAttachedPhotos((prev) => {
-            if (!prev.some((p) => p.id === id)) {
-                // The result beat the preview. Screening starts in parallel with
-                // the FileReader and is often faster, so the row this patch names
-                // may not exist yet -- and mapping over a list that does not
-                // contain it drops the verdict on the floor, after which the
-                // insert below writes `uploading` and the photo sits there
-                // forever. Hold the patch and let the insert apply it.
-                pendingPhotoPatches.current[id] = {
-                    ...(pendingPhotoPatches.current[id] || {}),
-                    ...patch,
-                };
-                return prev;
-            }
-            return prev.map((p) => (p.id === id ? { ...p, ...patch } : p));
+     * These used to each flip a different subset of the view state. "Back to
+     * Home" on the tracker only hid the tracker and cleared the hash, leaving
+     * `step` on 'success', so the root URL showed the old confirmation until
+     * the logo was pressed. One function now resets all of it: the step, the
+     * submission, the form, the saved draft, the scroll position and focus.
+     */
+    const goHome = ({ replace = false }: { replace?: boolean } = {}) => {
+        resetForm();
+        clearResidentDraft();
+        setShowTrackingView(false);
+        setSelectedService(null);
+        pendingStepFocus.current = 'categories';
+        setStep('categories');
+        updateHash('', replace);
+        scrollToTop('instant');
+    };
+
+    // "Submit Another Request" replaces the #success entry, as it always has,
+    // so Back from the fresh home page does not land on a dead confirmation.
+    const handleReset = () => goHome({ replace: true });
+
+    /* Keep the in-progress report in this tab's sessionStorage so following
+     * the Terms link (or a reload) does not lose it. Only while a form is on
+     * screen and nothing has been filed from it. */
+    useEffect(() => {
+        if (step !== 'form' || !selectedService || submittedId || showTrackingView) return;
+        saveResidentDraft({
+            service_code: selectedService.service_code,
+            description: formData.description || '',
+            address: formData.address || '',
+            lat: formData.lat ?? null,
+            lng: formData.long ?? null,
+            first_name: formData.first_name || '',
+            last_name: formData.last_name || '',
+            email: formData.email || '',
+            phone: formData.phone || '',
+            is_public: formData.is_public !== false,
+            custom_answers: customAnswers,
+            preferred_language: language,
+            photo_count: attachedPhotos.length || photosToReadd,
         });
-    };
+    }, [step, selectedService, submittedId, showTrackingView, formData, customAnswers, language, attachedPhotos.length, photosToReadd]);
 
-    const handlePhotoUpload = (files: FileList) => {
-        const remaining = 3 - attachedPhotos.length;
-        const chosen = Array.from(files).slice(0, Math.max(0, remaining)); // Max 3 photos
+    // Once a photo is added again, the "add your photos again" note is done.
+    useEffect(() => {
+        if (attachedPhotos.length > 0) setPhotosToReadd(0);
+    }, [attachedPhotos.length]);
 
-        chosen.forEach((file) => {
-            const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-            // The preview still arrives one FileReader at a time, so the photo
-            // count climbs one render at a time -- PhotoUpload's focus handling
-            // is built on that and must not be collapsed into a single update.
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const dataUrl = reader.result as string;
-                setAttachedPhotos((prev) => {
-                    if (prev.length >= 3) return prev;
-                    // Anything screening decided while this preview was loading.
-                    const early = pendingPhotoPatches.current[id];
-                    delete pendingPhotoPatches.current[id];
-                    return [...prev, {
-                        id,
-                        previewUrl: dataUrl,
-                        original: dataUrl,
-                        state: 'uploading',
-                        ...(early || {}),
-                    }];
-                });
-            };
-            reader.readAsDataURL(file);
-
-            // Screening starts immediately and in parallel with the preview:
-            // the network round trip is the slow half, and there is no reason
-            // for it to wait on a local FileReader.
-            api.screenPhoto(file, () => updatePhoto(id, { state: 'checking' }))
-                .then((result) => {
-                    if (result.status === 'blocked') {
-                        updatePhoto(id, {
-                            state: 'blocked',
-                            message: result.message
-                                || "This photo can't be used. Please choose a different one.",
-                            handle: undefined,
-                        });
-                        return;
-                    }
-                    if (result.status === 'needs_review') {
-                        // The handle holds no bytes -- nothing was screened --
-                        // so this photo is submitted inline and screened again
-                        // at submit. That second pass usually succeeds, in
-                        // which case no person is ever involved; only if it
-                        // fails too does the photo land in the staff queue.
-                        // The message therefore promises the guarantee (it is
-                        // attached, and nothing publishes it unchecked) rather
-                        // than a human, which this state cannot promise.
-                        updatePhoto(id, { state: 'review', message: result.message });
-                        return;
-                    }
-                    updatePhoto(id, {
-                        state: 'ready',
-                        handle: result.handle,
-                        // Show them the blurred version, not the original.
-                        ...(result.preview ? { previewUrl: result.preview } : {}),
-                        message: result.faces || result.plates
-                            ? 'Ready to send — faces and licence plates blurred'
-                            : undefined,
-                    });
-                })
-                .catch(() => {
-                    // The screen call itself never got an answer -- offline,
-                    // rate limited, or the backend restarting under us. We did
-                    // not ask, so we know nothing about this photo: not whether
-                    // it is publishable, not whether anyone will look at it. It
-                    // still goes inline with the report and is screened at
-                    // submit like every non-portal client's photo.
-                    //
-                    // No `message`, deliberately: LABELS.error is the only
-                    // wording for this state and it is written to be true of
-                    // it. Passing the *review* message here is what made a
-                    // failed call announce a staff review nobody had queued.
-                    updatePhoto(id, { state: 'error' });
-                });
-        });
-    };
-
-    const handleRemovePhoto = (index: number) => {
-        setAttachedPhotos((prev) => prev.filter((_, i) => i !== index));
-    };
 
     const getIcon = (iconName: string) => {
-        const IconComponent = iconMap[iconName] || AlertCircle;
+        const IconComponent = categoryIconFor(iconName);
         return <IconComponent className="w-8 h-8" />;
     };
 
@@ -823,13 +844,7 @@ export default function ResidentPortal() {
                 {/* Navigation - Clean Mobile Header */}
                 <nav className="glass-sidebar py-3 md:py-4 px-4 md:px-6 flex items-center justify-between relative z-10" aria-label="Main navigation">
                     <button
-                        onClick={() => {
-                            setShowTrackingView(false);
-                            updateHash('');
-                            window.scrollTo(0, 0);
-                            setStep('categories');
-                            setSelectedService(null);
-                        }}
+                        onClick={() => goHome()}
                         className="flex items-center gap-2 md:gap-3 hover:opacity-80 transition-opacity cursor-pointer"
                         aria-label="Go to home page"
                     >
@@ -915,7 +930,7 @@ export default function ResidentPortal() {
                                     </div>
                                 )}
                                 <h2 id="disclaimer-title" className="text-2xl font-bold text-white mb-1">
-                                    Welcome to {settings?.township_name || "311 Services"}!
+                                    Welcome to {settings?.township_name || "311 Services"}
                                 </h2>
                                 <p className="text-white/60 text-sm">Your community service request portal</p>
                             </div>
@@ -938,7 +953,7 @@ export default function ResidentPortal() {
                                 <div className="mt-3 pt-3 border-t border-white/10">
                                     <p className="text-white/60 text-sm flex items-start gap-2">
                                         <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-                                        <span>For emergencies (police, fire, medical), please dial <strong className="text-white whitespace-nowrap">911</strong></span>
+                                        <span>For emergencies (police, fire, medical), call <strong className="text-white whitespace-nowrap">911</strong></span>
                                     </p>
                                 </div>
                             </div>
@@ -964,7 +979,7 @@ export default function ResidentPortal() {
                                     </div>
                                 </div>
                                 <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
-                                    Got it! I'll use this for non-emergency requests and call 911 for emergencies.
+                                    I'll use this portal for non-emergency requests and call 911 for emergencies.
                                 </span>
                             </label>
 
@@ -974,7 +989,7 @@ export default function ResidentPortal() {
                                 disabled={!disclaimerChecked}
                                 className={`w-full py-3 text-base font-medium ${!disclaimerChecked ? 'opacity-50 cursor-not-allowed' : 'bg-gradient-to-r from-primary-500 to-purple-600 hover:from-primary-600 hover:to-purple-700'}`}
                             >
-                                {disclaimerChecked ? "Let's Get Started! →" : "Check the box above to continue"}
+                                {disclaimerChecked ? "Get started →" : "Check the box above to continue"}
                             </Button>
                         </motion.div>
                     </motion.div>
@@ -988,11 +1003,9 @@ export default function ResidentPortal() {
                 {showTrackingView ? (
                     <div className="space-y-6">
                         <button
-                            onClick={() => {
-                                setShowTrackingView(false);
-                                updateHash('');
-                            }}
-                            className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
+                            type="button"
+                            onClick={() => goHome()}
+                            className="btn-outline btn-outline-md"
                             aria-label="Go back to home page"
                         >
                             <ArrowLeft className="w-5 h-5" />
@@ -1024,8 +1037,9 @@ export default function ResidentPortal() {
                                 exit={{ opacity: 0, y: -20 }}
                                 className="space-y-8"
                             >
-                                {/* Hero Section */}
-                                <div className="text-center space-y-6">
+                                {/* Hero Section. Padded above so the heading isn't crowded by
+                                    the banner and navigation. */}
+                                <div className="text-center space-y-6 pt-4 sm:pt-6 md:pt-8">
                                     <motion.h1
                                         ref={stepHeadingRef.categories}
                                         tabIndex={-1}
@@ -1176,15 +1190,33 @@ export default function ResidentPortal() {
                                     initial={{ opacity: 0, y: 20 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     transition={{ delay: 0.6 }}
-                                    className="space-y-4"
+                                    className="glass-card rounded-3xl border border-white/10 overflow-hidden"
                                 >
-                                    <h2 className="text-2xl font-bold text-white text-center">
-                                        {"Community Requests Map"}
-                                    </h2>
-                                    <p className="text-white/60 text-center mb-6">
-                                        {"View all reported issues and service requests in our community"}
-                                    </p>
-                                    <div className="h-[500px] rounded-2xl overflow-hidden">
+                                    {/* One card: a header that says what the map is and
+                                        what is on it right now, then the map itself. */}
+                                    <div className="flex flex-col gap-4 p-5 sm:p-6 sm:flex-row sm:items-center sm:justify-between border-b border-white/10">
+                                        <div className="flex items-start gap-3 min-w-0">
+                                            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border border-primary-400/30 bg-primary-500/15 text-primary-200" aria-hidden="true">
+                                                <MapIcon className="h-5 w-5" />
+                                            </span>
+                                            <div className="min-w-0">
+                                                <h2 className="text-xl sm:text-2xl font-semibold text-white tracking-tight">
+                                                    {"Community Requests Map"}
+                                                </h2>
+                                                <p className="text-sm text-white/60 mt-0.5">
+                                                    {"See what neighbors have reported and the status of each request. Select a pin for details."}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        {allRequests.length > 0 && (
+                                            <ul className="flex flex-wrap gap-2 sm:justify-end" aria-label="Requests on the map">
+                                                <li><Chip tone="danger" size="sm">{mapCounts.open} open</Chip></li>
+                                                <li><Chip tone="warning" size="sm">{mapCounts.inProgress} in progress</Chip></li>
+                                                <li><Chip tone="success" size="sm">{mapCounts.closed} resolved</Chip></li>
+                                            </ul>
+                                        )}
+                                    </div>
+                                    <div className="h-[500px]">
                                         <StaffDashboardMap
                                             config={mapConfig}
                                             requests={allRequests}
@@ -1198,8 +1230,14 @@ export default function ResidentPortal() {
                                                "Community Requests" should see
                                                requests. Staff still get them on
                                                the dashboard, where the layer
-                                               list explains what they are. */
+                                               list explains what they are.
+                                               Polygon layers an admin put on
+                                               the portal (parcels, zones) are
+                                               the exception: drawn as faint,
+                                               shape-only outlines at parcel
+                                               zoom, never as pins. */
                                             mapLayers={[]}
+                                            residentOutlines
                                             services={services}
                                             departments={[]}
                                             users={[]}
@@ -1248,12 +1286,9 @@ export default function ResidentPortal() {
                                 className="max-w-2xl mx-auto space-y-6"
                             >
                                 <button
-                                    onClick={() => {
-                                        setStep('categories');
-                                        setSelectedService(null);
-                                        updateHash('');
-                                    }}
-                                    className="flex items-center gap-2 text-white/60 hover:text-white transition-colors"
+                                    type="button"
+                                    onClick={() => goHome()}
+                                    className="btn-outline btn-outline-md"
                                 >
                                     <ArrowLeft className="w-5 h-5" />
                                     <span>{"Back to categories"}</span>
@@ -1301,7 +1336,7 @@ export default function ResidentPortal() {
                                                 <Textarea
                                                     id={FIELD_IDS.description}
                                                     label={"Description"}
-                                                    placeholder="Please describe the issue in detail..."
+                                                    placeholder="Describe the issue..."
                                                     value={formData.description}
                                                     onChange={(e) =>
                                                         setFormData((prev) => ({ ...prev, description: e.target.value }))
@@ -1314,11 +1349,22 @@ export default function ResidentPortal() {
                                                     required
                                                 />
 
-                                                {/* Google Maps Location Picker */}
-                                                {mapProviderReady(mapsRaw) ? (
-                                                    <div>
+                                                {/* Location: per category, required, optional or not collected */}
+                                                {locationMode === 'hidden' ? (
+                                                    <div className="flex items-center gap-3 p-4 rounded-xl bg-white/5 border border-white/10 text-white/60">
+                                                        <MapPinOff className="w-5 h-5 shrink-0 text-white/40" aria-hidden="true" />
+                                                        <p className="text-sm">This request doesn't need a location.</p>
+                                                    </div>
+                                                ) : mapProviderReady(mapsRaw) ? (
+                                                    <div id={FIELD_IDS.address} tabIndex={-1} className="outline-none">
                                                         <label className="block text-sm font-medium text-white/70 mb-2">
                                                             {"Location / Address"}
+                                                            {locationMode === 'optional' && (
+                                                                <span className="ml-1.5 font-normal text-white/40">(optional)</span>
+                                                            )}
+                                                            {locationMode === 'required' && (
+                                                                <span className="ml-1 text-red-400" aria-hidden="true">*</span>
+                                                            )}
                                                         </label>
                                                         <LocationPicker
                                                             config={mapConfig}
@@ -1330,6 +1376,7 @@ export default function ResidentPortal() {
                                                                 const codes = layer.service_codes || [];
                                                                 return codes.length === 0 || codes.includes(selectedService.service_code);
                                                             })}
+                                                            outlineCategory={selectedService.service_code}
                                                             value={location}
                                                             onOutOfBounds={() => setIsLocationOutOfBounds(true)}
                                                             onAssetSelect={(asset) => {
@@ -1384,6 +1431,9 @@ export default function ResidentPortal() {
                                                         </div>
                                                     </>
                                                 )}
+                                                {locationMode !== 'hidden' && formErrors.address && (
+                                                    <p className="text-sm text-red-400 -mt-2">{formErrors.address}</p>
+                                                )}
 
                                                 {/* Which road the pin landed on. Shown whether or not anything
                                                     is blocked, so a resident can see the system read their pin
@@ -1419,6 +1469,13 @@ export default function ResidentPortal() {
                                                     />
                                                 )}
 
+                                                {/* Photos are not kept in a saved draft. */}
+                                                {photosToReadd > 0 && attachedPhotos.length === 0 && (
+                                                    <p className="text-sm text-amber-200" data-testid="photos-readd-note">
+                                                        Add your photos again.
+                                                    </p>
+                                                )}
+
                                                 {/* Photo Upload */}
                                                 <PhotoUpload
                                                     previewUrls={photoPreviewUrls}
@@ -1437,206 +1494,13 @@ export default function ResidentPortal() {
                                                         Additional Information
                                                     </h3>
                                                     <div className="space-y-4">
-                                                        {/* Each question is rendered from a clerk-authored
-                                                            definition, so nothing here can rely on hand-written
-                                                            markup being right. Every control gets an id that its
-                                                            <label> (or <legend>) points at, and the error message
-                                                            gets an id the control points back at -- the same
-                                                            association ui/Input.tsx already makes. Before this,
-                                                            the label was floating text, so each field was
-                                                            announced as "edit, blank" with the placeholder read
-                                                            as if it were the question (WCAG 1.3.1, 3.3.1,
-                                                            3.3.2, 4.1.2). */}
-                                                        {selectedService.routing_config.custom_questions.map((q) => {
-                                                            const fieldId = customFieldId(q.id);
-                                                            const errorId = `${fieldId}-error`;
-                                                            const error = formErrors[`custom_${q.id}`];
-                                                            const describedBy = error ? errorId : undefined;
-                                                            const labelText = (
-                                                                <>
-                                                                    {q.label}
-                                                                    {q.required && <span className="text-red-400" aria-hidden="true"> *</span>}
-                                                                    {q.required && <span className="sr-only"> (required)</span>}
-                                                                </>
-                                                            );
-                                                            /* Plain text, not role="alert": the control
-                                                               above points at it with aria-describedby, so
-                                                               it is read on focus, and the error summary
-                                                               that takes focus on a failed submit already
-                                                               speaks every message once. As an alert each
-                                                               question added another region firing in the
-                                                               same commit as the summary, and a pile of
-                                                               simultaneous alerts announces as nothing. */
-                                                            const errorNode = error ? (
-                                                                <p id={errorId} className="text-red-400 text-sm">
-                                                                    {error}
-                                                                </p>
-                                                            ) : null;
-
-                                                            /* Radios, checkboxes and yes/no are groups of controls
-                                                               answering one question, which is what fieldset and
-                                                               legend are for. As bare divs the question text was
-                                                               not attached to the options at all, so a screen
-                                                               reader read "Yes" and "No" with nothing saying what
-                                                               was being asked. Native grouping, not role= --
-                                                               fieldset/legend needs no ARIA to say the same thing. */
-                                                            if (q.type === 'radio' || q.type === 'checkbox' || q.type === 'yes_no') {
-                                                                const multi = q.type === 'checkbox';
-                                                                const options = q.type === 'yes_no' ? ['Yes', 'No'] : (q.options ?? []);
-                                                                const selected = customAnswers[q.label];
-                                                                return (
-                                                                    <fieldset
-                                                                        key={q.id}
-                                                                        id={fieldId}
-                                                                        tabIndex={-1}
-                                                                        aria-describedby={describedBy}
-                                                                        className="space-y-2 m-0 p-0 border-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
-                                                                    >
-                                                                        <legend className="block text-sm font-medium text-white/70 mb-2">
-                                                                            {labelText}
-                                                                        </legend>
-                                                                        <div className={q.type === 'yes_no' ? 'flex gap-3' : 'space-y-2'}>
-                                                                            {options.map(opt => {
-                                                                                /* Selection used to be a background colour on a
-                                                                                   <button> and nothing else: invisible to a screen
-                                                                                   reader, and gone entirely in forced-colours mode
-                                                                                   (WCAG 1.4.1, 4.1.2). A real radio carries its own
-                                                                                   state, its own focus ring and its own arrow-key
-                                                                                   behaviour, so no aria-pressed is needed. */
-                                                                                const checked = multi
-                                                                                    ? ((selected as string[] | undefined) ?? []).includes(opt)
-                                                                                    : selected === opt;
-                                                                                return (
-                                                                                    <label
-                                                                                        key={opt}
-                                                                                        className={`flex items-center gap-3 text-white/80 cursor-pointer ${q.type === 'yes_no'
-                                                                                            ? `flex-1 justify-center py-2 rounded-lg border transition-colors ${checked
-                                                                                                ? 'bg-primary-500/30 border-primary-500 text-white'
-                                                                                                : 'bg-white/5 border-white/20 hover:border-white/40'}`
-                                                                                            : ''}`}
-                                                                                    >
-                                                                                        <input
-                                                                                            type={multi ? 'checkbox' : 'radio'}
-                                                                                            name={multi ? undefined : `custom_${q.id}`}
-                                                                                            value={opt}
-                                                                                            checked={checked}
-                                                                                            onChange={(e) => {
-                                                                                                if (!multi) {
-                                                                                                    setCustomAnswers(p => ({ ...p, [q.label]: opt }));
-                                                                                                    return;
-                                                                                                }
-                                                                                                const current = (customAnswers[q.label] as string[]) || [];
-                                                                                                const updated = e.target.checked
-                                                                                                    ? [...current, opt]
-                                                                                                    : current.filter(v => v !== opt);
-                                                                                                setCustomAnswers(p => ({ ...p, [q.label]: updated }));
-                                                                                            }}
-                                                                                            className={`w-4 h-4 accent-primary-500 ${multi ? 'rounded' : ''}`}
-                                                                                        />
-                                                                                        <span>{opt}</span>
-                                                                                    </label>
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                        {errorNode}
-                                                                    </fieldset>
-                                                                );
-                                                            }
-
-                                                            return (
-                                                                <div key={q.id} className="space-y-2">
-                                                                    <label htmlFor={fieldId} className="block text-sm font-medium text-white/70">
-                                                                        {labelText}
-                                                                    </label>
-
-                                                                    {/* Text Input */}
-                                                                    {q.type === 'text' && (
-                                                                        <input
-                                                                            id={fieldId}
-                                                                            type="text"
-                                                                            placeholder={q.placeholder || ''}
-                                                                            value={(customAnswers[q.label] as string) || ''}
-                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                            required={q.required}
-                                                                            aria-required={q.required || undefined}
-                                                                            aria-invalid={error ? 'true' : undefined}
-                                                                            aria-describedby={describedBy}
-                                                                        />
-                                                                    )}
-
-                                                                    {/* Textarea */}
-                                                                    {q.type === 'textarea' && (
-                                                                        <textarea
-                                                                            id={fieldId}
-                                                                            rows={3}
-                                                                            placeholder={q.placeholder || ''}
-                                                                            value={(customAnswers[q.label] as string) || ''}
-                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                            className="w-full rounded-lg bg-white/10 border border-white/20 text-white px-3 py-2"
-                                                                            required={q.required}
-                                                                            aria-required={q.required || undefined}
-                                                                            aria-invalid={error ? 'true' : undefined}
-                                                                            aria-describedby={describedBy}
-                                                                        />
-                                                                    )}
-
-                                                                    {/* Number */}
-                                                                    {q.type === 'number' && (
-                                                                        <input
-                                                                            id={fieldId}
-                                                                            type="number"
-                                                                            placeholder={q.placeholder || ''}
-                                                                            value={(customAnswers[q.label] as string) || ''}
-                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                            required={q.required}
-                                                                            aria-required={q.required || undefined}
-                                                                            aria-invalid={error ? 'true' : undefined}
-                                                                            aria-describedby={describedBy}
-                                                                        />
-                                                                    )}
-
-                                                                    {/* Date */}
-                                                                    {q.type === 'date' && (
-                                                                        <input
-                                                                            id={fieldId}
-                                                                            type="date"
-                                                                            value={(customAnswers[q.label] as string) || ''}
-                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                            required={q.required}
-                                                                            aria-required={q.required || undefined}
-                                                                            aria-invalid={error ? 'true' : undefined}
-                                                                            aria-describedby={describedBy}
-                                                                        />
-                                                                    )}
-
-                                                                    {/* Select Dropdown. The aria-label it used to carry is
-                                                                        gone: it now has a real <label>, and an aria-label
-                                                                        alongside one silently wins over it. */}
-                                                                    {q.type === 'select' && (
-                                                                        <select
-                                                                            id={fieldId}
-                                                                            value={(customAnswers[q.label] as string) || ''}
-                                                                            onChange={(e) => setCustomAnswers(p => ({ ...p, [q.label]: e.target.value }))}
-                                                                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3"
-                                                                            required={q.required}
-                                                                            aria-required={q.required || undefined}
-                                                                            aria-invalid={error ? 'true' : undefined}
-                                                                            aria-describedby={describedBy}
-                                                                        >
-                                                                            <option value="">Select...</option>
-                                                                            {q.options?.map(opt => (
-                                                                                <option key={opt} value={opt}>{opt}</option>
-                                                                            ))}
-                                                                        </select>
-                                                                    )}
-
-                                                                    {errorNode}
-                                                                </div>
-                                                            );
-                                                        })}
+                                                        <CustomQuestionFields
+                                                            questions={selectedService.routing_config.custom_questions}
+                                                            answers={customAnswers}
+                                                            onChange={(label, value) => setCustomAnswers(p => ({ ...p, [label]: value }))}
+                                                            errors={formErrors}
+                                                            fieldId={customFieldId}
+                                                        />
                                                     </div>
                                                 </Card>
                                             )}
@@ -1712,10 +1576,32 @@ export default function ResidentPortal() {
                                             </div>
                                         </Card>
 
+                                        {/* A category the town keeps off the public map. Said before
+                                            submitting, so the resident knows who will see the report. */}
+                                        {selectedService.hidden_from_public && (
+                                            <Card>
+                                                <div className="flex items-start gap-3">
+                                                    <div className="w-9 h-9 rounded-xl bg-slate-500/20 border border-slate-400/25 flex items-center justify-center shrink-0">
+                                                        <EyeOff className="w-4 h-4 text-slate-200" aria-hidden="true" />
+                                                    </div>
+                                                    <div className="min-w-0">
+                                                        <p className="text-sm font-medium text-white">This report won't be shown publicly</p>
+                                                        <p className="text-xs text-white/55 mt-1 leading-relaxed">
+                                                            Reports in this category don't appear on the public map or list. Town staff
+                                                            see your report and handle it as usual, and you can follow it with your
+                                                            tracking link. Anyone you share that link with can also view it. Like other
+                                                            municipal records, it can be released in response to a public records request.
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                            </Card>
+                                        )}
+
                                         {/* Public-feed visibility. Only offered when the town has
                                             turned the Unlisted Reports module on. Sharing is the
-                                            default; hiding is a deliberate, unchecked-by-default box. */}
-                                        {(settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
+                                            default; hiding is a deliberate, unchecked-by-default box.
+                                            Not offered for a category that is already hidden. */}
+                                        {!selectedService.hidden_from_public && (settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
                                             <Card>
                                                 <label className="flex items-start gap-3 cursor-pointer">
                                                     <input
@@ -1836,9 +1722,9 @@ export default function ResidentPortal() {
                                                     : 'bg-amber-500/20 border-amber-500/30 text-amber-300'}`}
                                             >
                                                 {isLocationOutOfBounds ? (
-                                                    <><strong>Cannot submit:</strong> The selected location is outside the municipality boundary. Please choose a location within the jurisdiction.</>
+                                                    <><strong>Outside the boundary:</strong> Choose a location within the municipality.</>
                                                 ) : (
-                                                    <>Submission blocked - see notice above</>
+                                                    <>Can&apos;t submit yet. See the notice above.</>
                                                 )}
                                             </div>
                                         )}
@@ -1902,11 +1788,10 @@ export default function ResidentPortal() {
                                         tabIndex={-1}
                                         className="text-3xl font-bold text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded-lg"
                                     >
-                                        Request Submitted!
+                                        Request submitted
                                     </h1>
                                     <p className="text-white/60">
-                                        Thank you for helping improve our community. Your request has been
-                                        received and will be reviewed shortly.
+                                        Thank you. We've received your request and staff will review it.
                                     </p>
                                     {submittedId && (
                                         <div className="inline-block px-4 py-2 rounded-lg bg-white/10 border border-white/20">
@@ -1930,11 +1815,10 @@ export default function ResidentPortal() {
                                                     : `${submittedPhotosHeld} of your photos are waiting to be checked`}
                                             </p>
                                             <p className="text-xs text-amber-200/70 mt-1">
-                                                We could not blur faces and licence plates automatically, so
-                                                {submittedPhotosHeld === 1 ? ' it is ' : ' they are '}
-                                                not on the public tracker yet. Your report has been filed and
-                                                is being handled either way. A staff member will look and
-                                                either publish or delete
+                                                We couldn&apos;t blur faces and license plates automatically, so
+                                                {submittedPhotosHeld === 1 ? ' it isn\'t ' : ' they aren\'t '}
+                                                on the public tracker yet. Your report is filed. Staff will review
+                                                {submittedPhotosHeld === 1 ? ' it' : ' them'} and publish or delete
                                                 {submittedPhotosHeld === 1 ? ' it' : ' them'}.
                                             </p>
                                         </div>

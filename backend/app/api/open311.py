@@ -16,6 +16,7 @@ from app.schemas import (
 )
 from app.core.auth import get_current_staff
 from app.api.scoping import department_scope_filters, scoped_request
+from app.services import gis_layers
 from slowapi import Limiter
 from app.core.client_ip import rate_limit_key
 
@@ -27,6 +28,13 @@ limiter = Limiter(key_func=rate_limit_key)
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# The GeoReport v2 routes (discovery, services, service definitions, requests,
+# tokens) are declared on this router so their errors take the spec's
+# `[{"code", "description"}]` shape. It is folded into `router` at the bottom
+# of this module. Everything else here keeps FastAPI's `{"detail": ...}`.
+from app.services import open311_format
+spec_router = APIRouter(route_class=open311_format.spec_route_class())
 
 
 # Assignment fields where an explicit null means "nobody", not "unchanged".
@@ -42,7 +50,7 @@ def generate_request_id() -> str:
 
 
 from app.services import road_blocking
-from app.services.enqueue import enqueue
+from app.services.enqueue import enqueue, enqueue_later
 from app.services.public_visibility import publicly_listed_conditions
 from app.core.config import get_settings
 import redis.asyncio as redis
@@ -215,11 +223,15 @@ async def list_public_requests(
 
     settings_row = await read_settings_row(db)
     archive_days = getattr(settings_row, "public_archive_days", None) or 0
+    # In the key for the same reason as the archive policy: hiding a category
+    # must take its reports off the map now, not when the cache expires.
+    from app.services.public_visibility import hidden_category_codes
+    hidden_codes = await hidden_category_codes(db)
 
     cache_key = (
         f"public_requests:{','.join(sorted(statuses)) if statuses else 'all'}"
         f":{','.join(sorted(service_codes)) if service_codes else 'all'}:{limit}:{offset}"
-        f":arch{archive_days}"
+        f":arch{archive_days}:hide{','.join(hidden_codes) or '-'}"
     )
 
     # Try cache first
@@ -230,12 +242,12 @@ async def list_public_requests(
     except redis.RedisError:
         logger.debug("Redis unavailable for cache read, proceeding without cache")
 
-    # Three ways to be absent from this list, none of which deletes anything:
+    # Four ways to be absent from this list, none of which deletes anything:
     # the resident asked for it to be unlisted, staff archived it from public
-    # view, or the town's policy aged it out. All of them remain reachable by
+    # view, the town's policy aged it out, or its category is hidden. All of them remain reachable by
     # direct tracking link (the by-id endpoints below) and fully visible to
     # staff. See app/services/public_visibility.py.
-    query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row))
+    query = select(ServiceRequest).where(*publicly_listed_conditions(settings_row, hidden_codes))
 
     if statuses:
         query = query.where(ServiceRequest.status.in_(statuses))
@@ -391,7 +403,7 @@ async def add_public_comment(
         raise HTTPException(
             status_code=400,
             detail="Your comment contains explicit or abusive language and can't be posted. "
-                   "Please rephrase without offensive content.",
+                   "Rephrase it without offensive language.",
         )
     if mod.flagged:
         # Moderation only. This endpoint is unauthenticated by design, and
@@ -573,36 +585,81 @@ async def get_public_audit_log(request_id: str, db: AsyncSession = Depends(get_d
             "actor_type": e.actor_type,
             "actor_name": e.actor_name if e.actor_type == "resident" else "Staff",
             "created_at": e.created_at,
-            "extra_data": e.extra_data,
+            "extra_data": _public_audit_extra(e),
         }
         for e in entries
     ]
 
 
+# The only audit extra_data a resident may see: how a closed report was closed.
+# extra_data is a free-form staff-side column -- a manual intake's "submitted"
+# row carries the assignee's username, the routing department, the priority
+# override and whether staff notes exist -- so passing it through verbatim
+# undid the actor_name redaction above. Allow-list, not deny-list, so the next
+# key someone adds stays internal by default.
+_PUBLIC_AUDIT_EXTRA_KEYS = ("substatus", "completion_message")
 
-@router.get("/discovery.json")
+
+def _public_audit_extra(entry) -> Optional[dict]:
+    if entry.action != "status_change" or not isinstance(entry.extra_data, dict):
+        return None
+    kept = {k: entry.extra_data[k] for k in _PUBLIC_AUDIT_EXTRA_KEYS if k in entry.extra_data}
+    return kept or None
+
+
+
+async def check_jurisdiction(
+    jurisdiction_id: Optional[str] = Query(None, max_length=100,
+                                           description="Accepted; must match the configured id when one is set"),
+    db: AsyncSession = Depends(get_db),
+):
+    """GeoReport v2 `jurisdiction_id`, validated against the town's optional setting.
+
+    A route dependency (declared in the decorator) so the handlers' own
+    signatures stay what direct callers and tests use.
+    """
+    if jurisdiction_id is None or not jurisdiction_id.strip():
+        return
+    from app.services import open311_keys
+    config = await open311_keys.read_settings(db)
+    if not open311_keys.jurisdiction_matches(config.jurisdiction_id, jurisdiction_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="jurisdiction_id is not served by this endpoint")
+
+
+DISCOVERY_CHANGESET = "2026-10-18T00:00:00Z"
+
+
+@spec_router.get("/discovery.json")
 async def open311_discovery(request: Request):
     """
     Open311 v2 Discovery endpoint — API metadata and capability advertisement.
-    
+
     Per the Open311 GeoReport v2 specification, this endpoint allows consumers
     to discover what this API supports, what endpoints are available, and
     the changeset/versioning information.
     """
     base_url = str(request.base_url).rstrip("/")
-    
+
     return {
-        "changeset": "2026-03-31T00:00:00Z",
+        "changeset": DISCOVERY_CHANGESET,
         "contact": "You may email support@pinpoint311.org for any questions or issues.",
-        "key_service": f"{base_url}/api/auth/login",
+        # GeoReport v2 defines key_service as human-readable instructions for
+        # getting an API key. This once pointed at the STAFF sign-in, which
+        # issues no Open311 key; keys are issued by the town's administrators.
+        "key_service": (
+            "POST requests.json requires an api_key. Keys are issued by this town's "
+            "administrators (Admin Console > Integrations > Open311 API keys); contact "
+            "the town to request one. GET requests are public and need no key."
+        ),
         "type": "production",
         "endpoints": [
             {
                 "specification": "http://wiki.open311.org/GeoReport_v2",
                 "url": f"{base_url}/api/open311/v2",
-                "changeset": "2026-03-31T00:00:00Z",
+                "changeset": DISCOVERY_CHANGESET,
                 "type": "production",
-                "formats": ["application/json"]
+                "formats": ["application/json", "text/xml"]
             }
         ],
         "extensions": {
@@ -617,7 +674,7 @@ async def open311_discovery(request: Request):
                 ]
             },
             "ai_triage": {
-                "description": "Automated Vertex AI priority scoring on submission",
+                "description": "Automated priority scoring on submission",
                 "endpoints": [
                     "POST /requests/{id}/accept-ai-priority"
                 ]
@@ -632,16 +689,78 @@ async def open311_discovery(request: Request):
     }
 
 
-@router.get("/services/{service_code}.json")
+@spec_router.get("/discovery.xml")
+async def open311_discovery_xml(request: Request):
+    """Open311 v2 Discovery endpoint, XML."""
+    payload = await open311_discovery(request)
+    return open311_format.render(request.url.path, "discovery", payload)
+
+
+# Our custom question types -> GeoReport v2 attribute datatypes.
+_QUESTION_DATATYPES = {
+    "text": "string",
+    "textarea": "text",
+    "number": "number",
+    "date": "datetime",
+    "select": "singlevaluelist",
+    "radio": "singlevaluelist",
+    "yes_no": "singlevaluelist",
+    "checkbox": "multivaluelist",
+}
+
+
+def _custom_questions(service) -> list:
+    """The category's custom questions, as the admin editor stores them."""
+    config = getattr(service, "routing_config", None) or {}
+    questions = config.get("custom_questions") if isinstance(config, dict) else None
+    return [q for q in (questions or []) if isinstance(q, dict) and q.get("id") and q.get("label")]
+
+
+def _question_options(question: dict) -> list:
+    if question.get("type") == "yes_no":
+        return ["Yes", "No"]
+    return [str(o) for o in (question.get("options") or [])]
+
+
+def _question_attributes(service) -> list:
+    """GeoReport v2 `attributes` for a category: its custom questions.
+
+    The code is the question's stable id; the answer is posted back as
+    `attribute[<code>]` and stored under the question's label, which is how the
+    resident portal stores it, so staff see one format whichever way a report
+    arrived.
+    """
+    attributes = []
+    for order, q in enumerate(_custom_questions(service), start=1):
+        datatype = _QUESTION_DATATYPES.get(q.get("type"), "string")
+        if datatype == "multivaluelist" and not _question_options(q):
+            datatype = "string"
+        attr = {
+            "variable": True,
+            "code": str(q["id"]),
+            "datatype": datatype,
+            "required": bool(q.get("required")),
+            "datatype_description": str(q.get("placeholder") or ""),
+            "order": order,
+            "description": str(q["label"]),
+        }
+        if datatype in ("singlevaluelist", "multivaluelist"):
+            attr["values"] = [{"key": o, "name": o} for o in _question_options(q)]
+        attributes.append(attr)
+    return attributes
+
+
+@spec_router.get("/services/{service_code}.json", dependencies=[Depends(check_jurisdiction)])
 async def get_service_definition(service_code: str, db: AsyncSession = Depends(get_db)):
     """
     Open311 v2 Service Definition endpoint.
-    
-    Returns extended attributes for a service type, including metadata
-    about what fields are required/optional for request submission.
-    
-    This enables external clients to dynamically build intake forms
-    for any service category.
+
+    `attributes` are the category's custom questions, posted back as
+    `attribute[code]`. The standard request fields (description, address_string,
+    lat/long, email, names, phone, media_url) are not attributes in GeoReport
+    v2 and are not listed; `location_mode` says whether this category asks for
+    a location (`required`, `optional`, or `hidden` -- a location sent anyway is
+    dropped).
     """
     result = await db.execute(
         select(ServiceDefinition)
@@ -652,148 +771,81 @@ async def get_service_definition(service_code: str, db: AsyncSession = Depends(g
         .options(selectinload(ServiceDefinition.departments))
     )
     service = result.scalar_one_or_none()
-    
+
     if not service:
         raise HTTPException(status_code=404, detail=f"Service not found: {service_code}")
-    
-    # Build Open311 v2 service_definition response with extended attributes
+
+    from app.services import location_policy
+    location_mode = location_policy.normalise_mode(getattr(service, "location_mode", None))
+
     return {
         "service_code": service.service_code,
+        "attributes": _question_attributes(service),
+        # Extensions, outside the spec's two fields.
         "service_name": service.service_name,
         "description": service.description,
-        "metadata": True,  # Indicates this service has custom attributes
+        "metadata": _has_metadata(service),
         "type": "realtime",
         "keywords": service.service_name.lower(),
         "group": "municipal",
-        "attributes": [
-            {
-                "variable": True,
-                "code": "description",
-                "datatype": "text",
-                "required": True,
-                "datatype_description": "Detailed description of the issue (min 10 chars)",
-                "order": 1,
-                "description": "Please describe the issue"
-            },
-            {
-                "variable": True,
-                "code": "address",
-                "datatype": "string",
-                "required": False,
-                "datatype_description": "Street address of the issue",
-                "order": 2,
-                "description": "Location address"
-            },
-            {
-                "variable": True,
-                "code": "lat",
-                "datatype": "number",
-                "required": False,
-                "datatype_description": "Latitude coordinate",
-                "order": 3,
-                "description": "GPS latitude"
-            },
-            {
-                "variable": True,
-                "code": "long",
-                "datatype": "number",
-                "required": False,
-                "datatype_description": "Longitude coordinate",
-                "order": 4,
-                "description": "GPS longitude"
-            },
-            {
-                "variable": True,
-                "code": "email",
-                "datatype": "string",
-                "required": True,
-                "datatype_description": "Submitter's email address",
-                "order": 5,
-                "description": "Contact email"
-            },
-            {
-                "variable": True,
-                "code": "first_name",
-                "datatype": "string",
-                "required": False,
-                "order": 6,
-                "description": "First name"
-            },
-            {
-                "variable": True,
-                "code": "last_name",
-                "datatype": "string",
-                "required": False,
-                "order": 7,
-                "description": "Last name"
-            },
-            {
-                "variable": True,
-                "code": "phone",
-                "datatype": "string",
-                "required": False,
-                "order": 8,
-                "description": "Contact phone number"
-            },
-            {
-                "variable": True,
-                "code": "media_urls",
-                "datatype": "text",
-                "required": False,
-                "datatype_description": "Up to 3 photo URLs or base64-encoded images",
-                "order": 9,
-                "description": "Photos of the issue"
-            }
-        ],
-        "routing_mode": service.routing_mode or "township",
-        "translations_available": list((service.translations or {}).keys()),
-        "departments": [d.name for d in (service.departments or [])]
+        "routing_mode": getattr(service, "routing_mode", None) or "township",
+        "location_mode": location_mode,
+        "translations_available": list((getattr(service, "translations", None) or {}).keys()),
+        "departments": [d.name for d in (getattr(service, "departments", None) or [])],
     }
 
 
-@router.get("/tokens/{service_request_id}.json")
+@spec_router.get("/services/{service_code}.xml", dependencies=[Depends(check_jurisdiction)])
+async def get_service_definition_xml(request: Request, service_code: str,
+                                     db: AsyncSession = Depends(get_db)):
+    """Open311 v2 Service Definition endpoint, XML."""
+    payload = await get_service_definition(service_code=service_code, db=db)
+    return open311_format.render(request.url.path, "service_definition", payload)
+
+
+def _has_metadata(service) -> bool:
+    """GeoReport v2 `metadata`: does the definition endpoint have attributes?
+
+    One function for both endpoints, so the list and the definition cannot
+    disagree about the same service (they once did).
+    """
+    return bool(_question_attributes(service))
+
+
+@spec_router.get("/tokens/{service_request_id}.json", dependencies=[Depends(check_jurisdiction)])
 async def lookup_request_by_token(service_request_id: str, db: AsyncSession = Depends(get_db)):
     """
-    Open311 v2 Token Lookup endpoint.
-    
-    Allows anonymous tracking of a service request using only the
-    service_request_id (the token given at submission). No authentication
-    required — returns only non-PII data.
-    
-    This enables residents to check the status of their request without
-    needing an account.
+    Open311 v2 Token Lookup endpoint: `[{"service_request_id", "token"}]`.
+
+    Reports are created synchronously here, so POST requests.json already
+    answers with the service_request_id and the token IS that id. This lookup
+    exists for clients written to the spec's token flow. It follows the
+    tracking-link rule (an unlisted report still resolves for the person
+    holding its id) and returns nothing else about the report.
     """
     result = await db.execute(
-        select(ServiceRequest).where(
+        select(ServiceRequest.service_request_id).where(
             ServiceRequest.service_request_id == service_request_id,
             *direct_link_filters(),
         )
     )
-    request_obj = result.scalar_one_or_none()
-    
-    if not request_obj:
+    found = result.scalar_one_or_none()
+
+    if not found:
         raise HTTPException(status_code=404, detail="Service request not found")
-    
-    return {
-        "service_request_id": request_obj.service_request_id,
-        "status": request_obj.status,
-        "status_notes": request_obj.completion_message if request_obj.status == "closed" else None,
-        "service_code": request_obj.service_code,
-        "service_name": request_obj.service_name,
-        "description": request_obj.description,
-        "address": request_obj.address,
-        "lat": request_obj.lat,
-        "long": request_obj.long,
-        "requested_datetime": request_obj.requested_datetime.isoformat() if request_obj.requested_datetime else None,
-        "updated_datetime": request_obj.updated_datetime.isoformat() if request_obj.updated_datetime else None,
-        "closed_substatus": request_obj.closed_substatus,
-        "media_urls": request_obj.media_urls or [],
-        "completion_photo_url": request_obj.completion_photo_url,
-        "token": service_request_id
-    }
+
+    return [{"service_request_id": found, "token": service_request_id}]
 
 
-@router.get("/services.json")
+@spec_router.get("/tokens/{service_request_id}.xml", dependencies=[Depends(check_jurisdiction)])
+async def lookup_request_by_token_xml(request: Request, service_request_id: str,
+                                      db: AsyncSession = Depends(get_db)):
+    """Open311 v2 Token Lookup endpoint, XML."""
+    payload = await lookup_request_by_token(service_request_id=service_request_id, db=db)
+    return open311_format.render(request.url.path, "service_requests", payload)
+
+
+@spec_router.get("/services.json", dependencies=[Depends(check_jurisdiction)])
 async def list_open311_services(db: AsyncSession = Depends(get_db)):
     """Open311 v2 compatible - List services"""
     result = await db.execute(
@@ -805,27 +857,23 @@ async def list_open311_services(db: AsyncSession = Depends(get_db)):
             "service_code": s.service_code,
             "service_name": s.service_name,
             "description": s.description,
-            # GeoReport v2 makes `metadata` the flag that tells a client
-            # whether GET /services/{code}.json is worth calling for this
-            # service. It was missing here while the definition endpoint
-            # hardcoded True, so the list said "no extended attributes" by
-            # omission about services that have nine of them, and a
-            # conformant client built its intake form without asking.
-            #
-            # True for every service, matching what that endpoint actually
-            # does: it serves the same attribute set for any active service,
-            # derived from the intake form rather than from per-service
-            # configuration. If service definitions ever become optional, this
-            # is the line that has to learn the difference -- and the test
-            # pins the two endpoints to each other so it cannot drift quietly
-            # again.
-            "metadata": True,
+            # GeoReport v2's flag for "GET /services/{code}.json has attributes
+            # worth fetching". Computed by the same function the definition
+            # endpoint uses; the test pins the two together.
+            "metadata": _has_metadata(s),
             "type": "realtime",
             "keywords": s.service_name.lower(),
             "group": "municipal"
         }
         for s in services
     ]
+
+
+@spec_router.get("/services.xml", dependencies=[Depends(check_jurisdiction)])
+async def list_open311_services_xml(request: Request, db: AsyncSession = Depends(get_db)):
+    """Open311 v2 compatible - List services, XML."""
+    payload = await list_open311_services(db=db)
+    return open311_format.render(request.url.path, "services", payload)
 
 
 # A phone photo is a few megabytes; three of them plus form overhead is the
@@ -844,31 +892,18 @@ def _screen_rate_key(request: Request) -> str:
     """Rate-limit key for photo screening: the caller, not the proxy.
 
     slowapi's default `get_remote_address` reads request.client.host, which
-    behind Caddy is 172.19.0.x for every resident in town -- one global bucket.
-    A 12/minute limit on that bucket is not a per-abuser cap at all: it is a
-    denial-of-service switch anyone can flip, taking photo screening away from
-    the whole town for the cost of twelve requests a minute.
+    behind Caddy is one container address for every resident in town -- one
+    global bucket, i.e. a denial-of-service switch rather than a per-abuser cap.
 
-    X-Forwarded-For is trusted ONLY when the direct peer is a private address,
-    which on this deployment means the request came from our own Caddy. uvicorn
-    runs without --forwarded-allow-ips so nothing else has already rewritten it,
-    and a header arriving from a public peer is ignored outright -- so a client
-    on the open internet cannot mint itself a fresh bucket per request.
+    This used to fix that by trusting the LEFTMOST X-Forwarded-For entry
+    whenever the peer was private. Behind Caddy the peer always is, and Caddy
+    appends to whatever header the client sent, so the leftmost entry is the
+    client's own text: one caller could mint a fresh 12/minute bucket per
+    request and spend the whole global ceiling alone. app/core/client_ip
+    resolves the address the same way every other limiter does, from the
+    trusted end of the chain.
     """
-    import ipaddress
-
-    peer = request.client.host if request.client else ""
-    try:
-        private = ipaddress.ip_address(peer).is_private or ipaddress.ip_address(peer).is_loopback
-    except ValueError:
-        private = False
-
-    if private:
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        first = forwarded.split(",")[0].strip()
-        if first:
-            return first[:64]
-    return peer or "unknown"
+    return rate_limit_key(request)
 
 
 @router.post("/photos/screen")
@@ -915,7 +950,7 @@ async def screen_photo(
     if len(raw) > MAX_SCREEN_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="That photo is too large. Please pick one under 12 MB.",
+            detail="That photo is too large. Choose one under 12 MB.",
         )
 
     mime = (file.content_type or "").lower()
@@ -939,7 +974,7 @@ async def screen_photo(
             "handle": handle,
             "status": "blocked",
             "message": "This photo appears to contain explicit or graphic content and "
-                       "can't be used. Please choose a different one.",
+                       "can't be used. Choose a different one.",
         }
 
     if batch.withheld or not batch.media:
@@ -1004,7 +1039,66 @@ async def screen_photo(
     }
 
 
-@router.post("/requests.json", response_model=Open311CreatedRequestResponse,
+# ---------------------------------------------------------------------------
+# First-party intake: the town's own resident portal
+# ---------------------------------------------------------------------------
+#
+# Why the portal does not post to POST /requests.json any more
+# ------------------------------------------------------------
+# GeoReport v2 requires an `api_key` on POST requests.json, and this deployment
+# now enforces it (unless an admin turns on anonymous Open311 submissions). The
+# resident portal cannot hold a key: anything shipped to a browser is public,
+# so a "portal key" in the bundle would be a key every scraper has, and
+# revoking it would take the town's own form down.
+#
+# So the two callers are split by route rather than by secret:
+#
+#   POST /requests.json   the GeoReport v2 interface for third-party clients.
+#                         Form-encoded or JSON, spec fields, array response,
+#                         spec errors, api_key required, per-key limits.
+#   POST /portal/requests the portal's own route. The body and response it
+#                         always had, no key, 10/minute per client address.
+#
+# The portal route only accepts browser submissions from the town's own origin,
+# decided server-side from headers page script cannot set: `Sec-Fetch-Site:
+# same-origin`, or (for browsers that predate Fetch Metadata) an `Origin` equal
+# to this host or a configured CORS origin. That stops a third-party WEBSITE
+# from having its visitors' browsers file reports through the portal route,
+# and stops an integrator from wandering onto it by accident.
+#
+# What it is not: a barrier against a script that forges those headers. Such a
+# script gets exactly what any resident with a browser gets -- one report at a
+# time, 10 a minute from its address, every report moderated and every photo
+# redacted -- which is the deliberate, pre-existing public intake. The api_key
+# is what identifies, budgets and revokes an INTEGRATOR; it never was, and
+# cannot be, what keeps the public from filing reports on a public form.
+
+def _first_party_origin_ok(request: Request) -> bool:
+    """True when the browser says this POST came from the town's own pages."""
+    import os
+    from urllib.parse import urlsplit
+
+    site = (request.headers.get("sec-fetch-site") or "").lower()
+    if site == "same-origin":
+        return True
+    origin = (request.headers.get("origin") or "").strip()
+    if not origin or origin == "null":
+        return False
+    configured = [o.strip().rstrip("/") for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+    if not configured:
+        # The same development defaults app.main gives CORS when unset.
+        configured = ["http://localhost:5173", "http://localhost:3000",
+                      "http://127.0.0.1:5173", "http://127.0.0.1:3000"]
+    if origin.rstrip("/") in configured:
+        return True
+    if site in ("cross-site", "same-site"):
+        # A modern browser told us it is NOT our origin; believe it over Host.
+        return False
+    host = (request.headers.get("host") or "").strip().lower()
+    return bool(host) and urlsplit(origin).netloc.lower() == host
+
+
+@router.post("/portal/requests", response_model=Open311CreatedRequestResponse,
              status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def create_request(
@@ -1012,7 +1106,35 @@ async def create_request(
     request_data: ServiceRequestCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    """Open311 v2 compatible - Create a new service request (public)"""
+    """File a report from the town's resident portal (first-party, browser only).
+
+    Third-party clients use the GeoReport v2 `POST /requests.json` with an
+    api_key instead. See the note above for why the two are separate routes.
+    """
+    if not _first_party_origin_ok(request):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This route is for the town's own report form. Open311 clients: "
+                   "POST /api/open311/v2/requests.json with an api_key.",
+        )
+    return await _intake_resident_report(db, request_data, source="resident_portal")
+
+
+async def _intake_resident_report(
+    db: AsyncSession,
+    request_data: ServiceRequestCreate,
+    *,
+    source: str,
+    notify_resident: bool = True,
+    audit_extra: Optional[dict] = None,
+):
+    """Everything between "a resident's report arrived" and "it is saved".
+
+    Shared by the portal and the GeoReport v2 route so both apply the same
+    location rule, moderation, photo redaction, road redirects, routing and
+    post-creation pipeline. Raises HTTPException for anything the submitter
+    must fix; the caller's route class decides how the error is shaped.
+    """
     from app.core.sanitize import sanitize_for_log
     logger.info(f"[CREATE REQUEST] Received: service_code={sanitize_for_log(request_data.service_code)}")
     
@@ -1026,11 +1148,25 @@ async def create_request(
     service = result.scalar_one_or_none()
     
     if not service:
-        logger.error(f"[CREATE REQUEST] Invalid service code: {sanitize_for_log(request_data.service_code)}")
+        # A submitter's mistake (the caller gets a 400), not a server fault:
+        # warning, so Sentry's error feed stays for things that are broken.
+        logger.warning(f"[CREATE REQUEST] Invalid service code: {sanitize_for_log(request_data.service_code)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid service code: {request_data.service_code}"
         )
+
+    # The category's location rule, before photos or moderation do any work:
+    # refused if it needs a location and has none, dropped if it collects none.
+    from app.services import location_policy
+    try:
+        request_data.address, request_data.lat, request_data.long = location_policy.apply(
+            service.location_mode, request_data.address, request_data.lat, request_data.long)
+    except location_policy.LocationMissing as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    if location_policy.normalise_mode(service.location_mode) == location_policy.HIDDEN:
+        # A matched asset is a position too (and its properties can name one).
+        request_data.matched_asset = None
 
     # Content moderation: reject explicit/abusive text or images before the
     # report is created. Text uses better-profanity plus the cloud text moderator
@@ -1043,7 +1179,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Your report contains explicit or abusive language and can't be submitted. "
-                   "Please describe the issue without offensive content and try again.",
+                   "Describe the issue without offensive language and submit again.",
         )
 
     # Screening and redaction are one step because they are one question asked
@@ -1076,7 +1212,7 @@ async def create_request(
             detail={
                 "error": "stale_photo_handles",
                 "handles": resolved.stale,
-                "message": "Your photos took too long to attach. Please try submitting again.",
+                "message": "Your photos took too long to attach. Submit again.",
             },
         )
     if resolved.blocked:
@@ -1084,7 +1220,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
-                   "can't be submitted. Please remove it and try again.",
+                   "can't be submitted. Remove it and submit again.",
         )
 
     inline_media = [value for _, value in resolved.inline]
@@ -1094,7 +1230,7 @@ async def create_request(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="One of your photos appears to contain explicit or graphic content and "
-                   "can't be submitted. Please remove it and try again.",
+                   "can't be submitted. Remove it and submit again.",
         )
 
     # Rebuild the resident's ordering. Both halves say which submitted slot they
@@ -1167,9 +1303,12 @@ async def create_request(
         media_urls=request_data.media_urls[:3] if request_data.media_urls else [],  # Limit to 3 photos
         media_pending_review=pending_review[:3],
         matched_asset=request_data.matched_asset,
+        # Which parcel / zone it fell in, snapshotted now: the GIS history.
+        gis_context=await gis_layers.context_for_point(
+            db, request_data.lat, request_data.long, request_data.service_code),
         is_public=await resolve_is_public(db, request_data.is_public),
         custom_fields=request_data.custom_fields,
-        source="resident_portal",
+        source=source,
         assigned_department_id=assigned_department_id,
         assigned_to=assigned_to
     )
@@ -1182,7 +1321,8 @@ async def create_request(
     # resident confirmation, department notification).
     await _finalize_new_request(
         db, service_request, assigned_department_id,
-        actor_type="resident", actor_name="Resident", notify_resident=True,
+        actor_type="resident", actor_name="Resident", notify_resident=notify_resident,
+        audit_extra=audit_extra,
     )
 
     return service_request
@@ -1216,6 +1356,7 @@ async def _finalize_new_request(
     actor_type: str,
     actor_name: str,
     notify_resident: bool,
+    audit_extra: Optional[dict] = None,
 ):
     """Post-creation pipeline shared by resident and manual intake: audit log,
     AI triage, govtech push, resident confirmation, and department notification.
@@ -1241,6 +1382,7 @@ async def _finalize_new_request(
         new_value="open",
         actor_type=actor_type,
         actor_name=actor_name,
+        extra_data=audit_extra,
     )
     db.add(audit_entry)
     await db.commit()
@@ -1253,9 +1395,13 @@ async def _finalize_new_request(
     # AI triage / priority — same as a resident submission
     enqueue(analyze_request, service_request.id)
 
-    # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.)
-    from app.tasks.integrations import push_request_to_integrations
-    enqueue(push_request_to_integrations, service_request.id)
+    # Push to any connected govtech platforms (Accela, Tyler, CivicPlus, etc.).
+    # Triage finishing sends it (sync_after_triage), so the first push carries
+    # the triaged priority. This delayed push is the safety net for a slow or
+    # failing AI provider: a report reaches the town's system within
+    # TRIAGE_GRACE_SECONDS regardless. Whichever runs second finds it linked.
+    from app.tasks.integrations import push_request_to_integrations, TRIAGE_GRACE_SECONDS
+    enqueue_later(push_request_to_integrations, TRIAGE_GRACE_SECONDS, service_request.id)
 
     # Send branded confirmation only when we have a real resident email
     if notify_resident:
@@ -1278,7 +1424,7 @@ async def _finalize_new_request(
     enqueue(send_department_notification, service_request.id, routing_email)
 
 
-@router.get("/requests.json", response_model=List[ServiceRequestResponse])
+@router.get("/staff/requests", response_model=List[ServiceRequestResponse])
 async def list_requests(
     status_filter: Optional[str] = Query(
         None, alias="status", description="Filter by status (comma-delimited, e.g. open,closed)"),
@@ -1290,7 +1436,12 @@ async def list_requests(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Open311 v2 compatible - List service requests (staff only)"""
+    """List service requests with staff fields (staff only, own departments).
+
+    This was `GET /requests.json` until that path became the public GeoReport
+    v2 list. The staff app reads reporter contact details and triage fields
+    from here, so it is a separate, staff-only route.
+    """
     query = select(ServiceRequest).order_by(ServiceRequest.requested_datetime.desc())
     
     # Filter out deleted unless admin requests them
@@ -1326,7 +1477,7 @@ async def list_requests(
     return result.scalars().all()
 
 
-@router.get("/requests/{request_id}.json", response_model=ServiceRequestDetailResponse)
+@router.get("/staff/requests/{request_id}", response_model=ServiceRequestDetailResponse)
 async def get_request(
     request_id: str,
     db: AsyncSession = Depends(get_db),
@@ -1354,8 +1505,35 @@ async def get_request(
     #
     # Set on the ORM instance rather than built into a dict, so the response
     # model keeps reading every other field straight off the row.
-    request.external_links = await _linked_platforms(db, request.id)
+    await _decorate_detail(db, request)
     return request
+
+
+async def _decorate_detail(db: AsyncSession, request: ServiceRequest) -> None:
+    """Computed facts every staff detail response carries. Never raises.
+
+    Set on the ORM instance (not stored), on every route that returns the
+    detail schema -- the panel replaces its copy with the response after an
+    edit, so a fact only the GET set would vanish the moment staff saved.
+    """
+    request.external_links = await _linked_platforms(db, request.id)
+    request.sla_due_datetime = None
+    request.sla_state = None
+    try:
+        from datetime import timedelta
+        from app.services import sla
+        hours = (await db.execute(
+            select(ServiceDefinition.sla_hours).where(ServiceDefinition.service_code == request.service_code)
+        )).scalar_one_or_none()
+        if hours and hours > 0 and request.requested_datetime:
+            # A reopened request keeps its old closed_datetime; it is open again.
+            closed_at = request.closed_datetime if request.status == "closed" else None
+            state = sla.classify(request.requested_datetime, closed_at, hours)
+            if state != "no_sla":
+                request.sla_due_datetime = request.requested_datetime + timedelta(hours=hours)
+                request.sla_state = state
+    except Exception as exc:
+        logger.warning("Could not compute SLA for %s: %s", request.service_request_id, exc)
 
 
 async def _linked_platforms(db: AsyncSession, service_request_id: int) -> List[str]:
@@ -1408,6 +1586,9 @@ async def update_request_status(
     old_assigned_to = request.assigned_to
     old_department_name = request.assigned_department.name if request.assigned_department else None
     old_legal_hold = bool(request.legal_hold)
+    old_manual_priority = getattr(request, "manual_priority_score", None)
+    from app.services.priority import effective_priority
+    old_priority = effective_priority(request)
 
     # The legal hold this endpoint sets is `legal_hold`, which retention reads.
     # `flagged` is written alongside it only so the existing admin control --
@@ -1415,10 +1596,15 @@ async def update_request_status(
     # unchanged; the important half is that this is the ONLY path that writes
     # `legal_hold`, and it is admin-gated. The unauthenticated public-comment
     # moderation path sets `flagged` alone and can no longer create a hold.
+    #
+    # One direction only now. A client that still posts the legacy `flagged`
+    # (an older admin console mid-rollout) is asking for a hold, so that maps to
+    # `legal_hold`. A hold posted as `legal_hold` no longer sets `flagged`: that
+    # column is the content screen's mark, and mirroring the hold into it made
+    # every held record look moderated -- and removing a hold cleared a real
+    # moderation flag.
     if "flagged" in update_dict and "legal_hold" not in update_dict:
-        update_dict["legal_hold"] = update_dict["flagged"]
-    elif "legal_hold" in update_dict and "flagged" not in update_dict:
-        update_dict["flagged"] = update_dict["legal_hold"]
+        update_dict["legal_hold"] = update_dict.pop("flagged")
     
     for field, value in update_dict.items():
         # A null used to be skipped for EVERY field, so "Department..." (i.e.
@@ -1517,8 +1703,25 @@ async def update_request_status(
             actor_name=current_user.username
         )
         db.add(audit_entry)
-    
+
+    # Priority set by staff. It changes what crews and connected systems sort
+    # by, so it is recorded like any other assignment.
+    priority_changed = effective_priority(request) != old_priority
+    if "manual_priority_score" in update_dict and request.manual_priority_score != old_manual_priority:
+        db.add(RequestAuditLog(
+            service_request_id=request.id,
+            action="priority_changed",
+            old_value=f"{old_priority:g}",
+            new_value=f"{effective_priority(request):g}",
+            actor_type="staff",
+            actor_name=current_user.username,
+        ))
+
     await db.commit()
+
+    if priority_changed:
+        from app.tasks.integrations import push_priority_to_integrations
+        enqueue(push_priority_to_integrations, request.id)
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
@@ -1548,6 +1751,7 @@ async def update_request_status(
     # Reload the relationship if department was set
     if request.assigned_department_id:
         await db.refresh(request, ['assigned_department'])
+    await _decorate_detail(db, request)
     return request
 
 
@@ -1584,6 +1788,7 @@ async def set_public_archived(
 
     was_archived = bool(request.public_archived)
     if was_archived == payload.public_archived:
+        await _decorate_detail(db, request)
         return request  # no change, no audit noise
 
     request.public_archived = payload.public_archived
@@ -1604,6 +1809,7 @@ async def set_public_archived(
     await db.refresh(request)
     if request.assigned_department_id:
         await db.refresh(request, ['assigned_department'])
+    await _decorate_detail(db, request)
     return request
 
 
@@ -1628,11 +1834,14 @@ async def review_withheld_photo(
     the photo with the face in it" is a question a town will eventually be
     asked.
     """
-    result = await db.execute(
-        select(ServiceRequest).options(selectinload(ServiceRequest.assigned_department)).where(
-            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    # Department-scoped like every other staff by-id route. This used the public
+    # tracking-link rule, so a staffer in any department could publish or discard
+    # another department's withheld photo -- and the response handed them that
+    # report's full staff detail, reporter contact fields included.
+    sr = await scoped_request(
+        db, current_user, service_request_id=request_id,
+        options=(selectinload(ServiceRequest.assigned_department),),
     )
-    sr = result.scalar_one_or_none()
     if not sr:
         raise HTTPException(status_code=404, detail="Request not found")
 
@@ -1661,6 +1870,7 @@ async def review_withheld_photo(
     await db.refresh(sr)
     if sr.assigned_department_id:
         await db.refresh(sr, ['assigned_department'])
+    await _decorate_detail(db, sr)
     return sr
 
 
@@ -1670,11 +1880,14 @@ async def create_manual_intake(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_staff)
 ):
-    """Create a request from manual intake (phone, walk-in, or email) — staff only.
+    """Create a request from manual intake (phone, walk-in, email, other) — staff only.
 
     Runs the exact same pipeline as a resident submission (assignment, AI triage,
     govtech push, notifications). Resident contact fields are optional; the
-    caller is emailed a confirmation only if they actually provided an address.
+    caller is emailed a confirmation only if they actually provided an address
+    and the clerk left `send_confirmation` on. The clerk may also choose the
+    department, assignee and priority and leave an internal note; anything left
+    out is decided exactly as it would be for a resident submission.
     """
     # Validate service code
     result = await db.execute(
@@ -1690,24 +1903,15 @@ async def create_manual_intake(
             detail="Invalid service code"
         )
 
-    # Same redaction as a resident submission. A photo emailed in or attached
-    # by a clerk from a phone call is no less likely to have a bystander in it,
-    # and it goes to exactly the same public places.
-    #
-    # Redaction only, not the moderation screen: this path never image-moderated
-    # and adding it here would start rejecting a clerk's own submissions on a
-    # SafeSearch score, which is the wrong party to second-guess.
-    from app.services import image_redaction
-    intake_redacted = await image_redaction.redact_media(intake_data.media_urls)
-    intake_data.media_urls = intake_redacted.media
-
-    # A photo the redactor could not clear is held back here too, rather than
-    # published unblurred. The clerk is a member of staff and can release it
-    # from the request itself -- often immediately, since they are usually
-    # looking at the photo already.
-    intake_pending = [p for p in intake_redacted.withheld if p.get("media")][:3]
-    if intake_pending:
-        logger.warning("[MANUAL INTAKE] %d photo(s) held for staff review", len(intake_pending))
+    # A clerk may not have a location yet, so "required" is not enforced here;
+    # a category that collects no location still drops one.
+    from app.services import location_policy
+    intake_data.address, intake_data.lat, intake_data.long = location_policy.apply(
+        service.location_mode, intake_data.address, intake_data.lat, intake_data.long,
+        enforce_required=False)
+    if location_policy.normalise_mode(service.location_mode) == location_policy.HIDDEN \
+            and hasattr(intake_data, "matched_asset"):
+        intake_data.matched_asset = None
 
     # Same jurisdiction rules as a resident submission, but a staffer may
     # knowingly override them. A clerk on the phone can see that the caller is
@@ -1716,6 +1920,11 @@ async def create_manual_intake(
     # faster than explaining. Refusing them would just push the work into a
     # notepad. Residents get no override; staff exercising judgement is the
     # whole reason the role exists.
+    #
+    # Checked before any photo handle is redeemed: handles are single-use, and
+    # the usual answer to this 409 is the same submission again with "Log it
+    # anyway" ticked. Spending the handles first would make that second press
+    # resend every photo inline for no reason.
     block = await road_blocking.evaluate(db, service, intake_data.lat, intake_data.long)
     if block.blocked and not intake_data.override_jurisdiction:
         await road_blocking.record(db, block, service, intake_data.lat, intake_data.long)
@@ -1725,18 +1934,37 @@ async def create_manual_intake(
                 "error": "redirected",
                 "jurisdiction": block.jurisdiction,
                 "message": block.message,
+                "message_is_default": block.message_is_default,
                 "contacts": block.contacts,
                 "road": block.road_name,
                 "can_override": True,
             },
         )
 
-    # Same auto-assignment/routing as a resident submission
+    # Staff choices are checked before anything is written, so a typo in a
+    # username is a 400 the clerk can fix rather than a request routed nowhere.
+    chosen_department_id, chosen_assignee = await _validate_intake_staff_options(db, intake_data)
+
+    # Photos: redeemed from pick-time handles where the browser screened them,
+    # redacted inline otherwise. See _redeem_intake_media.
+    intake_data.media_urls, intake_pending = await _redeem_intake_media(
+        db, intake_data.media_urls, flagged=intake_data.media_flagged or [])
+    if intake_pending:
+        logger.warning("[MANUAL INTAKE] %d photo(s) held for staff review", len(intake_pending))
+
+    # Same auto-assignment/routing as a resident submission, unless the clerk
+    # chose otherwise. Each choice overrides only its own half: picking a
+    # department leaves the category's staff routing alone, and vice versa.
     assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+    if chosen_department_id is not None:
+        assigned_department_id = chosen_department_id
+    if chosen_assignee:
+        assigned_to = chosen_assignee
 
     # A caller may not leave an email; keep a unique placeholder for the row but
     # remember whether a real one was given so we only email real addresses.
     has_email = bool(intake_data.email)
+    staff_notes = (intake_data.staff_notes or "").strip() or None
 
     service_request = ServiceRequest(
         service_request_id=generate_request_id(),
@@ -1751,19 +1979,49 @@ async def create_manual_intake(
         email=intake_data.email or f"manual-{uuid.uuid4().hex[:8]}@intake.local",
         phone=intake_data.phone,
         preferred_language=intake_data.preferred_language or "en",
+        contact_opt_out=not intake_data.send_confirmation,
         media_urls=intake_data.media_urls[:3] if intake_data.media_urls else [],
         media_pending_review=intake_pending,
         matched_asset=intake_data.matched_asset,
+        gis_context=await gis_layers.context_for_point(
+            db, intake_data.lat, intake_data.long, intake_data.service_code),
         is_public=await resolve_is_public(db, intake_data.is_public),
         custom_fields=intake_data.custom_fields,
         source=intake_data.source.value,
         assigned_department_id=assigned_department_id,
         assigned_to=assigned_to,
+        manual_priority_score=intake_data.manual_priority_score,
+        staff_notes=staff_notes,
     )
 
     db.add(service_request)
     await db.commit()
     await db.refresh(service_request)
+
+    # What the clerk chose at intake, on the "submitted" audit entry. Field
+    # names and routing values only: the internal note is recorded as present,
+    # never quoted, because the audit trail is read more widely than the note.
+    chosen_fields = [
+        name for name, chosen in (
+            ("assigned_department_id", chosen_department_id is not None),
+            ("assigned_to", bool(chosen_assignee)),
+            ("manual_priority_score", intake_data.manual_priority_score is not None),
+            ("staff_notes", staff_notes is not None),
+            ("send_confirmation", not intake_data.send_confirmation),
+        ) if chosen
+    ]
+    audit_extra = None
+    if chosen_fields:
+        options = {"fields": chosen_fields}
+        if chosen_department_id is not None:
+            options["assigned_department_id"] = chosen_department_id
+        if chosen_assignee:
+            options["assigned_to"] = chosen_assignee
+        if intake_data.manual_priority_score is not None:
+            options["manual_priority_score"] = intake_data.manual_priority_score
+        if not intake_data.send_confirmation:
+            options["send_confirmation"] = False
+        audit_extra = {"intake_options": options}
 
     # Attribute the submission to the staff member who took it down. The row is
     # already persisted, so a hiccup in the best-effort background pipeline
@@ -1774,7 +2032,11 @@ async def create_manual_intake(
         await _finalize_new_request(
             db, service_request, assigned_department_id,
             actor_type="staff", actor_name=current_user.username,
-            notify_resident=has_email,
+            # Only a real address, and only when the clerk left the
+            # confirmation on -- a caller who asked not to be contacted, or a
+            # duplicate logged for the record, should not get an email.
+            notify_resident=has_email and intake_data.send_confirmation,
+            audit_extra=audit_extra,
         )
     except Exception:
         logger.exception(
@@ -1783,6 +2045,101 @@ async def create_manual_intake(
         )
 
     return service_request
+
+
+async def _validate_intake_staff_options(db: AsyncSession, intake_data: ManualIntakeCreate):
+    """Check the department and assignee a clerk chose at intake.
+
+    Returns (department_id or None, username or None). Raises 400 for a
+    department that does not exist (or was retired) and for an assignee who is
+    not an active staff member or administrator -- a researcher account, a
+    deactivated user or a typo would otherwise receive a request nobody works.
+    """
+    department_id = intake_data.assigned_department_id
+    if department_id is not None:
+        dept = (await db.execute(
+            select(Department).where(Department.id == department_id)
+        )).scalar_one_or_none()
+        if dept is None or dept.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="That department doesn't exist. Choose another one.",
+            )
+
+    username = (intake_data.assigned_to or "").strip() or None
+    if username:
+        user = (await db.execute(
+            select(User).where(User.username == username)
+        )).scalar_one_or_none()
+        if user is None or user.role not in ("staff", "admin") or user.is_active is False:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assign the request to an active staff member.",
+            )
+    return department_id, username
+
+
+async def _redeem_intake_media(db: AsyncSession, media, flagged=()):
+    """Photos for a staff-entered request: (media_urls, media_pending_review).
+
+    The staff form screens photos when they are picked, exactly like the
+    resident form, and sends a handle for each one the screen cleared. Those
+    are redeemed here without a second Vision call; anything else (a pasted
+    data URI, a photo the screen could not reach) is redacted inline.
+
+    Redaction only, never the moderation screen: this path has never
+    image-moderated, and starting now would reject a clerk's own submission on
+    a SafeSearch score, which is the wrong party to second-guess. That is why a
+    handle that came back *blocked* is not refused the way create_request
+    refuses it -- it holds no bytes, so it is named alongside the stale ones
+    and the client resends that photo inline, where it is blurred like any
+    other. Redaction still applies to every photo either way: a photo emailed
+    in or attached from a phone call is no less likely to have a bystander in
+    it, and it goes to exactly the same public places.
+    """
+    from app.services import image_redaction, photo_handles
+
+    resolved = await photo_handles.resolve(db, media)
+    resend = list(resolved.stale) + list(resolved.blocked_handles)
+    if resend:
+        logger.info("[MANUAL INTAKE] %d photo handle(s) to resend inline", len(resend))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "stale_photo_handles",
+                "handles": resend,
+                "message": "The photos took too long to attach. Log the request again.",
+            },
+        )
+
+    redacted = await image_redaction.redact_media([value for _, value in resolved.inline])
+    # Rebuild the order the photos were attached in. redact_media's early
+    # returns leave `kept` empty while still returning every photo, so an empty
+    # `kept` with media present means "all of them, in order".
+    kept = redacted.kept or list(range(len(redacted.media)))
+    slots = dict(resolved.screened)
+    for out_index, src_index in enumerate(kept):
+        if src_index < len(resolved.inline) and out_index < len(redacted.media):
+            slots[resolved.inline[src_index][0]] = redacted.media[out_index]
+    ordered = [slots[i] for i in sorted(slots)]
+
+    # A photo the redactor could not clear is held back rather than published
+    # unblurred. The clerk is a member of staff and can release it from the
+    # request itself -- often immediately, since they are usually looking at it.
+    pending = [p for p in (list(resolved.withheld) + list(redacted.withheld))
+               if p.get("media")]
+
+    # Photos the content screen flagged at pick time. The clerk kept them, so
+    # they are not refused -- but they are not published either: redacted, then
+    # held for a staff decision like any photo the redactor could not clear.
+    # Without this a flagged photo went straight to the public map.
+    flagged = [f for f in (flagged or []) if f][:3]
+    if flagged:
+        held = await image_redaction.redact_media(flagged)
+        for item in (held.media or []):
+            pending.append({"media": item, "reason": "content-screen"})
+        pending.extend(p for p in held.withheld if p.get("media"))
+    return ordered, pending[:3]
 
 
 @router.delete("/requests/{request_id}")
@@ -1898,6 +2255,10 @@ async def accept_ai_priority(
     if ai_priority is None:
         raise HTTPException(status_code=400, detail="No AI priority score available")
     
+    # Read before it is overwritten: the audit entry recorded this after the
+    # assignment, so "old" always equalled "new".
+    previous = request.manual_priority_score
+
     # Set the manual priority score to the AI suggestion
     request.manual_priority_score = float(ai_priority)
     request.updated_datetime = datetime.now(timezone.utc)
@@ -1908,13 +2269,18 @@ async def accept_ai_priority(
         action="priority_accepted",
         actor_type="staff",
         actor_name=current_user.username,
-        old_value=str(request.manual_priority_score) if request.manual_priority_score else None,
+        old_value=f"{previous:g}" if previous is not None else None,
         new_value=str(ai_priority)
     )
     db.add(audit_entry)
     
     await db.commit()
     await db.refresh(request)
+
+    # Accepting confirms the score; connected systems that got the report
+    # before (or without) triage are brought into line.
+    from app.tasks.integrations import push_priority_to_integrations
+    enqueue(push_priority_to_integrations, request.id)
     
     return {"message": "AI priority accepted", "priority_score": ai_priority}
 
@@ -1957,3 +2323,505 @@ async def get_asset_related_requests(
         if r.service_request_id != exclude_request_id
     ]
 
+
+
+# No staff route edits a report's location. The location is what the resident
+# reported; staff correcting it would change the record of where the problem
+# was said to be, and with it the parcel/zone context snapshotted at intake.
+
+
+# ---------------------------------------------------------------------------
+# GeoReport v2: service requests (public reads, keyed writes)
+# ---------------------------------------------------------------------------
+#
+# Reads follow the PUBLIC LISTING rule (app/services/public_visibility.py) for
+# lists AND for by-id lookups: this is a bulk machine interface, so a report a
+# resident asked to keep unlisted, one staff archived, one in a hidden category
+# and one that was deleted are all absent here. (The resident's own tracking
+# link still works through /public/requests/{id} and tokens/{id}.json.)
+#
+# Nothing that is not on the public tracker is ever serialised: no reporter
+# name, email or phone, no staff notes, no AI analysis or priority, no assignee
+# username, no photo still held for review. The record is built field by field
+# in `_spec_record`, never from the ORM row wholesale.
+
+from datetime import timedelta  # noqa: E402
+from pydantic import EmailStr  # noqa: E402
+
+SPEC_WINDOW = timedelta(days=90)
+SPEC_MAX_RESULTS = 1000
+SPEC_MAX_IDS = 100
+# Our three statuses on the spec's two. in_progress is being worked: "open".
+SPEC_STATUS_MAP = {"open": ("open", "in_progress"), "closed": ("closed",)}
+
+
+def _spec_status(value: Optional[str]) -> str:
+    return "closed" if value == "closed" else "open"
+
+
+def _public_media_url(r, base_url: str) -> Optional[str]:
+    """The spec's single `media_url`: the report's first published photo.
+
+    Only `media_urls` is read -- photos held for staff review live in a
+    different column and never reach a public surface. Photos are stored as
+    data URIs, so the URL is our own photo route rather than megabytes of
+    base64 inline; a photo a client submitted as a hosted https URL is
+    returned as that URL.
+    """
+    from urllib.parse import quote
+
+    for index, media in enumerate(r.media_urls or []):
+        if not isinstance(media, str):
+            continue
+        if media.startswith("https://"):
+            return media
+        if media.startswith("data:image/"):
+            return (f"{base_url}/api/open311/v2/public/requests/"
+                    f"{quote(r.service_request_id, safe='')}/media/{index}")
+    return None
+
+
+def _spec_record(r, sla_hours: Optional[int], base_url: str) -> dict:
+    """One GeoReport v2 service request, built only from public fields."""
+    expected = None
+    if sla_hours and sla_hours > 0 and r.requested_datetime:
+        expected = r.requested_datetime + timedelta(hours=sla_hours)
+    department = getattr(r, "assigned_department", None)
+    return {
+        "service_request_id": r.service_request_id,
+        "status": _spec_status(r.status),
+        # The public completion message, the same text the public tracker
+        # shows. Never staff_notes.
+        "status_notes": r.completion_message if r.status == "closed" else None,
+        "service_name": r.service_name,
+        "service_code": r.service_code,
+        "description": r.description,
+        "agency_responsible": department.name if department is not None else None,
+        "service_notice": None,
+        "requested_datetime": open311_format.w3c(r.requested_datetime),
+        "updated_datetime": open311_format.w3c(r.updated_datetime),
+        "expected_datetime": open311_format.w3c(expected),
+        "address": r.address,
+        "address_id": None,
+        "zipcode": None,
+        # Same precision as the public map and /public/requests.
+        "lat": r.lat,
+        "long": r.long,
+        "media_url": _public_media_url(r, base_url),
+    }
+
+
+async def _sla_hours_by_code(db: AsyncSession, codes) -> dict:
+    codes = sorted({c for c in codes if c})
+    if not codes:
+        return {}
+    rows = await db.execute(
+        select(ServiceDefinition.service_code, ServiceDefinition.sla_hours)
+        .where(ServiceDefinition.service_code.in_(codes))
+    )
+    return {code: hours for code, hours in rows.all()}
+
+
+def _spec_window(start_raw: Optional[str], end_raw: Optional[str]):
+    """The spec's date window: default the last 90 days, never wider than 90."""
+    try:
+        start = open311_format.parse_w3c(start_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="start_date must be a W3C (ISO 8601) datetime")
+    try:
+        end = open311_format.parse_w3c(end_raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="end_date must be a W3C (ISO 8601) datetime")
+    if start is None and end is None:
+        end = datetime.now(timezone.utc)
+        start = end - SPEC_WINDOW
+    elif start is None:
+        start = end - SPEC_WINDOW
+    elif end is None:
+        end = start + SPEC_WINDOW
+    if start > end:
+        raise HTTPException(status_code=400, detail="start_date is after end_date")
+    if end - start > SPEC_WINDOW:
+        raise HTTPException(status_code=400, detail="start_date and end_date may not span more than 90 days")
+    return start, end
+
+
+def _spec_statuses(raw: Optional[str]) -> Optional[List[str]]:
+    values = parse_csv_filter(raw)
+    if not values:
+        return None
+    unknown = [v for v in values if v not in SPEC_STATUS_MAP]
+    if unknown:
+        raise HTTPException(status_code=400, detail="status must be open, closed, or both (comma-delimited)")
+    return sorted({s for v in values for s in SPEC_STATUS_MAP[v]})
+
+
+async def _public_spec_query(db: AsyncSession):
+    from app.services.public_visibility import hidden_category_codes
+    settings_row = await read_settings_row(db)
+    hidden_codes = await hidden_category_codes(db)
+    return (
+        select(ServiceRequest)
+        .options(selectinload(ServiceRequest.assigned_department))
+        .where(*publicly_listed_conditions(settings_row, hidden_codes))
+    )
+
+
+@spec_router.get("/requests.json", dependencies=[Depends(check_jurisdiction)])
+@spec_router.get("/requests.xml", dependencies=[Depends(check_jurisdiction)])
+async def list_requests_open311(
+    request: Request,
+    service_request_id: Optional[str] = Query(
+        None, max_length=4000, description="Comma-delimited ids. When given, the other filters are ignored."),
+    service_code: Optional[str] = Query(None, max_length=2000, description="Comma-delimited service codes"),
+    start_date: Optional[str] = Query(None, max_length=64, description="W3C datetime. Default: 90 days before end_date"),
+    end_date: Optional[str] = Query(None, max_length=64, description="W3C datetime. Default: now, or start_date + 90 days"),
+    status_filter: Optional[str] = Query(None, alias="status", max_length=100, description="open, closed, or both"),
+    db: AsyncSession = Depends(get_db),
+):
+    """GeoReport v2 GET Service Requests (public, no PII).
+
+    `in_progress` is reported as `open`. The window defaults to the last 90
+    days and may not exceed 90 days; at most 1000 requests are returned,
+    newest first. Staff-only fields are never included.
+    """
+    query = await _public_spec_query(db)
+    ids = parse_csv_filter(service_request_id)
+    if ids:
+        if len(ids) > SPEC_MAX_IDS:
+            raise HTTPException(status_code=400, detail=f"At most {SPEC_MAX_IDS} service_request_id values")
+        query = query.where(ServiceRequest.service_request_id.in_(ids))
+    else:
+        statuses = _spec_statuses(status_filter)
+        if statuses:
+            query = query.where(ServiceRequest.status.in_(statuses))
+        codes = parse_csv_filter(service_code)
+        if codes:
+            query = query.where(ServiceRequest.service_code.in_(codes))
+        start, end = _spec_window(start_date, end_date)
+        query = query.where(ServiceRequest.requested_datetime >= start,
+                            ServiceRequest.requested_datetime <= end)
+
+    query = query.order_by(ServiceRequest.requested_datetime.desc()).limit(SPEC_MAX_RESULTS)
+    rows = (await db.execute(query)).scalars().all()
+    sla = await _sla_hours_by_code(db, [r.service_code for r in rows])
+    base_url = str(request.base_url).rstrip("/")
+    payload = [_spec_record(r, sla.get(r.service_code), base_url) for r in rows]
+    return open311_format.render(request.url.path, "service_requests", payload)
+
+
+@spec_router.get("/requests/{request_id}.json", dependencies=[Depends(check_jurisdiction)])
+@spec_router.get("/requests/{request_id}.xml", dependencies=[Depends(check_jurisdiction)])
+async def get_request_open311(request: Request, request_id: str, db: AsyncSession = Depends(get_db)):
+    """GeoReport v2 GET Service Request: a one-element array (public, no PII).
+
+    Staff read the full record at GET /staff/requests/{id}.
+    """
+    query = await _public_spec_query(db)
+    row = (await db.execute(query.where(ServiceRequest.service_request_id == request_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Service request not found")
+    sla = await _sla_hours_by_code(db, [row.service_code])
+    payload = [_spec_record(row, sla.get(row.service_code), str(request.base_url).rstrip("/"))]
+    return open311_format.render(request.url.path, "service_requests", payload)
+
+
+# Per-field ceilings for the spec POST. The columns are wider or unbounded;
+# these keep one submission from carrying a novel in a phone field.
+_SPEC_FIELD_MAX = {
+    "service_code": 50, "first_name": 100, "last_name": 100, "phone": 40, "email": 254,
+    "address_string": 500, "address_id": 100, "zipcode": 20, "device_id": 200,
+    "account_id": 200, "jurisdiction_id": 100, "api_key": 128, "lat": 40, "long": 40,
+    "description": 4000,
+}
+_ATTRIBUTE_VALUE_MAX = 1000
+
+
+class _Open311RequestCreate(ServiceRequestCreate):
+    """The portal's create model with GeoReport v2's optional email."""
+    email: Optional[EmailStr] = None
+
+
+async def _read_spec_fields(request: Request) -> dict:
+    """POST parameters as {name: [values]}, from form-encoded or JSON bodies.
+
+    Form bodies are what the spec describes; JSON is accepted with the same
+    field names, and `attribute` may be an object (`{"attribute": {"CODE":
+    "value"}}`) as well as `attribute[CODE]` keys. `attribute[CODE][]` (a
+    multivaluelist) is folded onto `attribute[CODE]`.
+    """
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    fields: dict = {}
+
+    def add(name: str, value) -> None:
+        if isinstance(value, (dict, list)):
+            raise HTTPException(status_code=400, detail=f"{name} must be a plain value")
+        if value is None:
+            return
+        if name.startswith("attribute[") and name.endswith("][]"):
+            name = name[:-2]
+        fields.setdefault(name, []).append(value if isinstance(value, str) else str(value))
+
+    if ctype == "application/json":
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="The request body is not valid JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="The request body must be a JSON object")
+        for name, value in body.items():
+            name = str(name)
+            if name == "attribute" and isinstance(value, dict):
+                for code, answer in value.items():
+                    for item in (answer if isinstance(answer, list) else [answer]):
+                        add(f"attribute[{code}]", item)
+            elif isinstance(value, list):
+                for item in value:
+                    add(name, item)
+            else:
+                add(name, value)
+    elif ctype in ("application/x-www-form-urlencoded", "multipart/form-data"):
+        form = await request.form()
+        for name, value in form.multi_items():
+            if isinstance(value, str):  # files are not part of GeoReport v2
+                add(name, value)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Send application/x-www-form-urlencoded (or application/json)",
+        )
+    return fields
+
+
+def _first(fields: dict, name: str) -> Optional[str]:
+    values = fields.get(name) or []
+    value = values[0].strip() if values else ""
+    if not value:
+        return None
+    limit = _SPEC_FIELD_MAX.get(name)
+    if limit and len(value) > limit:
+        raise HTTPException(status_code=400, detail=f"{name} is longer than {limit} characters")
+    return value
+
+
+def _spec_float(fields: dict, name: str) -> Optional[float]:
+    raw = _first(fields, name)
+    if raw is None:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} must be a number")
+    if value != value or value in (float("inf"), float("-inf")):
+        raise HTTPException(status_code=400, detail=f"{name} must be a number")
+    return value
+
+
+def _map_attributes(service, fields: dict) -> dict:
+    """`attribute[code]` answers -> custom_fields keyed by question label.
+
+    The portal stores answers under the question's label, so staff see one
+    format whichever way the report arrived. Unknown codes, a value outside a
+    list's options and a missing required answer are 400s: silently dropping
+    any of them would file a report without the information the town asked
+    for.
+    """
+    questions = {str(q["id"]): q for q in _custom_questions(service)}
+    answers: dict = {}
+    unknown = []
+    for name, values in fields.items():
+        if not (name.startswith("attribute[") and name.endswith("]")):
+            continue
+        code = name[len("attribute["):-1]
+        question = questions.get(code)
+        if question is None:
+            unknown.append(code)
+            continue
+        values = [v.strip() for v in values if v and v.strip()]
+        if any(len(v) > _ATTRIBUTE_VALUE_MAX for v in values):
+            raise HTTPException(status_code=400, detail=f"attribute[{code}] is too long")
+        if not values:
+            continue
+        options = _question_options(question)
+        datatype = _QUESTION_DATATYPES.get(question.get("type"), "string")
+        if datatype in ("singlevaluelist", "multivaluelist") and options:
+            bad = [v for v in values if v not in options]
+            if bad:
+                raise HTTPException(status_code=400,
+                                    detail=f"attribute[{code}] must be one of the service definition's values")
+        if datatype == "multivaluelist" and options:
+            answers[question["label"]] = values
+        else:
+            if len(values) > 1:
+                raise HTTPException(status_code=400, detail=f"attribute[{code}] takes a single value")
+            answers[question["label"]] = values[0]
+    if unknown:
+        raise HTTPException(status_code=400,
+                            detail="Unknown attribute code(s) for this service: " + ", ".join(sorted(unknown)[:10]))
+    missing = [code for code, q in questions.items() if q.get("required") and q["label"] not in answers]
+    if missing:
+        raise HTTPException(status_code=400,
+                            detail="Required attribute(s) missing: " + ", ".join(f"attribute[{c}]" for c in missing))
+    return answers
+
+
+@spec_router.post("/requests.json", status_code=status.HTTP_201_CREATED,
+                  dependencies=[Depends(check_jurisdiction)])
+@spec_router.post("/requests.xml", status_code=status.HTTP_201_CREATED,
+                  dependencies=[Depends(check_jurisdiction)])
+async def create_request_open311(request: Request, db: AsyncSession = Depends(get_db)):
+    """GeoReport v2 POST Service Request (third-party clients; api_key required).
+
+    Form-encoded or JSON. Answers `[{"service_request_id", "service_notice",
+    "account_id"}]`. Requires a valid, unrevoked `api_key` unless an admin has
+    turned on anonymous Open311 submissions. The town's own portal does not
+    come through here; see the first-party note above `create_request`.
+    """
+    from pydantic import ValidationError
+    from app.services import open311_keys
+
+    fields = await _read_spec_fields(request)
+    config = await open311_keys.read_settings(db)
+    if not open311_keys.jurisdiction_matches(config.jurisdiction_id, _first(fields, "jurisdiction_id")):
+        raise open311_format.Open311Error(400, "jurisdiction_id is not served by this endpoint")
+
+    presented = _first(fields, "api_key")
+    key = None
+    if presented:
+        key = await open311_keys.authenticate(db, presented)
+        if key is None:
+            raise open311_format.Open311Error(403, "Invalid or revoked api_key")
+        if not open311_keys.hit_key_limit(key):
+            raise open311_format.Open311Error(429, "Rate limit exceeded for this api_key. Try again in a minute.",
+                                              {"Retry-After": "60"})
+    else:
+        if not config.allow_anonymous_submissions:
+            raise open311_format.Open311Error(403, "api_key is required. Contact the town to request one.")
+        if not open311_keys.hit_anonymous_limit(rate_limit_key(request)):
+            raise open311_format.Open311Error(429, "Rate limit exceeded. Try again in a minute.",
+                                              {"Retry-After": "60"})
+
+    service_code = _first(fields, "service_code")
+    if not service_code:
+        raise HTTPException(status_code=400, detail="service_code is required")
+    service = (await db.execute(
+        select(ServiceDefinition).where(ServiceDefinition.service_code == service_code,
+                                        ServiceDefinition.is_active == True)
+    )).scalar_one_or_none()
+    if service is None:
+        raise HTTPException(status_code=400, detail=f"Invalid service code: {service_code}")
+
+    lat, long = _spec_float(fields, "lat"), _spec_float(fields, "long")
+    if (lat is None) != (long is None):
+        raise HTTPException(status_code=400, detail="lat and long must be sent together")
+
+    address = _first(fields, "address_string")
+    zipcode = _first(fields, "zipcode")
+    custom_fields = _map_attributes(service, fields)
+    if zipcode:
+        if address and zipcode not in address:
+            address = f"{address} {zipcode}"[:500]
+        elif not address:
+            custom_fields["ZIP code"] = zipcode
+
+    email = _first(fields, "email")
+    account_id = _first(fields, "account_id")
+    _first(fields, "device_id")  # accepted and length-checked; not stored (see docs/API.md)
+    media = [m.strip() for m in (fields.get("media_url") or []) if m and m.strip()][:3]
+
+    try:
+        request_data = _Open311RequestCreate(
+            service_code=service_code,
+            description=_first(fields, "description") or "",
+            address=address,
+            lat=lat,
+            long=long,
+            first_name=_first(fields, "first_name"),
+            last_name=_first(fields, "last_name"),
+            email=email,
+            phone=_first(fields, "phone"),
+            media_urls=media,
+            custom_fields=custom_fields,
+            is_public=True,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=open311_format.validation_text(exc.errors()))
+    if not request_data.email:
+        # Optional in GeoReport v2. A unique placeholder fills the NOT NULL
+        # column, as manual intake does; no email is sent to it, and
+        # resident_index ignores `.local` placeholders. Assigned after
+        # validation because EmailStr refuses the reserved `.local` domain.
+        request_data.email = f"open311-{uuid.uuid4().hex[:8]}@intake.local"
+
+    audit_extra = {"channel": "open311"}
+    if key is not None:
+        audit_extra.update({"api_key_id": key.id, "api_key_name": key.name, "api_key_prefix": key.key_prefix})
+    else:
+        audit_extra["api_key_id"] = None
+    if account_id:
+        audit_extra["account_id"] = account_id
+
+    created = await _intake_resident_report(
+        db, request_data, source="open311", notify_resident=bool(email), audit_extra=audit_extra,
+    )
+    if key is not None:
+        await open311_keys.touch(db, key)
+
+    pending = getattr(created, "photos_pending_review", 0) or 0
+    notice = (f"{pending} photo(s) will be published after a staff check." if pending else None)
+    payload = [{
+        "service_request_id": created.service_request_id,
+        "service_notice": notice,
+        "account_id": account_id,
+    }]
+    return open311_format.render(request.url.path, "service_requests", payload, status_code=201)
+
+
+_PUBLIC_PHOTO_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+
+
+@router.get("/public/requests/{request_id}/media/{index}")
+async def get_public_request_photo(request_id: str, index: int, db: AsyncSession = Depends(get_db)):
+    """One published photo of a report, as an image (public).
+
+    The target of Open311 `media_url`. Serves only `media_urls` -- photos
+    already redacted and published on the public tracker -- never a photo
+    held for review. Same visibility as the public detail endpoint, which
+    already returns these photos inline as base64.
+    """
+    import base64
+    from fastapi import Response
+
+    row = (await db.execute(
+        select(ServiceRequest.media_urls).where(
+            ServiceRequest.service_request_id == request_id, *direct_link_filters())
+    )).first()
+    media = list((row[0] if row else None) or [])
+    if index < 0 or index >= len(media) or not isinstance(media[index], str):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    value = media[index]
+    if not value.startswith("data:"):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    header, _, encoded = value.partition(",")
+    mime = header[5:].split(";", 1)[0].strip().lower()
+    if mime not in _PUBLIC_PHOTO_TYPES or ";base64" not in header:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    try:
+        content = base64.b64decode(encoded, validate=False)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return Response(content=content, media_type=mime, headers={
+        "Cache-Control": "public, max-age=300",
+        "Content-Security-Policy": "default-src 'none'; sandbox",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
+# Admin endpoints for Open311 keys and switches (app/api/open311_admin.py).
+from app.api import open311_admin  # noqa: E402
+
+router.include_router(open311_admin.router, prefix="/admin")
+
+# Last, so every GeoReport v2 route declared above is copied in with its
+# spec-error route class.
+router.include_router(spec_router)

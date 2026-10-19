@@ -24,7 +24,7 @@ function checkValue(kind: FieldKind, raw: string): { ok: boolean; msg: string } 
     if (kind === 'url') {
         return /^https?:\/\/.+/i.test(v)
             ? { ok: true, msg: 'Looks like a valid web address' }
-            : { ok: false, msg: 'Web addresses usually start with https://' };
+            : { ok: false, msg: 'Web addresses start with https://' };
     }
     if (kind === 'email') {
         return EMAIL_RE.test(v)
@@ -71,7 +71,7 @@ export function diagnosePaste(raw: string): PasteProblem | null {
 
     if (INVISIBLE_RE.test(raw)) {
         return {
-            label: 'Contains invisible characters (from copying out of a document). These will make the key fail.',
+            label: 'Contains invisible characters from copying out of a document. These break the key.',
             fixed: raw.replace(INVISIBLE_RE, ''),
         };
     }
@@ -88,7 +88,7 @@ export function diagnosePaste(raw: string): PasteProblem | null {
 
     const unquoted = raw.trim().replace(SMART_QUOTES, '');
     if (unquoted !== raw.trim() && unquoted.length > 0) {
-        return { label: 'Wrapped in quotes. Providers do not expect them.', fixed: unquoted };
+        return { label: 'Wrapped in quotes. Remove them.', fixed: unquoted };
     }
 
     if (raw !== raw.trim()) {

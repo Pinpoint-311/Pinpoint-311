@@ -195,6 +195,7 @@ class _Layer:
         self.name = "Draft redistricting overlay"
         self.is_active = is_active
         self.show_on_resident_portal = show_on_resident_portal
+        self.geojson = {"type": "FeatureCollection", "features": []}
 
 
 class _Admin:
@@ -238,21 +239,21 @@ async def test_a_hidden_layer_answers_404_not_403():
 @pytest.mark.asyncio
 async def test_a_published_layer_is_still_public():
     """The resident portal fetches layers by id; breaking that breaks the map."""
+    import json
     layer = _Layer()
-    assert (
-        await map_layers.get_layer(layer_id=1, db=_Db([[layer]]), current_user=None)
-        is layer
-    )
+    response = await map_layers.get_layer(layer_id=1, db=_Db([[layer]]), current_user=None)
+    body = json.loads(response.body)
+    assert body["id"] == 1 and body["name"] == layer.name
+    # The public shape: no context-layer settings ride along.
+    assert "staff_properties" not in body and "available_properties" not in body
 
 
 @pytest.mark.asyncio
 async def test_an_admin_can_still_read_a_hidden_layer():
     """The admin console edits unpublished layers by id."""
     layer = _Layer(show_on_resident_portal=False)
-    assert (
-        await map_layers.get_layer(layer_id=1, db=_Db([[layer]]), current_user=_Admin())
-        is layer
-    )
+    out = await map_layers.get_layer(layer_id=1, db=_Db([[layer]]), current_user=_Admin())
+    assert out.id == 1 and out.show_on_resident_portal is False
 
 
 @pytest.mark.asyncio

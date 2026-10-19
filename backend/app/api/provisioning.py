@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import create_access_token, get_password_hash
+from app.core.auth import create_access_token, create_session_token, get_password_hash
 from app.core.config import get_settings
 from app.core.encryption import encrypt
 from app.core.managed import (
@@ -42,7 +42,9 @@ def require_provisioning_token(x_provisioning_token: str = Header(default="")) -
     if not settings.provisioning_token:
         # Endpoints only exist when the deployment opts in (A4).
         raise HTTPException(status_code=404, detail="Provisioning API is not enabled")
-    if not hmac.compare_digest(x_provisioning_token, settings.provisioning_token):
+    # Bytes, not str: compare_digest raises TypeError on a str holding non-ASCII,
+    # which turned a junk header from an unauthenticated caller into a 500.
+    if not hmac.compare_digest(x_provisioning_token.encode("utf-8"), settings.provisioning_token.encode("utf-8")):
         raise HTTPException(status_code=401, detail="Invalid provisioning token")
     return "orchestrator"
 
@@ -195,12 +197,18 @@ def _verify_break_glass(token: str, key: str) -> dict:
     expected = base64.urlsafe_b64encode(
         hmac.new(key.encode(), payload, hashlib.sha256).digest()
     ).rstrip(b"=").decode()
-    if not hmac.compare_digest(sig, expected):
+    # Compared as bytes: compare_digest raises TypeError on a str holding
+    # non-ASCII, so an unauthenticated caller could turn this into a 500.
+    if not hmac.compare_digest(sig.encode("utf-8"), expected.encode("ascii")):
         raise HTTPException(status_code=401, detail="Invalid break-glass token signature")
-    claims = json.loads(payload)
+    try:
+        claims = json.loads(payload)
+        exp = float(claims.get("exp", 0))
+    except (ValueError, TypeError, AttributeError):
+        raise HTTPException(status_code=401, detail="Malformed break-glass token")
     if claims.get("typ") != "state_ops_break_glass":
         raise HTTPException(status_code=401, detail="Wrong token type")
-    if datetime.now(timezone.utc).timestamp() > float(claims.get("exp", 0)):
+    if datetime.now(timezone.utc).timestamp() > exp:
         raise HTTPException(status_code=401, detail="Break-glass token expired")
     return claims
 
@@ -224,6 +232,27 @@ async def exchange_break_glass(
         raise HTTPException(status_code=404, detail="Provisioning API is not enabled")
 
     claims = _verify_break_glass(body.token, settings.provisioning_token)
+
+    # Single use. The signature proves the panel minted it and `exp` bounds
+    # it, but neither says "already redeemed": a token copied out of a log or a
+    # chat could be exchanged again and again until it expired. Burned in the
+    # database (not Redis or memory) so the refusal holds across workers,
+    # restarts and a cache outage. Keyed on the panel's jti when it sends one,
+    # else on the signed payload itself, which is unique per token.
+    from app.services import one_time
+
+    burn_id = str(claims.get("jti") or body.token.split(".", 1)[0])
+    if not await one_time.burn(db, "break_glass", burn_id):
+        await AuditService.log_event(
+            db,
+            event_type="break_glass_access",
+            success=False,
+            username=f"state-ops:{str(claims.get('actor', ''))[:150]}"[:100],
+            session_id=str(claims.get("jti")),
+            failure_reason="Break-glass token already used",
+        )
+        raise HTTPException(status_code=401, detail="Break-glass token already used")
+
     ops_actor = str(claims.get("actor", ""))[:150]
     username = f"state-ops:{ops_actor}"[:100]
 
@@ -245,9 +274,8 @@ async def exchange_break_glass(
         timezone.utc
     )
     ttl = min(remaining, timedelta(minutes=BREAK_GLASS_MAX_MINUTES))
-    access_token = create_access_token(
-        data={"sub": user.username, "actor_type": "state_ops", "jti": claims.get("jti")},
-        expires_delta=ttl,
+    access_token = create_session_token(
+        user, expires_delta=ttl, actor_type="state_ops", jti=claims.get("jti"),
     )
     await AuditService.log_event(
         db,

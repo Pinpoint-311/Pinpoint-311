@@ -5,7 +5,7 @@ from typing import List
 
 from app.db.session import get_db
 from app.models import Department, User
-from app.schemas import DepartmentCreate, DepartmentResponse
+from app.schemas import DepartmentCreate, DepartmentResponse, DepartmentUpdate
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.admin_audit import record_admin_action
 
@@ -58,6 +58,43 @@ async def get_department(
     dept = result.scalar_one_or_none()
     if not dept:
         raise HTTPException(status_code=404, detail="Department not found")
+    return dept
+
+
+@router.put("/{dept_id}", response_model=DepartmentResponse)
+async def update_department(
+    dept_id: int,
+    dept_data: DepartmentUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin)
+):
+    """Edit a department's name, description or routing email (admin only).
+
+    The admin console has always had an Edit Department form calling this
+    route, but the route did not exist, so every edit failed.
+    """
+    result = await db.execute(select(Department).where(Department.id == dept_id))
+    dept = result.scalar_one_or_none()
+    if not dept:
+        raise HTTPException(status_code=404, detail="Department not found")
+
+    changes = dept_data.model_dump(exclude_unset=True)
+    if "name" in changes:
+        if not changes["name"]:
+            raise HTTPException(status_code=400, detail="A department needs a name.")
+        clash = await db.execute(
+            select(Department).where(Department.name == changes["name"], Department.id != dept_id))
+        if clash.scalar_one_or_none():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Department name already exists")
+    for field, value in changes.items():
+        setattr(dept, field, value)
+    await db.commit()
+    await db.refresh(dept)
+    await record_admin_action(
+        db, event_type="department_updated", actor=_,
+        details={"department_id": dept.id, "name": dept.name, "fields": sorted(changes)},
+    )
     return dept
 
 

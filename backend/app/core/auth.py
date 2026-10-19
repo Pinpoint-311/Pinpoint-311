@@ -46,6 +46,55 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
+def create_session_token(user, expires_delta: Optional[timedelta] = None, **extra) -> str:
+    """Mint a session token bound to this account's current session generation.
+
+    `uid` pins the token to this row (a deleted-and-recreated username does not
+    inherit the old account's sessions) and `tv` to `users.token_version`, which
+    get_current_user compares on every request. Every place that signs a user
+    in should come through here rather than calling create_access_token with a
+    bare `sub`, or its tokens survive sign-out.
+    """
+    data = {
+        "sub": user.username,
+        "role": user.role,
+        "uid": user.id,
+        "tv": int(getattr(user, "token_version", 0) or 0),
+    }
+    data.update({k: v for k, v in extra.items() if v is not None})
+    return create_access_token(data, expires_delta=expires_delta)
+
+
+def session_is_current(payload: dict, user) -> bool:
+    """Has this token been revoked since it was issued?
+
+    Compared against the users row the caller has already loaded, so the
+    check costs no extra query. Tokens minted before `tv` existed carry no
+    claim and read as generation 0, matching the column default -- the deploy
+    does not sign anyone out, but the first bump ends those sessions too.
+    """
+    uid = payload.get("uid")
+    if uid is not None and uid != user.id:
+        return False
+    try:
+        tv = int(payload.get("tv", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    return tv == int(getattr(user, "token_version", 0) or 0)
+
+
+def revoke_user_sessions(user) -> None:
+    """End every session this account has open (caller commits).
+
+    An atomic SQL increment rather than a read-modify-write, so two concurrent
+    revocations cannot collapse into one bump.
+    """
+    from sqlalchemy import func
+    from app.models import User
+
+    user.token_version = func.coalesce(User.token_version, 0) + 1
+
+
 def decode_token(token: str) -> dict:
     try:
         payload = jwt.decode(token, settings.secret_key, algorithms=[settings.algorithm])
@@ -95,7 +144,14 @@ async def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Inactive user",
         )
-    
+
+    if not session_is_current(payload, user):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This session has ended. Sign in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     return user
 
 

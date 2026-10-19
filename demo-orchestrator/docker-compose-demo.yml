@@ -64,7 +64,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "${DEMO_BACKEND_PORT:-9000}:8000"
+      - "127.0.0.1:${DEMO_BACKEND_PORT:-9000}:8000"  # loopback: reached via the proxy
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8000/api/health" ]
       interval: 5s
@@ -105,7 +105,7 @@ services:
     image: wwf-open-source-311-template-frontend:latest
     restart: "no"
     ports:
-      - "${DEMO_FRONTEND_PORT:-9100}:80"
+      - "127.0.0.1:${DEMO_FRONTEND_PORT:-9100}:80"  # loopback: reached via the proxy
     deploy:
       resources:
         limits:

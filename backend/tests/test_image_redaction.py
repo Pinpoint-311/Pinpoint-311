@@ -513,11 +513,39 @@ async def test_a_vision_outage_withholds_the_photo_rather_than_publishing_it(mon
         raise RuntimeError("vision down")
     monkeypatch.setattr("app.services.cloud_moderation.vision_annotate", boom)
     _configure(monkeypatch, "google")
+
+    # With no on-server detector to fall back to, nothing looked at it: withheld.
+    async def unusable(_provider):
+        return False
+    monkeypatch.setattr(ir, "_usable", unusable)
     verdict, batch = await ir.screen_and_redact([PHOTO])
     assert not verdict.should_block
     assert batch.media == []
     assert "provider-error" in batch.skipped
     assert batch.withheld == [{"media": PHOTO, "reason": "provider-error"}]
+
+
+@pytest.mark.asyncio
+async def test_a_vision_outage_is_screened_on_server_when_it_can_be(monkeypatch, spy):
+    """Same outage, but the on-server detectors are available: the photo is
+    screened by them (as the AWS/Azure path already does) and the fallback is
+    recorded -- it is never published unlooked-at."""
+    async def boom(raw, features):
+        raise RuntimeError("vision down")
+    monkeypatch.setattr("app.services.cloud_moderation.vision_annotate", boom)
+    _configure(monkeypatch, "google")
+    seen = {}
+
+    async def local_redact(media, provider, faces, plates):
+        seen["provider"] = provider
+        return ir.RedactionResult(media, faces=0, changed=False, skipped_reason="no-detections")
+    async def usable(_provider):
+        return True
+    monkeypatch.setattr(ir, "_usable", usable)
+    monkeypatch.setattr(ir, "redact_image", local_redact)
+    _, batch = await ir.screen_and_redact([PHOTO])
+    assert seen["provider"] == "local"
+    assert batch.withheld == []
 
 
 @pytest.mark.asyncio

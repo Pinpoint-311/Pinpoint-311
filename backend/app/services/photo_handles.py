@@ -224,6 +224,11 @@ class ResolvedMedia:
         # vanish between the client and the log.
         self.overflow: List[str] = []
         self.blocked: bool = False
+        # Which handles carried the blocked verdict. A resident submission only
+        # needs `blocked` -- it refuses the report outright -- but staff intake
+        # does not image-moderate, so it asks for these photos inline instead
+        # and has to be able to name them.
+        self.blocked_handles: List[str] = []
         self.faces: int = 0
         self.plates: int = 0
         self.length: int = 0
@@ -264,6 +269,7 @@ async def resolve(db, media: Optional[List[Any]]) -> ResolvedMedia:
 
         if row.verdict == "blocked":
             out.blocked = True
+            out.blocked_handles.append(item)
             continue
         if row.verdict != "ready" or not row.media:
             # Screening never produced bytes we can publish -- Vision timed out,

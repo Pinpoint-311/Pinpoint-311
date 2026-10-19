@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from app.services.ai.base import (
-    AIProvider, analysis_fallback, parse_json_response, split_data_url,
+    AIProvider, AIProviderError, analysis_fallback, parse_json_response, split_data_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,3 +79,22 @@ class BedrockProvider(AIProvider):
         except Exception as e:  # noqa: BLE001 — providers must never raise
             logger.warning(f"[AI/bedrock] analysis failed: {e}")
             return analysis_fallback(str(e))
+
+    def _text_sync(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        resp = self._client().converse(
+            modelId=self.model,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"temperature": temperature, "maxTokens": max_tokens},
+        )
+        parts = resp["output"]["message"]["content"]
+        return "".join(p.get("text", "") for p in parts)
+
+    async def complete_text(self, prompt: str, temperature: float = 0.3,
+                            max_tokens: int = 4096) -> str:
+        if not self.region:
+            raise AIProviderError("Bedrock not configured (region missing)")
+        try:
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self._text_sync, prompt, temperature, max_tokens)
+        except Exception as e:  # noqa: BLE001
+            raise AIProviderError(f"Bedrock: {e}") from e

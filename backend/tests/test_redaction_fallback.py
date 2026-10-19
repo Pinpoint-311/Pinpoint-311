@@ -204,3 +204,11 @@ def test_the_test_button_asks_the_detector_rather_than_the_credential_store():
     source = inspect.getsource(system._test_redaction)
     assert "detect(" in source, "the check must exercise the detector"
     assert "is None" in source, "and must react to it being unable to answer"
+
+
+def test_the_probe_is_big_enough_for_azure_face():
+    """Azure Face rejects files under 1 KB with InvalidImageSize, which the Test
+    button reported as rejected credentials (seen live on a working key)."""
+    probe = _probe_png()
+    assert len(probe) >= 1024
+    assert probe == _probe_png(), "probe should be deterministic"

@@ -2,13 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.orm import selectinload
-from typing import List
+from typing import Any, Dict, List
 
 from app.db.session import get_db
 from app.models import ServiceDefinition, Department, User
 from app.schemas import ServiceCreate, ServiceResponse, ServiceUpdate, ServiceReorderRequest
 from app.core.auth import get_current_admin, get_current_staff
 from app.services.admin_audit import record_admin_action
+from app.services import location_policy
 
 router = APIRouter()
 
@@ -23,38 +24,31 @@ async def list_services(
         select(ServiceDefinition)
         .where(ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
         .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
     services = result.scalars().all()
     
+    # Serialised here, while every relationship is loaded, rather than handing
+    # ORM objects to FastAPI to read after the endpoint returns -- that read is
+    # outside the async context, so any attribute needing a load raised
+    # MissingGreenlet ("assigned_department") and the resident got a 500.
+    payload = [ServiceResponse.model_validate(service).model_dump() for service in services]
+
     # Get target language from header
     accept_language = request.headers.get('Accept-Language', 'en')
     target_lang = accept_language.split(',')[0].split('-')[0].strip()
-    
-    # If not English, translate the response (not the database objects)
+
+    # If not English, translate the response (not the database objects). It
+    # starts from the full payload: the hand-built dict this replaced left out
+    # display_order, location_mode and hidden_from_public, so a resident
+    # browsing in Spanish saw a hidden category as public and a location-
+    # required one as optional.
     if target_lang != 'en':
         from app.services.translation import translate_service_response
-        translated_services = []
-        for service in services:
-            service_dict = {
-                "id": service.id,
-                "service_code": service.service_code,
-                "service_name": service.service_name,
-                "description": service.description,
-                "icon": service.icon,
-                "is_active": service.is_active,
-                "sla_hours": service.sla_hours,
-                "routing_mode": service.routing_mode,
-                "routing_config": service.routing_config,
-                "assigned_department_id": service.assigned_department_id,
-                "departments": [{"id": d.id, "name": d.name, "description": d.description, "is_active": d.is_active, "routing_email": d.routing_email} for d in service.departments],
-                "assigned_department": {"id": service.assigned_department.id, "name": service.assigned_department.name, "description": service.assigned_department.description, "is_active": service.assigned_department.is_active, "routing_email": service.assigned_department.routing_email} if service.assigned_department else None
-            }
-            translated = await translate_service_response(service_dict, target_lang)
-            translated_services.append(translated)
-        return translated_services
-    
-    return services
+        return [await translate_service_response(item, target_lang) for item in payload]
+
+    return payload
 
 
 @router.get("/all", response_model=List[ServiceResponse])
@@ -66,9 +60,10 @@ async def list_all_services(
     result = await db.execute(
         select(ServiceDefinition)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
         .order_by(ServiceDefinition.display_order, ServiceDefinition.service_name)
     )
-    return result.scalars().all()
+    return [ServiceResponse.model_validate(service).model_dump() for service in result.scalars().all()]
 
 
 # NOTE: /reorder MUST be defined BEFORE /{service_id} routes,
@@ -107,6 +102,11 @@ async def create_service(
             detail="Service code already exists"
         )
     
+    try:
+        location_policy.validate_routing(service_data.location_mode, service_data.routing_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
     departments = []
     if service_data.department_ids:
         for dept_id in service_data.department_ids:
@@ -126,6 +126,8 @@ async def create_service(
         description=service_data.description,
         icon=service_data.icon,
         sla_hours=service_data.sla_hours,
+        location_mode=service_data.location_mode,
+        hidden_from_public=service_data.hidden_from_public,
         display_order=service_data.display_order if service_data.display_order else max_order + 1
     )
     service.departments = departments
@@ -142,6 +144,7 @@ async def create_service(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service.id)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     return result.scalar_one()
 
@@ -216,11 +219,42 @@ async def get_service(service_id: int, db: AsyncSession = Depends(get_db)):
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id, ServiceDefinition.is_active == True)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     service = result.scalar_one_or_none()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     return service
+
+
+def _agency_changes(before: Any, after: Any) -> Dict[str, Any]:
+    """Agencies added, removed or edited between two routing configs, by name."""
+    from app.services.road_matching import _as_list
+
+    def agencies(config: Any) -> Dict[str, Any]:
+        items = (config or {}).get("third_party_contacts") if isinstance(config, dict) else None
+        out: Dict[str, Any] = {}
+        for agency in items if isinstance(items, list) else []:
+            if isinstance(agency, dict) and str(agency.get("name") or "").strip():
+                roads = _as_list(agency.get("roads")) or _as_list(agency.get("road_list"))
+                out[str(agency["name"]).strip()] = (
+                    sorted(r.lower() for r in roads),
+                    tuple(str(agency.get(k) or "") for k in ("phone", "email", "url", "message")),
+                )
+        return out
+
+    old, new = agencies(before), agencies(after)
+    changes: Dict[str, Any] = {}
+    added = sorted(set(new) - set(old))
+    removed = sorted(set(old) - set(new))
+    edited = sorted(n for n in set(old) & set(new) if old[n] != new[n])
+    if added:
+        changes["agencies_added"] = [{"name": n, "roads": len(new[n][0])} for n in added]
+    if removed:
+        changes["agencies_removed"] = removed
+    if edited:
+        changes["agencies_changed"] = edited
+    return changes
 
 
 @router.put("/{service_id}", response_model=ServiceResponse)
@@ -241,8 +275,12 @@ async def update_service(
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
     
+    old_name = service.service_name
+    _tracked = ("service_name", "description", "icon", "is_active", "routing_mode", "routing_config",
+                "assigned_department_id", "display_order", "sla_hours", "location_mode", "hidden_from_public")
+    before = {f: getattr(service, f, None) for f in _tracked}
     if service_data.service_name is not None:
-        service.service_name = service_data.service_name
+        service.service_name = service_data.service_name.strip()
     if service_data.description is not None:
         service.description = service_data.description
     if service_data.icon is not None:
@@ -260,6 +298,20 @@ async def update_service(
     if service_data.sla_hours is not None:
         # 0 explicitly clears the SLA back to "none"; omitting the field leaves it.
         service.sla_hours = service_data.sla_hours or None
+    if service_data.location_mode is not None:
+        service.location_mode = service_data.location_mode
+    visibility_changed = (
+        service_data.hidden_from_public is not None
+        and bool(service_data.hidden_from_public) != bool(service.hidden_from_public)
+    )
+    if service_data.hidden_from_public is not None:
+        service.hidden_from_public = service_data.hidden_from_public
+    # Checked on the resulting state, so switching routing to road-based on a
+    # category that hides location is refused as well as the reverse.
+    try:
+        location_policy.validate_routing(service.location_mode, service.routing_mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
     if service_data.department_ids is not None:
         departments = []
@@ -270,7 +322,42 @@ async def update_service(
                 departments.append(dept)
         service.departments = departments
     
+    # Reports carry the category name they were filed under, for lists and the
+    # public map. A rename is a correction to the label, so it follows through
+    # to them; the category itself (service_code) is unchanged.
+    if service.service_name != old_name:
+        from sqlalchemy import update as sa_update
+        from app.models import ServiceRequest
+        await db.execute(
+            sa_update(ServiceRequest)
+            .where(ServiceRequest.service_code == service.service_code)
+            .values(service_name=service.service_name)
+        )
+
     await db.commit()
+
+    # What actually changed, not what the form sent (it sends everything).
+    changed_fields = sorted(f for f in _tracked if getattr(service, f, None) != before[f])
+    if changed_fields:
+        details = {"service_code": service.service_code, "service_name": service.service_name,
+                   "fields": changed_fields}
+        # Which third-party agencies came and went, by name. An agency copied
+        # in from another category, or imported from a file, is otherwise just
+        # "routing_config changed" in the log.
+        if "routing_config" in changed_fields:
+            details.update(_agency_changes(before["routing_config"], service.routing_config))
+        await record_admin_action(
+            db, event_type="service_updated", actor=_, details=details,
+        )
+
+    # Its own audit event: taking a whole category off the public map is a
+    # records decision someone may later need to show was made, and by whom.
+    if visibility_changed:
+        await record_admin_action(
+            db, event_type="service_public_visibility", actor=_,
+            details={"service_code": service.service_code, "service_name": service.service_name,
+                     "hidden_from_public": bool(service.hidden_from_public)},
+        )
     
     result = await db.execute(
         select(ServiceDefinition)
@@ -312,6 +399,7 @@ async def toggle_service(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id)
         .options(selectinload(ServiceDefinition.departments))
+        .options(selectinload(ServiceDefinition.assigned_department))
     )
     service = result.scalar_one_or_none()
     if not service:

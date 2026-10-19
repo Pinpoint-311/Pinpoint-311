@@ -254,6 +254,35 @@ async def _backup_age_check() -> Dict[str, Any]:
         return _check("backup", "Backup freshness", "unknown", None, "Could not read backup status.")
 
 
+async def _backup_tools_check() -> Dict[str, Any]:
+    """Can a backup be taken and restored on this image, right now?
+
+    Backup freshness only notices a broken backup after the next scheduled run
+    has failed; 1.9.0-rc1 shipped without gpg and nobody knew until 02:00. This
+    checks the programs (and a real gpg round trip) every scan, so an admin
+    hears within 15 minutes of a bad deploy. Skipped when backups are not set up.
+    """
+    try:
+        from app.services.backup_service import get_backup_config
+        from app.services import runtime_tools
+        if not await get_backup_config():
+            return _check("backup_tools", "Backups can run", "ok", "not configured",
+                          "Backups are not set up, so there is nothing to check.")
+        problems = runtime_tools.backup_readiness()
+        if problems:
+            return _check(
+                "backup_tools", "Backups can run", "critical", len(problems),
+                "Backups will fail on this server: " + "; ".join(problems) + ".",
+                "Redeploy an image that includes these programs, then run a backup from "
+                "Compliance > Database Backups to confirm.",
+            )
+        return _check("backup_tools", "Backups can run", "ok", 0,
+                      "Backup programs are installed and encryption works.")
+    except Exception as e:
+        logger.warning(f"[proactive] backup tools check failed: {e}")
+        return _check("backup_tools", "Backups can run", "unknown", None, "Could not check backup programs.")
+
+
 async def _redis_check() -> Dict[str, Any]:
     try:
         import redis.asyncio as aioredis
@@ -318,6 +347,8 @@ async def _kms_check() -> Dict[str, Any]:
         # matters. Wrapping a throwaway key costs one KMS call every fifteen
         # minutes and answers the question as of now.
         actual = pii_crypto.probe_backend()
+        if actual == selected and selected == "azure":
+            return _azure_key_posture_check()
         if actual == selected:
             return _check("kms", "Resident data encryption", "ok", actual,
                           f"Resident data is being encrypted with your {actual} key.")
@@ -330,13 +361,58 @@ async def _kms_check() -> Dict[str, Any]:
                 "Act today. Check that the key still exists and has not been scheduled "
                 "for deletion, and that its credentials have not expired. Records saved "
                 "before this started may already be unreadable, and if a deletion is "
-                "pending it can only be cancelled inside the waiting period."
+                "pending it can only be canceled inside the waiting period."
             ),
         )
     except Exception:
         logger.debug("KMS health probe failed", exc_info=True)
         return _check("kms", "Resident data encryption", "unknown", None,
                       "Could not determine which key is encrypting resident data.")
+
+
+def _azure_key_posture_check() -> Dict[str, Any]:
+    """The Azure key works; can it still be lost?
+
+    Losing the key is losing every resident's contact details, in every backup
+    too. Two settings decide whether a mistake is recoverable, and both are on
+    the key itself, where the app can read them:
+
+      * purge protection: without it ("...+Purgeable"), a deleted key can be
+        purged at once, and nothing brings it back;
+      * an expiry date (Azure Policy recommends one): past it, every unwrap is
+        refused -- recoverable by extending the date, if someone notices first.
+    """
+    import time
+    from app.core import azure_keyvault
+    try:
+        posture = azure_keyvault.key_posture()
+    except Exception:
+        return _check("kms", "Resident data encryption", "ok", "azure",
+                      "Resident data is being encrypted with your azure key. "
+                      "(Its deletion protection could not be read.)")
+    level = posture.get("recovery_level") or ""
+    if "Purgeable" in level or not level.startswith("Recoverable"):
+        return _check(
+            "kms", "Resident data encryption", "warning", "azure",
+            "Your Azure key is in use, but purge protection is off: a deleted key "
+            "could be purged immediately, and every resident's contact details "
+            "with it, backups included.",
+            action=("Turn on purge protection for the Key Vault (it cannot be turned "
+                    "off again), and add a CanNotDelete lock on the vault. See "
+                    "docs/DISASTER_RECOVERY.md, 'Losing the encryption key'."),
+        )
+    expires = posture.get("expires")
+    if expires and expires - time.time() < 30 * 86400:
+        days = max(0, int((expires - time.time()) // 86400))
+        return _check(
+            "kms", "Resident data encryption", "critical" if days < 7 else "warning", "azure",
+            f"Your Azure key expires in {days} day(s). After that resident data "
+            "cannot be decrypted until the date is extended.",
+            action="Extend the key's expiration date in the Key Vault, or rotate the key.",
+        )
+    return _check("kms", "Resident data encryption", "ok", "azure",
+                  f"Resident data is being encrypted with your azure key "
+                  f"(purge protection on, {posture.get('recoverable_days') or '?'}-day recovery window).")
 
 
 async def _redaction_check() -> Dict[str, Any]:
@@ -349,18 +425,23 @@ async def _redaction_check() -> Dict[str, Any]:
 
     The dispatch now degrades to on-server detection rather than to nothing, so
     the harm is contained. But degraded is still not what the town selected: it
-    is paying for Azure and getting OpenCV, which finds fewer faces. That is
-    worth a warning rather than silence.
+    is paying for Azure and getting the on-server fallback, which finds fewer
+    faces. That is worth a warning rather than silence.
+
+    The on-server plate model is checked too: selected but missing or broken,
+    every photo is withheld (fail closed) -- safe, but not what anyone wants.
     """
     try:
         from app.services.image_redaction import (
-            _usable, effective_provider, resolve_provider,
+            _usable, effective_provider, face_fallback, plate_detector, resolve_provider,
         )
+
+        plate_warning = await _plate_model_check(plate_detector)
 
         selected = await resolve_provider()
         if not selected:
-            return _check("redaction", "Photo redaction", "ok", "off",
-                          "Photo redaction is switched off, as configured.")
+            return plate_warning or _check("redaction", "Photo redaction", "ok", "off",
+                                           "Photo redaction is switched off, as configured.")
 
         actual, degraded_from = await effective_provider(selected)
 
@@ -368,7 +449,7 @@ async def _redaction_check() -> Dict[str, Any]:
             return _check(
                 "redaction", "Photo redaction", "critical", "none",
                 "No detector is available — resident photos are being stored "
-                "without blurring faces or licence plates.",
+                "without blurring faces or license plates.",
                 action=(
                     "Check the Photo Redaction card. On-server detection needs no "
                     "account and works anywhere, so this usually means the image is "
@@ -377,22 +458,61 @@ async def _redaction_check() -> Dict[str, Any]:
             )
 
         if degraded_from:
+            fallback = await face_fallback()
+            name = "YuNet" if fallback == "yunet" else "OpenCV"
             return _check(
                 "redaction", "Photo redaction", "warning", actual,
-                f"Blurring is running on this server because {degraded_from} has no "
-                f"usable credentials. Photos are still redacted, less accurately.",
+                f"Degraded: on-server fallback in use. {degraded_from} has no usable "
+                f"credentials, so faces are being blurred on this server ({name}). "
+                f"Photos are still redacted, less accurately.",
                 action=(
                     f"Fix the {degraded_from} credentials on the Photo Redaction card, "
                     f"or choose on-server detection so the page matches what is running."
                 ),
             )
 
+        if plate_warning:
+            return plate_warning
         return _check("redaction", "Photo redaction", "ok", actual,
                       f"Faces and plates are being blurred using {actual}.")
     except Exception:
         logger.debug("Redaction health probe failed", exc_info=True)
         return _check("redaction", "Photo redaction", "unknown", None,
                       "Could not determine which detector is redacting photos.")
+
+
+async def _plate_model_check(plate_detector) -> Optional[Dict[str, Any]]:
+    """Warn when an on-server plate detector is selected and cannot run."""
+    mode = await plate_detector()
+    if mode == "yolo":
+        from app.services import onnx_detectors
+
+        status = onnx_detectors.plate_holder.status()
+        if status["present"] and not status["error"]:
+            return None
+        problem = ("its model file is missing" if not status["present"]
+                   else f"its model failed to load ({status['error'][:120]})")
+        return _check(
+            "redaction", "Photo redaction", "warning", "plate-model-unavailable",
+            f"The on-server license plate detector is selected but {problem}. "
+            f"Photos are being held back for staff review until it works.",
+            action=(f"Put {status['file']} in the models directory "
+                    f"({onnx_detectors.models_dir()}) — see docs/PHOTO_REDACTION_MODELS.md — "
+                    f"or choose text recognition on the Photo Redaction card."),
+        )
+    if mode == "redactor":
+        from app.services.image_redaction import redactor_health
+
+        health = await redactor_health()
+        if health and health.get("status") == "ok":
+            return None
+        return _check(
+            "redaction", "Photo redaction", "warning", "redactor-unavailable",
+            "The experimental EgoBlur plate detector is selected but the redactor service "
+            "is unreachable or has no model files. Photos are being held back.",
+            action="See redactor/README.md, or choose the default plate detector.",
+        )
+    return None
 
 
 async def _cpu_check(window: float = 0.4) -> Dict[str, Any]:
@@ -476,6 +596,43 @@ async def _retention_check(db) -> Dict[str, Any]:
                       "Could not determine which retention schedule is in force.")
 
 
+async def _translation_budget_check() -> Dict[str, Any]:
+    """Is translation close to, or at, the town's spend budget?
+
+    Warning at 80% of the day's or the month's character budget, critical at
+    100%. At 100% residents are being served the source text instead of a
+    translation -- deliberately, so a scraper cannot run up the bill -- and the
+    admin is the one person who can decide whether that is right today. Read
+    from the shared counters in services/translation_budget.py.
+    """
+    try:
+        from app.services import translation_budget as tb
+
+        u = await tb.usage()
+        day, month = u["day"], u["month"]
+        # Whichever period is closer to its ceiling is the one to talk about.
+        worst = max((day, month), key=lambda v: (["ok", "warning", "critical"].index(tb.status_of(v)), v["percent"]))
+        status = tb.status_of(worst)
+        which = "today's" if worst is day else "this month's"
+        resets = "at midnight UTC" if worst is day else "on the 1st (UTC)"
+        message = (
+            f"Translation has used {worst['used']:,} of {which} {worst['limit']:,}-character "
+            f"budget ({worst['percent']:g}%)."
+        )
+        if status == "critical":
+            message += f" Residents see untranslated text until it resets {resets}."
+        return _check(
+            "translation_budget", "Translation budget", status, worst["percent"], message,
+            ("Raise the budget on Settings > Service Providers > Translation Provider if this use "
+             "is expected; if it is not, the traffic is worth investigating before it resets.")
+            if status != "ok" else "",
+        )
+    except Exception as e:
+        logger.warning(f"[proactive] translation budget check failed: {e}")
+        return _check("translation_budget", "Translation budget", "unknown", None,
+                      "Could not read translation usage.")
+
+
 # Every key `collect_checks` can emit. Named here so the mute route can refuse
 # a key that is not a real check -- muting is a write, and without an allowlist
 # any admin request could insert arbitrary rows into the health table.
@@ -485,10 +642,12 @@ CHECK_KEYS = (
     "cpu",
     "db_connections",
     "backup",
+    "backup_tools",
     "redis",
     "kms",
     "redaction",
     "retention",
+    "translation_budget",
 )
 
 
@@ -500,10 +659,12 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _cpu_check(),
         await _db_connection_check(db),
         await _backup_age_check(),
+        await _backup_tools_check(),
         await _redis_check(),
         await _kms_check(),
         await _redaction_check(),
         await _retention_check(db),
+        await _translation_budget_check(),
     ]
     return checks
 

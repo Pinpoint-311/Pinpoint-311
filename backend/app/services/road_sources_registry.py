@@ -186,8 +186,8 @@ RUNTIME_FAILED = {
 # compared against neighbouring states of similar development.
 RUNTIME_PARTIAL_COVERAGE = {
     "HI": "2,075 features for the whole state -- roughly 0.3 per square mile. That is not a road network",
-    "GA": "74,140 features, 1.3 per square mile, against 18.6 in neighbouring NC. Consistent with the layer's own warning that it may be routed state highways only",
-    "VA": "74,242 features, 1.9 per square mile, against 14.8 in neighbouring MD",
+    "GA": "74,140 features, 1.3 per square mile, against 18.6 in neighboring NC. Consistent with the layer's own warning that it may be routed state highways only",
+    "VA": "74,242 features, 1.9 per square mile, against 14.8 in neighboring MD",
     "NV": "66,765 features, 0.6 per square mile; the Las Vegas metro alone should exceed that",
 }
 
@@ -997,7 +997,7 @@ KNOWN_UNVERIFIED_SOURCES: Dict[str, Dict[str, Any]] = {
         "cadence": None,
         "evidence": "https://www1.maine.gov/geolib/catalog/metadata/ng911rdss.html",
         "why_unresolved": (
-            "Maine has a distinct NG911 road dataset catalogued separately from "
+            "Maine has a distinct NG911 road dataset cataloged separately from "
             "MaineDOT Public Roads. If its endpoint is resolved it should REPLACE the "
             "ME registry entry, since NG911 outranks a DOT layer in our preference "
             "order. Keyed oddly here because ME already has a registry entry."

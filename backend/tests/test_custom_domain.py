@@ -175,6 +175,9 @@ def test_no_machines_ip_is_baked_into_the_product():
     self-hosted deployment."""
     source = (ROOT / "backend/app/api/system.py").read_text()
     assert "132.226.32.116" not in source
+    # The DNS instructions in the admin console read /domain/status instead.
+    for path in (ROOT / "frontend/src").rglob("*.ts*"):
+        assert "132.226.32.116" not in path.read_text(), path
 
 
 # ---- what the administrator is told ----

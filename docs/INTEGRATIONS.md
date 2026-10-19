@@ -311,7 +311,7 @@ instead"* in the wizard and needs the town's own Client ID and Secret.
 - Comments are deduplicated by their `external_id`.
 - Rate limited to 60/minute **per connection**, not per source address: one
   vendor's egress IP serves every town on their platform, so a per-IP bucket let
-  a busy neighbour exhaust yours.
+  a busy neighbor exhaust yours.
 - Authenticated by the per-integration token, compared with a constant-time
   check.
 - A connection whose sync direction is `push` answers 403 — it is configured to
@@ -341,9 +341,25 @@ what the UI exposes (set them via `PUT /api/integrations/{id}`):
   `asset_layer_id`.
 - `status_map_out` / `status_map_in` — override status vocabulary mapping,
   e.g. `{"in_progress": "Under Review"}`.
+- `priority_map_out` — the vendor's value for each Pinpoint priority band
+  (`high` 8–10, `medium` 5–7, `low` 1–4) or exact score (`"1"`–`"10"`); set
+  under Mapping → Priority. Without it the 1–10 score is sent, except to Accela,
+  which only accepts agency-defined priorities and gets none until it is set.
+
+  **When priority is sent.** A new report is pushed when AI triage finishes, so
+  it carries the triaged priority; if triage is slow or fails it is pushed after
+  90 seconds anyway. When staff accept the AI's score or set their own, the
+  change is sent to every linked system that can update an existing record:
+  Accela (once `priority_map_out` is set), ArcGIS (once a `priority` column is
+  in `field_map`) and the generic REST connector (once `update_path` is set —
+  `update_method` PATCH by default, body `{<priority field>: value}`). Open311 /
+  Tyler GeoReport v2 has no priority field and no update call, so priority is
+  never sent there. Failed priority updates appear under Failed syncs as
+  "Priority update" and are retried like status updates.
 - Other REST System (the generic connector — Cityworks, SDL, Edmunds, GovPilot,
   FastTrackGov, Polimorphic, etc.):
-  `create_path`, `get_path`, `list_path`, `status_path`, `auth_style`
+  `create_path`, `get_path`, `list_path`, `status_path`, `update_path`,
+  `update_method`, `auth_style`
   (`bearer` | `api_key_header` | `basic` | `query`), `auth_header`,
   `id_field`, `status_field`, `updated_field`, `list_items_field`,
   `field_map` (rename outbound fields; map a field to `null` to omit it), and

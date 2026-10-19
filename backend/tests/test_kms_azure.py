@@ -30,10 +30,24 @@ def test_azure_kms_wrap_roundtrip(monkeypatch):
             return base64.urlsafe_b64encode(nonce + ct).decode("ascii")
 
         @staticmethod
-        def decrypt(token: str) -> str:
+        def decrypt(token: str, version=None) -> str:
             blob = base64.urlsafe_b64decode(token.encode("ascii"))
             nonce, ct = blob[:12], blob[12:]
             return AESGCM(_kek).decrypt(nonce, ct, b"azurekv").decode("ascii")
+
+        # The versioned calls pii_crypto makes (see test_kms_azure_rotation.py
+        # for rotation itself): one key version here.
+        @classmethod
+        def wrap_versioned(cls, b64_plaintext: str):
+            return "v1", cls.encrypt(b64_plaintext)
+
+        @classmethod
+        def decrypt_any_version(cls, token: str) -> str:
+            return cls.decrypt(token)
+
+        @staticmethod
+        def current_key_version():
+            return "v1"
 
     monkeypatch.setattr(enc, "_kms_provider", lambda: "azure")
     # Both the package attribute and sys.modules. `_wrap_dek` reaches the real
@@ -48,7 +62,7 @@ def test_azure_kms_wrap_roundtrip(monkeypatch):
 
     token = pii.encrypt("resident@example.gov")
     assert token.startswith("pii2:")
-    # The active DEK must be wrapped under the Azure backend (tag "a").
+    # The active DEK must be wrapped under the Azure backend (tag "A", versioned).
     assert pii.active_backend() == "azure"
     # And it must decrypt back to the original.
     assert pii.decrypt(token) == "resident@example.gov"

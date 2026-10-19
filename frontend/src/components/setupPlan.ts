@@ -147,15 +147,15 @@ const VENDOR_ORDER: Vendor[] = [
  * both surfaces render the same array.
  */
 export const BACKUP_SECRETS = [
-    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name' },
-    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: 'Leave blank for AWS S3. Set it for Oracle, MinIO, Backblaze and the rest.' },
-    { key: 'BACKUP_S3_REGION', label: 'Region' },
-    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true },
+    { key: 'BACKUP_S3_BUCKET', label: 'Bucket name', help: 'A Backblaze key limited to one bucket also needs listAllBucketNames.' },
+    { key: 'BACKUP_S3_ENDPOINT', label: 'Endpoint URL', help: "Leave blank for AWS S3. For Backblaze B2, Wasabi, Oracle or MinIO, paste the S3 endpoint, like s3.us-east-005.backblazeb2.com. Azure Blob Storage isn't S3-compatible." },
+    { key: 'BACKUP_S3_REGION', label: 'Region', help: "Required. For AWS S3, the bucket's region, like us-east-1. For Backblaze, the part of the endpoint after s3., like us-east-005." },
+    { key: 'BACKUP_S3_ACCESS_KEY', label: 'Access key ID', secret: true, help: "For Backblaze, the keyID of an application key. The master key doesn't work with S3." },
     { key: 'BACKUP_S3_SECRET_KEY', label: 'Secret access key', secret: true },
 ];
 
 export const SENTRY_SECRETS = [
-    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Project Settings → Client Keys (DSN).' },
+    { key: 'SENTRY_DSN', label: 'Sentry DSN', secret: true, help: 'Sentry → Settings → Projects → your project → Client Keys (DSN). Restart Pinpoint after saving. A SENTRY_DSN environment variable takes priority.' },
 ];
 
 export function buildPlan(input: PlanInput): PlanTask[] {
@@ -179,7 +179,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
     add(IDP_VENDOR[idp], {
         id: 'identity',
         title: 'Staff sign-in',
-        blurb: 'How your staff log in. Residents never sign in — only the people who work the reports.',
+        blurb: 'How staff sign in. Residents don\u2019t need an account.',
         cap: 'identity', provider: idp, required: true,
     });
 
@@ -235,7 +235,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         add((input.redactionProvider as Vendor) || cloud, {
             id: 'safety',
             title: 'Screening and blurring',
-            blurb: 'Screens what residents write, and blurs faces and number plates in the photos they send. Abusive text is always screened, with or without this.',
+            blurb: 'Screens what residents write, and blurs faces and license plates in the photos they send. Abusive text is always screened, with or without this.',
             cap: 'redaction', provider: input.redactionProvider,
             secrets: cloud === 'azure' ? [
                 { key: 'AZURE_CONTENT_SAFETY_ENDPOINT', label: 'Content Safety endpoint', help: 'Keys and Endpoint blade of an Azure AI Content Safety resource.' },
@@ -257,7 +257,7 @@ export function buildPlan(input: PlanInput): PlanTask[] {
         add(SMS_VENDOR[input.smsProvider] ?? 'twilio', {
             id: 'sms',
             title: 'Text message notifications',
-            blurb: 'The same updates by text, for residents who give a mobile number. Email on its own is fine too.',
+            blurb: 'The same updates by text, for residents who give a mobile number. Optional if you use email.',
             cap: 'sms', provider: input.smsProvider,
         });
     }

@@ -8,6 +8,7 @@ config. Default is google — existing deployments are unchanged.
 
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -18,6 +19,27 @@ TRANSLATION_PROVIDER_KEY = "TRANSLATION_PROVIDER"
 GOOGLE_TRANSLATE_API_URL = "https://translation.googleapis.com/language/translate/v2"
 # Azure Translator: global host by default; Gov cloud uses ...microsofttranslator.us
 DEFAULT_AZURE_TRANSLATOR_ENDPOINT = "https://api.cognitive.microsofttranslator.com"
+# Where Translator lives on a resource's own subdomain.
+AZURE_CUSTOM_DOMAIN_TRANSLATOR_PATH = "/translator/text/v3.0"
+
+
+def normalise_azure_translator_endpoint(endpoint: Optional[str]) -> str:
+    """Return the base URL that `/translate` is appended to.
+
+    The global and Gov hosts serve Translator at the root. A resource's own
+    subdomain (`NAME.cognitiveservices.azure.com`, which is what the Azure
+    portal shows as "Endpoint" for an AI Services / Foundry resource) serves it
+    under /translator/text/v3.0 and answers a bare /translate with a 404 --
+    which is what a town saw live, with nothing in the error to say the path
+    was the problem. Any path pasted along with such a host (the portal's
+    sample request, or the right prefix already) is replaced by the one
+    Translator actually uses.
+    """
+    raw = (endpoint or "").strip() or DEFAULT_AZURE_TRANSLATOR_ENDPOINT
+    parts = urlsplit(raw)
+    if parts.scheme and ".cognitiveservices.azure." in parts.netloc.lower():
+        return urlunsplit((parts.scheme, parts.netloc, AZURE_CUSTOM_DOMAIN_TRANSLATOR_PATH, "", ""))
+    return raw.rstrip("/")
 
 
 class TranslationProvider:
@@ -63,7 +85,7 @@ class AzureTranslationProvider(TranslationProvider):
     def __init__(self, api_key: str, region: str, endpoint: Optional[str] = None):
         self.api_key = api_key
         self.region = region
-        self.endpoint = (endpoint or DEFAULT_AZURE_TRANSLATOR_ENDPOINT).rstrip("/")
+        self.endpoint = normalise_azure_translator_endpoint(endpoint)
 
     async def translate(self, texts, source_lang, target_lang):
         if not self.api_key:
@@ -173,7 +195,7 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure AI Translator",
-        "description": "Azure Cognitive Services Translator — for Microsoft/Azure-Government stacks.",
+        "description": "Azure AI Translator — for Microsoft and Azure Government stacks.",
         "credential_fields": [
             {"key": "AZURE_TRANSLATOR_KEY", "label": "Translator Key", "secret": True},
             {"key": "AZURE_TRANSLATOR_REGION", "label": "Region", "secret": False},
@@ -203,7 +225,124 @@ TRANSLATION_CATALOG: Dict[str, Dict[str, Any]] = {
 
 
 def catalog_for_api() -> List[Dict[str, Any]]:
-    return [{"provider": k, **v} for k, v in TRANSLATION_CATALOG.items()]
+    return [
+        {"provider": k, **v, "language_count": len(SUPPORTED_LANGUAGES.get(k, ()))}
+        for k, v in TRANSLATION_CATALOG.items()
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# Supported target languages -- the one list.
+#
+# Codes are the platform's own (Google Translate v2 codes, which is what the
+# resident portal's picker has always stored: `zh`, `zh-TW`, `he`, `jw`, `tl`,
+# `no`). Each provider lists the platform codes it can translate into; a code it
+# does not list is refused with a 400 rather than sent, billed and answered with
+# an error (or worse, with the source text echoed back as if translated).
+#
+# Static lists rather than a live `/languages` call per request: the provider's
+# list changes a few times a year, a live call is another outbound dependency
+# on the resident's page load, and refusing a code the provider has just added
+# costs a town one language until this list is updated -- whereas accepting one
+# it does not support costs money every time. Conservative on purpose: a code
+# goes in only where the provider's published language list shows it.
+#   Google:  cloud.google.com/translate/docs/languages      (v2 / NMT, 2024)
+#   Azure:   learn.microsoft.com/azure/ai-services/translator/language-support
+#   AWS:     docs.aws.amazon.com/translate/latest/dg/what-is-languages.html
+#
+# The frontend's names live in frontend/src/utils/languages.ts; which of those
+# the picker offers comes from GET /api/system/translate/languages, i.e. here.
+# --------------------------------------------------------------------------- #
+
+GOOGLE_LANGUAGES = frozenset({
+    "af", "sq", "am", "ar", "hy", "az", "eu", "be", "bn", "bs", "bg", "ca", "ceb",
+    "ny", "zh", "zh-TW", "co", "hr", "cs", "da", "nl", "en", "eo", "et", "tl", "fi",
+    "fr", "fy", "gl", "ka", "de", "el", "gu", "ht", "ha", "haw", "he", "hi", "hmn",
+    "hu", "is", "ig", "id", "ga", "it", "ja", "jw", "kn", "kk", "km", "rw", "ko",
+    "ku", "ky", "lo", "la", "lv", "lt", "lb", "mk", "mg", "ms", "ml", "mt", "mi",
+    "mr", "mn", "my", "ne", "no", "or", "ps", "fa", "pl", "pt", "pa", "ro", "ru",
+    "sm", "gd", "sr", "st", "sn", "sd", "si", "sk", "sl", "so", "es", "su", "sw",
+    "sv", "tg", "ta", "tt", "te", "th", "tr", "tk", "uk", "ur", "ug", "uz", "vi",
+    "cy", "xh", "yi", "yo", "zu",
+})
+
+AZURE_LANGUAGES = frozenset({
+    "af", "sq", "am", "ar", "hy", "az", "eu", "bn", "bs", "bg", "ca", "ny", "zh",
+    "zh-TW", "hr", "cs", "da", "nl", "en", "et", "tl", "fi", "fr", "gl", "ka", "de",
+    "el", "gu", "ht", "ha", "he", "hi", "hmn", "hu", "is", "ig", "id", "ga", "it",
+    "ja", "kn", "kk", "km", "rw", "ko", "ku", "ky", "lo", "lv", "lt", "mk", "mg",
+    "ms", "ml", "mt", "mi", "mr", "mn", "my", "ne", "no", "or", "ps", "fa", "pl",
+    "pt", "pa", "ro", "ru", "sm", "sr", "st", "sn", "sd", "si", "sk", "sl", "so",
+    "es", "sw", "sv", "ta", "tt", "te", "th", "tr", "tk", "uk", "ur", "ug", "uz",
+    "vi", "cy", "xh", "yo", "zu",
+})
+
+AWS_LANGUAGES = frozenset({
+    "af", "sq", "am", "ar", "hy", "az", "bn", "bs", "bg", "ca", "zh", "zh-TW", "hr",
+    "cs", "da", "nl", "en", "et", "fa", "tl", "fi", "fr", "ka", "de", "el", "gu",
+    "ht", "ha", "he", "hi", "hu", "is", "id", "ga", "it", "ja", "kn", "kk", "ko",
+    "lv", "lt", "mk", "ms", "ml", "mt", "mr", "mn", "no", "ps", "pl", "pt", "pa",
+    "ro", "ru", "sr", "si", "sk", "sl", "so", "es", "sw", "sv", "ta", "te", "th",
+    "tr", "uk", "ur", "uz", "vi", "cy",
+})
+
+SUPPORTED_LANGUAGES: Dict[str, frozenset] = {
+    "google": GOOGLE_LANGUAGES,
+    "azure": AZURE_LANGUAGES,
+    "aws": AWS_LANGUAGES,
+}
+
+# Where a provider spells a platform code differently. Applied at dispatch
+# only; the cache and every API keep the platform code.
+PROVIDER_CODE_MAP: Dict[str, Dict[str, str]] = {
+    "azure": {
+        "zh": "zh-Hans", "zh-TW": "zh-Hant", "no": "nb", "tl": "fil",
+        "mn": "mn-Cyrl", "sr": "sr-Cyrl", "ny": "nya", "hmn": "mww", "ku": "kmr",
+    },
+}
+
+_CANONICAL = {code.lower(): code for codes in SUPPORTED_LANGUAGES.values() for code in codes}
+
+
+def canonical_language(code: Any) -> Optional[str]:
+    """The platform spelling of a language code (`zh-tw` -> `zh-TW`), or None."""
+    if not isinstance(code, str):
+        return None
+    return _CANONICAL.get(code.strip().lower())
+
+
+def supported_languages(provider: Optional[str]) -> frozenset:
+    """Target codes the named provider can translate into.
+
+    An unknown or switched-off provider answers with Google's list: nothing is
+    dispatched in that state, and the picker should keep offering what the
+    platform default supports rather than collapse to nothing.
+    """
+    return SUPPORTED_LANGUAGES.get((provider or "google").strip().lower(), GOOGLE_LANGUAGES)
+
+
+def provider_language_code(provider: Optional[str], code: str) -> str:
+    """The code to send to `provider` for platform code `code`."""
+    return PROVIDER_CODE_MAP.get((provider or "").lower(), {}).get(code, code)
+
+
+async def selected_provider_name() -> str:
+    """The provider the town chose (default google), credentials or not."""
+    try:
+        from app.services.secret_manager import get_secret
+
+        name = ((await get_secret(TRANSLATION_PROVIDER_KEY)) or "google").strip().lower()
+    except Exception:
+        name = "google"
+    return name if name in SUPPORTED_LANGUAGES else "google"
+
+
+async def validate_target_language(code: Any) -> Optional[str]:
+    """The canonical code if the selected provider supports it, else None."""
+    canonical = canonical_language(code)
+    if canonical is None:
+        return None
+    return canonical if canonical in supported_languages(await selected_provider_name()) else None
 
 
 async def get_translation_provider() -> Optional[TranslationProvider]:

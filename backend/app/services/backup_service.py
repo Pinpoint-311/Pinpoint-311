@@ -6,11 +6,13 @@ Supports Oracle Cloud Object Storage, AWS S3, and other S3-compatible services.
 """
 
 import os
+import re
 import logging
 import tempfile
 import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
+from urllib.parse import urlparse
 import boto3
 from botocore.config import Config as BotoConfig
 
@@ -77,10 +79,51 @@ async def get_backup_config() -> Optional[Dict[str, str]]:
 
 
 
+def normalize_endpoint(endpoint: Optional[str]) -> Optional[str]:
+    """An endpoint URL boto3 accepts.
+
+    Providers show the endpoint as a bare host (Backblaze B2's
+    "s3.us-east-005.backblazeb2.com", for example), and boto3 rejects that
+    with "Invalid endpoint" -- so every backup failed for a correctly copied
+    setting. Add https:// when no scheme was given.
+    """
+    value = (endpoint or "").strip().rstrip("/")
+    if not value:
+        return None
+    if "://" not in value:
+        value = "https://" + value
+    return value
+
+
+_BACKBLAZE_HOST = re.compile(r"^s3\.([a-z0-9-]+)\.backblazeb2\.com$", re.I)
+# NAMESPACE.compat.objectstorage.REGION.oraclecloud.com
+_ORACLE_HOST = re.compile(r"\.compat\.objectstorage\.([a-z0-9-]+)\.oraclecloud\.com$", re.I)
+
+
+def resolve_region(endpoint: Optional[str], region: Optional[str]) -> Optional[str]:
+    """The region to sign with when the Region box may be blank.
+
+    A blank region used to fall back to us-ashburn-1, an Oracle region, which
+    AWS S3 rejects for every bucket. Instead: a Backblaze endpoint names its
+    region in the host; no endpoint means AWS, where us-east-1 is the default;
+    anything else is left to boto3.
+    """
+    value = (region or "").strip()
+    if value:
+        return value
+    if not endpoint:
+        return "us-east-1"
+    host = urlparse(endpoint).hostname or ""
+    match = _BACKBLAZE_HOST.match(host) or _ORACLE_HOST.search(host)
+    if match:
+        return match.group(1).lower()
+    return None
+
+
 def get_s3_client(config: Dict[str, str]):
     """Create S3 client from config."""
-    endpoint = config.get("BACKUP_S3_ENDPOINT")
-    region = config.get("BACKUP_S3_REGION", "us-ashburn-1")
+    endpoint = normalize_endpoint(config.get("BACKUP_S3_ENDPOINT"))
+    region = resolve_region(endpoint, config.get("BACKUP_S3_REGION"))
     
     client_config = BotoConfig(
         signature_version='s3v4',
@@ -139,14 +182,17 @@ def encrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
     """Encrypt a file using GPG symmetric encryption."""
     try:
         # Use gpg for symmetric encryption
+        # The passphrase goes in on stdin, not the command line, where any
+        # process on the host could read it from the process list.
         result = subprocess.run(
             [
-                "gpg", "--batch", "--yes",
+                "gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--passphrase-fd", "0",
                 "--symmetric", "--cipher-algo", "AES256",
-                "--passphrase", passphrase,
                 "--output", output_path,
                 input_path
             ],
+            input=passphrase,
             capture_output=True,
             text=True,
             timeout=300  # 5 minute timeout
@@ -175,12 +221,13 @@ def decrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
     try:
         result = subprocess.run(
             [
-                "gpg", "--batch", "--yes",
+                "gpg", "--batch", "--yes", "--pinentry-mode", "loopback",
+                "--passphrase-fd", "0",
                 "--decrypt",
-                "--passphrase", passphrase,
                 "--output", output_path,
                 input_path
             ],
+            input=passphrase,
             capture_output=True,
             text=True,
             timeout=300
@@ -198,7 +245,38 @@ def decrypt_file(input_path: str, output_path: str, passphrase: str) -> bool:
         return False
 
 
+HEALTH_KEY = "backups"
+
+
+async def record_backup_health(ok: bool, detail: str) -> None:
+    """Keep the evidence that backups work (or don't) where the setup page and
+    the health dashboard read it. Both a Test and every real backup write it,
+    so a nightly failure shows up rather than only being in a worker log.
+    Never raises."""
+    try:
+        from app.db.session import SessionLocal
+        from app.services import connector_health
+        async with SessionLocal() as db:
+            if ok:
+                await connector_health.record_success(db, HEALTH_KEY, detail=detail)
+            else:
+                await connector_health.record_failure(db, HEALTH_KEY, detail)
+    except Exception as exc:
+        logger.warning("could not record backup health: %s", exc)
+
+
 async def create_backup() -> Dict[str, Any]:
+    """Run one backup and record how it went. See _create_backup."""
+    result = await _create_backup()
+    if result.get("status") == "success":
+        kb = max(1, round((result.get("size_bytes") or 0) / 1024))
+        await record_backup_health(True, f"Backed up {result.get('backup_name')} ({kb} KB, encrypted).")
+    elif result.get("status") == "error" and "not configured" not in (result.get("message") or ""):
+        await record_backup_health(False, f"Backup failed: {result.get('message', 'unknown error')}")
+    return result
+
+
+async def _create_backup() -> Dict[str, Any]:
     """
     Create a new database backup.
     
@@ -514,6 +592,25 @@ async def download_backup(backup_name: str, output_path: str) -> bool:
         return False
 
 
+# pg_restore reports these as errors, but none of them means data is missing:
+# a newer pg_dump client writes a SET the older server does not know, and the
+# PostGIS image pre-creates its own schemas and extensions. Verified with a real
+# restore drill (2026-10-18): every table matched the live database.
+_HARMLESS_RESTORE_ERRORS = (
+    re.compile(r'unrecognized configuration parameter "transaction_timeout"'),
+    re.compile(r'schema "(tiger|tiger_data|topology)" already exists'),
+    re.compile(r'extension "[a-z_]+" already exists'),
+    re.compile(r'must be owner of extension'),
+)
+
+
+def restore_errors(stderr: str) -> list:
+    """The pg_restore errors that matter, i.e. all but the known-harmless ones."""
+    errors = [line for line in (stderr or "").splitlines()
+              if line.startswith("pg_restore: error:")]
+    return [e for e in errors if not any(p.search(e) for p in _HARMLESS_RESTORE_ERRORS)]
+
+
 def restore_database_dump(dump_path: str) -> bool:
     """Restore a PostgreSQL dump file to the database."""
     try:
@@ -532,6 +629,10 @@ def restore_database_dump(dump_path: str) -> bool:
                 "pg_restore",
                 "--clean",  # Drop existing objects before restore
                 "--if-exists",  # Don't error if objects don't exist
+                # Ownership and grants belong to the server restored onto: a
+                # new server's database user is not the one that made the dump.
+                "--no-owner",
+                "--no-privileges",
                 "-d", clean_url,
                 dump_path
             ],
@@ -540,10 +641,16 @@ def restore_database_dump(dump_path: str) -> bool:
             timeout=1800  # 30 minute timeout for large databases
         )
         
-        # pg_restore may return non-zero even on successful restore due to warnings
-        if result.returncode != 0 and "error" in result.stderr.lower():
-            logger.error(f"pg_restore failed: {result.stderr}")
-            return False
+        # pg_restore exits non-zero for errors it "ignored", and on this stack
+        # it always reports a few harmless ones, so the old test ("any error in
+        # stderr") called every successful restore a failure. Judge by the
+        # errors that remain once the harmless ones are set aside.
+        if result.returncode != 0:
+            real = restore_errors(result.stderr)
+            if real:
+                logger.error("pg_restore failed: %s", "; ".join(real[:10]))
+                return False
+            logger.info("pg_restore finished with only known-harmless messages")
         
         logger.info("Database restored successfully")
         return True
@@ -602,8 +709,19 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
                 return {"status": "error", "message": "Failed to decrypt backup - check encryption key"}
             
             decrypted_size = os.path.getsize(decrypted_path)
-            
-            # Step 3: Restore to database
+
+            # Step 3: Snapshot what is about to be overwritten. A restore of the
+            # wrong backup, or one that fails half-way, is otherwise final.
+            snapshot_dir = os.environ.get("PRE_RESTORE_SNAPSHOT_DIR", "/backups")
+            os.makedirs(snapshot_dir, exist_ok=True)
+            snapshot_path = os.path.join(
+                snapshot_dir, f"pre_restore_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.dump")
+            if not create_database_dump(snapshot_path):
+                return {"status": "error",
+                        "message": "Could not snapshot the current database first, so nothing was restored"}
+            logger.info(f"Pre-restore snapshot saved: {snapshot_path}")
+
+            # Step 4: Restore to database
             logger.info("Restoring database...")
             if not restore_database_dump(decrypted_path):
                 return {"status": "error", "message": "Failed to restore database - check pg_restore logs"}
@@ -616,10 +734,109 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
                 "encrypted_size_bytes": encrypted_size,
                 "decrypted_size_bytes": decrypted_size,
                 "restored_at": datetime.now(timezone.utc).isoformat(),
+                "pre_restore_snapshot": snapshot_path,
                 "warning": "Database has been restored. You may need to restart the application."
             }
             
     except Exception as e:
         logger.error(f"Restore failed: {e}")
-        return {"status": "error", "message": str(e)}
+        # A fixed sentence: the endpoint shows this message to the admin, and
+        # exception text can carry a storage endpoint or credential detail.
+        return {"status": "error", "message": "The restore stopped unexpectedly; the server log has the details"}
 
+
+
+TEST_PREFIX = "pinpoint-connection-test/"
+
+
+def _test_storage_round_trip(config: Dict[str, str]) -> Dict[str, Any]:
+    """Write, read back and delete one small object. Blocking (boto3)."""
+    import uuid
+
+    s3 = get_s3_client(config)
+    bucket = config["BACKUP_S3_BUCKET"]
+    key = f"{TEST_PREFIX}{uuid.uuid4().hex}.txt"
+    body = f"Pinpoint 311 backup connection test {datetime.now(timezone.utc).isoformat()}".encode()
+    s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="text/plain")
+    try:
+        got = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    finally:
+        s3.delete_object(Bucket=bucket, Key=key)
+    if got != body:
+        raise ValueError("the object read back did not match what was written")
+    return {"bucket": bucket, "endpoint": normalize_endpoint(config.get("BACKUP_S3_ENDPOINT")) or "AWS S3"}
+
+
+def _test_encryption(passphrase: str) -> None:
+    """Encrypt and decrypt a small file with the backup passphrase."""
+    with tempfile.TemporaryDirectory() as tmp:
+        plain, enc, back = (os.path.join(tmp, n) for n in ("t.txt", "t.gpg", "t.out"))
+        with open(plain, "w") as f:
+            f.write("pinpoint backup encryption test")
+        if not encrypt_file(plain, enc, passphrase):
+            raise RuntimeError("encryption failed")
+        if not decrypt_file(enc, back, passphrase):
+            raise RuntimeError("decryption failed")
+        with open(back) as f:
+            if f.read() != "pinpoint backup encryption test":
+                raise RuntimeError("decrypted content did not match")
+
+
+async def test_backups() -> Dict[str, Any]:
+    """A real check of everything a nightly backup needs, short of running one.
+
+    Returns {ok, detail, steps}. Uses the same settings and client the backup
+    job uses, writes one small object under pinpoint-connection-test/ and
+    deletes it again. Never raises.
+    """
+    import asyncio
+    from app.services.secret_manager import get_secret
+
+    keys = ["BACKUP_S3_ENDPOINT", "BACKUP_S3_BUCKET", "BACKUP_S3_ACCESS_KEY",
+            "BACKUP_S3_SECRET_KEY", "BACKUP_ENCRYPTION_KEY", "BACKUP_S3_REGION"]
+    config = {}
+    for k in keys:
+        v = await get_secret(k)
+        if v:
+            config[k] = v
+
+    labels = {"BACKUP_S3_BUCKET": "bucket name", "BACKUP_S3_ACCESS_KEY": "access key ID",
+              "BACKUP_S3_SECRET_KEY": "secret access key"}
+    missing = [labels[k] for k in labels if k not in config]
+    if missing:
+        return {"ok": False, "detail": "Add the " + ", ".join(missing) + " and save, then test again."}
+
+    steps = []
+    try:
+        where = await asyncio.to_thread(_test_storage_round_trip, config)
+        steps.append(f"Wrote a test file to the {where['bucket']} bucket at {where['endpoint']}, "
+                     "read it back, and deleted it.")
+    except Exception as exc:
+        reason = str(exc)
+        try:
+            from botocore.exceptions import ClientError
+            if isinstance(exc, ClientError):
+                err = exc.response.get("Error", {})
+                reason = f"{err.get('Code', 'Error')}: {err.get('Message', '')}".strip()
+        except Exception:
+            pass
+        return {"ok": False, "detail": f"The storage service refused the test: {reason[:300]}"}
+
+    if "BACKUP_ENCRYPTION_KEY" not in config:
+        return {"ok": False, "detail": "\n".join(steps + [
+            "No backup passphrase is set, so backups can't run. Create one below and save it somewhere safe."])}
+    try:
+        await asyncio.to_thread(_test_encryption, config["BACKUP_ENCRYPTION_KEY"])
+        steps.append("Encrypted and decrypted a test file with your backup passphrase.")
+    except Exception as exc:
+        return {"ok": False, "detail": "\n".join(steps + [f"Encryption check failed: {exc}"])}
+
+    steps.append("Backups are ready. The nightly backup will run on schedule.")
+    return {"ok": True, "detail": "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))}
+
+
+async def test_and_record_backups() -> Dict[str, Any]:
+    """test_backups, with the outcome kept for the setup card and health page."""
+    result = await test_backups()
+    await record_backup_health(bool(result.get("ok")), result.get("detail", ""))
+    return result

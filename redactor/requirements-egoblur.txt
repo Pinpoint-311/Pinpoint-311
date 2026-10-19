@@ -1,0 +1,7 @@
+# Installed from the PyTorch CPU index (see Dockerfile), which serves +cpu
+# wheels for both linux/amd64 and linux/aarch64 -- no CUDA libraries, which
+# would otherwise add ~2 GB. torch/torchvision are the exact versions the
+# egoblur 2.0.1 package pins (its pyproject.toml), so the TorchScript model is
+# run by the runtime Meta tested it with.
+torch==2.9.1
+torchvision==0.24.1
