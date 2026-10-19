@@ -33,6 +33,10 @@ RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     postgresql-client \
+    # gnupg: backups are encrypted and decrypted with gpg (backup_service.py).
+    # It was dropped with the Docker CLI's apt-key setup in 1.9.0-rc1 and every
+    # scheduled backup failed at "Encrypting backup" -- tests/test_image_tools.py.
+    gnupg \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
