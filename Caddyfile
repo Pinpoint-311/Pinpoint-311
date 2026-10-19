@@ -182,6 +182,27 @@ Disallow: /
 centraldemo.pinpoint311.org {
 	import noindex
     encode gzip
+
+    # The same hardening the town sites get from (pinpoint_site).
+    #
+    # This block does not import that snippet -- it proxies the panel, not an
+    # app instance -- and so it quietly had none of these. A DAST run caught
+    # it: centraldemo answered with `Server: uvicorn` while every town site
+    # stripped it. Of all the hosts here this is the one that matters, since
+    # the panel provisions towns and holds the platform's shared credentials.
+    #
+    # Deliberately no Content-Security-Policy: the one in (pinpoint_site) names
+    # four map vendors and a translation host that the panel never loads, and a
+    # policy copied from somewhere else is how a policy stops being read. The
+    # panel needs its own, which is a separate piece of work.
+    header {
+        -Server
+        -X-Powered-By
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
     # Same log, same file. The panel provisions towns and holds the host's
     # shared credentials, so it is the site where "who called this, and when"
     # matters most.

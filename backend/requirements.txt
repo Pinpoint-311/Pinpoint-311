@@ -83,3 +83,30 @@ opencv-python-headless==4.11.0.86
 # binary (installed in the Dockerfile); without it the plate text signal simply
 # turns off and face redaction is unaffected.
 pytesseract==0.3.13
+
+# Transitive dependencies, pinned here only because the version the resolver
+# picks on its own carries an advisory. Nothing in this app imports them
+# directly; they arrive via requests/botocore/sentry-sdk (urllib3), alembic
+# (Mako), and aiohttp/yarl (multidict). Pinning a transitive dependency is a
+# cost -- it has to be revisited by hand when the parent moves -- so each one
+# states what it is for, and each is the lowest version that carries the fix
+# rather than the newest on the index.
+#
+# urllib3 2.8.0: CVE-2026-97687 (HTTPS-proxy TLS settings ignored),
+#   CVE-2026-97689 (unbounded chunk-size line buffered from a chunked
+#   response), CVE-2026-97688 (infinite loop on chunked deflate). 1.26.0
+#   through 2.7.0 are affected. This is the one of the three that is reachable
+#   in anger: sentry-sdk and boto3 talk to hosts over the network.
+# Mako 1.4.3: CVE-2026-102991, TemplateLookup path traversal via a Windows
+#   drive letter. Not exploitable here -- alembic renders its own migration
+#   templates on Linux and no URI is resident-supplied -- but the pin is free
+#   and leaving a known-bad version in the tree costs a reader the same
+#   investigation every time the report runs.
+# multidict 6.9.1: CVE-2026-104874, a reference leak in the C extension's
+#   items-view union/subtraction that a remote caller can drive into unbounded
+#   memory growth. 6.7.0 through 6.9.0 are affected. 7.x also carries the fix
+#   but aiohttp 3.14.5 requires multidict<7.0, so 6.9.1 is the version that
+#   actually resolves.
+urllib3==2.8.0
+Mako==1.4.3
+multidict==6.9.1
