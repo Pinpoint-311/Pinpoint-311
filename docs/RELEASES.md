@@ -380,3 +380,57 @@ its release jobs only publish when the CI/CD variable
 `PINPOINT_RELEASE_FROM_GITLAB=true` is set, which is how a town that wants
 GitLab as its release source switches over. Point the updater's
 `release_source` and `trust` at whichever one publishes.
+
+### GitLab security scans
+
+`.gitlab-ci.yml` turns on every scanner on GitLab's Security configuration
+page. None of them runs in a tag pipeline, so none can hold up or change a
+release, and every one is allowed to fail.
+
+| Scanner | Job(s) | Runs |
+|---|---|---|
+| SAST, Advanced SAST | `semgrep-sast`, `gitlab-advanced-sast`, … | every branch push |
+| IaC scanning (KICS) | `kics-iac-sast` | every branch push |
+| Accessibility (axe-core, WCAG 2.1 AA) | `accessibility` | every branch push and merge request; builds and serves the frontend itself |
+| Container Scanning | `container_scanning`, `container_scanning_frontend` | default branch; scans `ghcr.io/pinpoint-311/pinpoint-311-{backend,frontend}:latest` |
+| DAST, passive | `dast` | pipeline schedule or manual run, only with `DAST_TARGET_URL` set |
+| Coverage-guided fuzzing | `coverage-fuzz-{road-matching,sanitize,bbox}` | pipeline schedule (10 min each); manual run (press play) |
+| API fuzzing | `openapi-spec`, `apifuzzer_fuzz` | manual run only, with `FUZZAPI_TARGET_URL` set, then press play |
+
+GitHub mirroring does not start scheduled scans, so set them up in GitLab:
+
+1. **Settings → CI/CD → Variables** (masked where marked; protected, so only
+   the default branch sees them):
+   - `DAST_TARGET_URL`: a demo or staging instance the town owns and has agreed
+     to have scanned, e.g. `https://<staging host>/`. Never a production site
+     residents use: the scan is passive, but the crawler clicks and types.
+     Every route that writes data, reaches admin or spends geocoding/AI quota
+     is excluded in the `dast` job; add new ones there.
+   - `CS_REGISTRY_USER` and `CS_REGISTRY_PASSWORD` (masked): a GitHub user and
+     a token with only `read:packages`, unless the GHCR packages are public. A
+     town that publishes from GitLab instead points `CS_IMAGE` in the two
+     `container_scanning` jobs at `$CI_REGISTRY_IMAGE/backend` and `/frontend`.
+2. **Build → Pipeline schedules → New schedule**: target branch the default
+   branch, weekly (for example `0 4 * * 0`, Sunday 04:00 UTC, the same slot as
+   the GitHub ZAP scan). That run does DAST, coverage fuzzing, Container
+   Scanning and the per-push scanners together, and the Security configuration
+   page shows a scanner as enabled once a default-branch pipeline has produced
+   its report.
+3. **API fuzzing, by hand**: stand up a throwaway instance with test data
+   (never a town's live or demo site: it sends thousands of malformed
+   requests and will create junk records), then **Build → Pipelines → Run
+   pipeline** with the variable `FUZZAPI_TARGET_URL` set to it, and press play
+   on `apifuzzer_fuzz`. `openapi-spec` writes the API schema from the code,
+   since production serves none. To fuzz past the login wall, add a masked
+   `FUZZAPI_OVERRIDES_ENV` of `{"headers":{"Authorization":"Bearer <staff token on that instance>"}}`.
+
+Switch any scanner off with its own variable: `SAST_DISABLED`,
+`CONTAINER_SCANNING_DISABLED`, `DAST_DISABLED`, `API_FUZZING_DISABLED` or
+`COVFUZZ_DISABLED` set to `true`.
+
+GitLab deprecated coverage-guided fuzzing in 18.0 and will remove it; its
+template is loaded only into scheduled and manual pipelines, so its removal
+cannot break branch or tag pipelines. The targets in `fuzz/` keep working with
+pythonfuzz on its own (`fuzz/_harness.py`). GitLab removed its pa11y
+accessibility template in 17.0, which is why the accessibility job runs
+axe-core directly.

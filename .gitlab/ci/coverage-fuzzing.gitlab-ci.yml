@@ -1,0 +1,64 @@
+# Coverage-guided fuzzing of the backend's untrusted-text parsers.
+#
+# Included by .gitlab-ci.yml only into scheduled and manual ("Run pipeline")
+# pipelines, because GitLab deprecated coverage fuzzing in 18.0 and will remove
+# the template: if that include ever fails, branch and tag pipelines (and so
+# releases) are unaffected. When it is gone, run the same targets with
+# pythonfuzz directly (fuzz/_harness.py says how).
+#
+# One job per target in fuzz/. Each imports a small pure module from
+# backend/app (no database, no settings, no network) and checks the contract
+# its docstring promises; any exception it does not document, a failed
+# assertion, or an input slower than pythonfuzz's per-input timeout is a crash.
+#
+# On the default branch gitlab-cov-fuzz fuzzes for its default 10 minutes; on
+# any other branch it only replays the seed corpus and earlier crashes
+# (REGRESSION, set by the template's .fuzz_base). Findings land in the
+# pipeline's security tab; the job is allowed to fail and never gates anything.
+
+include:
+  - template: Security/Coverage-Fuzzing.gitlab-ci.yml
+
+.pinpoint-coverage-fuzz:
+  extends: .fuzz_base
+  image: $PYTHON_IMAGE
+  timeout: 30m
+  allow_failure: true
+  variables:
+    PSUTIL_VERSION: 7.0.0
+  rules:
+    - if: $COVFUZZ_DISABLED == "true" || $COVFUZZ_DISABLED == "1"
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_COMMIT_BRANCH && $CI_PIPELINE_SOURCE == "schedule" && $GITLAB_FEATURES =~ /\bcoverage_fuzzing\b/
+    - if: $CI_COMMIT_BRANCH && $CI_PIPELINE_SOURCE == "web" && $GITLAB_FEATURES =~ /\bcoverage_fuzzing\b/
+      when: manual
+      allow_failure: true
+  script:
+    # pythonfuzz from GitLab's registry only, by hash: PyPI has an unrelated
+    # package of the same name (fuzz/requirements.txt).
+    - pip install --root-user-action=ignore "psutil==$PSUTIL_VERSION"
+    - >
+      pip install --root-user-action=ignore --no-deps --require-hashes
+      --index-url https://gitlab.com/api/v4/projects/19904939/packages/pypi/simple
+      -r fuzz/requirements.txt
+    - ./gitlab-cov-fuzz run --regression=$REGRESSION --engine pythonfuzz -- "fuzz/$FUZZ_TARGET.py"
+
+coverage-fuzz-road-matching:
+  extends: .pinpoint-coverage-fuzz
+  variables:
+    FUZZ_TARGET: road_matching_fuzz
+    COVFUZZ_SEED_CORPUS: fuzz/corpus/road_matching
+
+coverage-fuzz-sanitize:
+  extends: .pinpoint-coverage-fuzz
+  variables:
+    FUZZ_TARGET: sanitize_fuzz
+    COVFUZZ_SEED_CORPUS: fuzz/corpus/sanitize
+
+coverage-fuzz-bbox:
+  extends: .pinpoint-coverage-fuzz
+  variables:
+    FUZZ_TARGET: bbox_fuzz
+    COVFUZZ_SEED_CORPUS: fuzz/corpus/bbox
