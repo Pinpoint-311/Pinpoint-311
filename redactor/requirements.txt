@@ -1,7 +1,14 @@
 # Common to every detector backend. Exact pins: this image runs a model on
 # resident photos, and a silently upgraded decoder or numpy is not a change
 # that should arrive without a rebuild someone chose.
-fastapi==0.115.6
+# fastapi 0.149.0 for starlette 1.9.0. The seven Starlette advisories against
+# 0.41.3 are the single largest block of findings this image contributes, and
+# unlike the backend there is nothing holding the version back: this service
+# has no slowapi and no route-table assertions -- app/main.py imports FastAPI,
+# Query, Request and JSONResponse and nothing else. tests/test_api.py and
+# tests/test_imaging.py were run on both 0.115.6 and 0.149.0: 14 passed either
+# way.
+fastapi==0.149.0
 uvicorn==0.34.0
 Pillow==13.0.0
 numpy==2.2.6

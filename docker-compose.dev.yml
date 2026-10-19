@@ -21,7 +21,7 @@ services:
         deploy-templates: ./deploy/templates
       args:
         PINPOINT_VERSION: ${PINPOINT_VERSION:-dev}
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --no-server-header
     volumes:
       - ./backend:/app
       # The ./backend mount hides the copy baked into the image.

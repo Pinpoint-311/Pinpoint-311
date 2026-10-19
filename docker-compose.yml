@@ -100,7 +100,7 @@ services:
     restart: unless-stopped
     # No --reload: there is no source here to watch. docker-compose.dev.yml
     # turns it back on for contributors, who mount ./backend.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-server-header
     # No source mount, no repository mount and no Docker socket. The code that
     # runs is the code in the image, so what was signed is what serves; and a
     # compromise of this internet-facing container is not a compromise of the

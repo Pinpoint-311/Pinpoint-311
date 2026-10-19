@@ -150,9 +150,12 @@ describe('ActivityFeed keys', () => {
             makeRequest({ id: 7, service_request_id: '' }),
         ]);
 
-        const complaints = consoleError.mock.calls
-            .map(call => call.map(a => String(a)).join(' '))
-            .filter(text => /same key|unique "key"/i.test(text));
+        // Annotated rather than inferred: vitest 4 types a spy's recorded
+        // arguments as unknown[] instead of any[], so an unannotated `call`
+        // here is an implicit any and fails the typecheck.
+        const complaints = (consoleError.mock.calls as unknown[][])
+            .map((call: unknown[]) => call.map((a: unknown) => String(a)).join(' '))
+            .filter((text: string) => /same key|unique "key"/i.test(text));
         expect(complaints).toEqual([]);
         expect(items().length).toBe(3);
     });

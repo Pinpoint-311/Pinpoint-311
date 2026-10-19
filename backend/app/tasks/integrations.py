@@ -64,7 +64,16 @@ TRIAGE_GRACE_SECONDS = 90
 def _comment_fp(content: str) -> str:
     """Stable content fingerprint used as a fallback echo-dedup marker for
     comments whose platform returns no comment id on create."""
-    return "fp:" + hashlib.sha1((content or "").strip().encode("utf-8")).hexdigest()[:16]
+    # usedforsecurity=False: this is a content fingerprint for de-duplicating
+    # echoed comments, not a signature or a password. Nothing trusts it, and a
+    # collision costs one skipped duplicate comment. Saying so in the call is
+    # better than suppressing the scanner finding elsewhere -- it is the same
+    # statement, made where a reader is, and it keeps the existing fingerprints
+    # valid where switching algorithm would invalidate every marker already
+    # written and re-post a comment on every open integration.
+    return "fp:" + hashlib.sha1(
+        (content or "").strip().encode("utf-8"), usedforsecurity=False
+    ).hexdigest()[:16]
 
 
 def _safe_error(exc) -> str:

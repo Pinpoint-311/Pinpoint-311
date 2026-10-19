@@ -249,7 +249,10 @@ class Auth0Service:
                 key,
                 algorithms=["RS256"],
                 audience=client_id,
-                issuer=f"https://{domain}/"
+                issuer=f"https://{domain}/",
+                # Present-only checks otherwise: a token with no exp would
+                # never expire. See verify_oidc_token in app/services/identity.py.
+                options={"require": ["exp", "iss", "aud"]},
             )
             return payload
         except jwt.ExpiredSignatureError:
