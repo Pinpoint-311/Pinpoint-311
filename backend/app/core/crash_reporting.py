@@ -41,6 +41,15 @@ def is_active() -> bool:
     return sentry_sdk.get_client().is_active()
 
 
+def release_name() -> Optional[str]:
+    """`pinpoint-311@<version>` from the image stamp, else the commit; None for a dev run."""
+    version = (os.environ.get("PINPOINT_VERSION") or "").strip()
+    sha = (os.environ.get("GIT_SHA") or "").strip()
+    if version:
+        return f"pinpoint-311@{version}"
+    return sha or None
+
+
 def init(dsn: str, source: str) -> bool:
     """Start Sentry with `dsn`. Returns whether it is active afterwards."""
     import sentry_sdk
@@ -52,6 +61,10 @@ def init(dsn: str, source: str) -> bool:
         traces_sample_rate=0.1,
         profiles_sample_rate=0.1,
         environment=os.environ.get("ENVIRONMENT", "production"),
+        # Which build an error came from. Without it Sentry cannot tie an
+        # error to a release or, through a linked repository, to the commits
+        # that may have caused it ("suspect commits").
+        release=release_name(),
         send_default_pii=False,  # no resident or staff identity in reports
         before_send=_crash_reporting_wanted,
     )
