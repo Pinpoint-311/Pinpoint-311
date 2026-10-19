@@ -24,7 +24,7 @@ import {
     EyeOff,
     Map as MapIcon,
 } from 'lucide-react';
-import { Button, Input, Textarea, Card, Chip } from '../components/ui';
+import { Button, Input, Textarea, Card, Chip, Checkbox } from '../components/ui';
 import LocationPicker from '../components/LocationPicker';
 import PhotoUpload from '../components/PhotoUpload';
 import { usePhotoAttachments } from '../hooks/usePhotoAttachments';
@@ -977,24 +977,12 @@ export default function ResidentPortal() {
 
                             {/* Friendly Checkbox */}
                             <label className="flex items-center gap-3 mb-6 cursor-pointer group p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors border border-transparent hover:border-white/10">
-                                <div className="relative">
-                                    <input
-                                        type="checkbox"
-                                        checked={disclaimerChecked}
-                                        onChange={(e) => setDisclaimerChecked(e.target.checked)}
-                                        className="sr-only peer"
-                                    />
-                                    {/* peer-focus-visible, not just peer-checked: the real
-                                        checkbox is sr-only, so this square is the only thing
-                                        on screen that can show it has focus. Without the ring
-                                        a keyboard user tabbing into the one control that gates
-                                        the whole portal saw nothing move (WCAG 2.4.7). */}
-                                    <div className="w-6 h-6 rounded-lg border-2 border-white/30 peer-checked:border-primary-500 peer-checked:bg-primary-500 peer-focus-visible:ring-2 peer-focus-visible:ring-white peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-800 transition-all flex items-center justify-center">
-                                        {disclaimerChecked && (
-                                            <CheckCircle2 className="w-4 h-4 text-white" />
-                                        )}
-                                    </div>
-                                </div>
+                                {/* The shared Checkbox is the real input, restyled, so it
+                                    carries the system focus ring itself (WCAG 2.4.7). */}
+                                <Checkbox
+                                    checked={disclaimerChecked}
+                                    onChange={(e) => setDisclaimerChecked(e.target.checked)}
+                                />
                                 <span className="text-white/80 text-sm leading-relaxed group-hover:text-white transition-colors">
                                     I'll use this portal for non-emergency requests and call 911 for emergencies.
                                 </span>
@@ -1620,15 +1608,12 @@ export default function ResidentPortal() {
                                             Not offered for a category that is already hidden. */}
                                         {!selectedService.hidden_from_public && (settings?.modules?.unlisted_reports ?? (settings?.modules as any)?.private_reports) && (
                                             <Card>
-                                                <label className="flex items-start gap-3 cursor-pointer">
-                                                    <input
-                                                        type="checkbox"
+                                                <label className="flex !items-start gap-3 cursor-pointer">
+                                                    <Checkbox
                                                         checked={formData.is_public === false}
                                                         onChange={(e) =>
                                                             setFormData((prev) => ({ ...prev, is_public: !e.target.checked }))
-                                                        }
-                                                        className="mt-0.5 w-5 h-5 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
-                                                    />
+                                                        } />
                                                     <span className="min-w-0">
                                                         <span className="block text-sm font-medium text-white">
                                                             Hide this report from the public map and feed

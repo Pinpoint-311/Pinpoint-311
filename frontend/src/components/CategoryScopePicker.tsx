@@ -1,5 +1,6 @@
 import { useId, useMemo, useState } from 'react';
 import { Search } from 'lucide-react';
+import { Checkbox } from './ui';
 
 /**
  * Which service categories something applies to: a map layer's assets, the
@@ -146,12 +147,9 @@ export function CategoryScopePicker({
                                 {shown.map(s => (
                                     <li key={s.service_code}>
                                         <label className="flex items-start gap-2.5 rounded-md px-2 py-1.5 text-sm text-white/85 cursor-pointer hover:bg-white/10">
-                                            <input
-                                                type="checkbox"
+                                            <Checkbox
                                                 checked={value.includes(s.service_code)}
-                                                onChange={e => toggle(s.service_code, e.target.checked)}
-                                                className="mt-0.5 w-4 h-4 shrink-0 rounded border-white/40 bg-white/10 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                            />
+                                                onChange={e => toggle(s.service_code, e.target.checked)} />
                                             <span className="min-w-0 break-words">{s.service_name}</span>
                                         </label>
                                     </li>
