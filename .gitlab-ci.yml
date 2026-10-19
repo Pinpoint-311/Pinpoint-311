@@ -1,9 +1,21 @@
 # Pinpoint 311 on GitLab: tests, scans, and signed releases.
 #
 # The GitLab twin of .github/workflows/{backend-tests,frontend-checks,
-# build-publish}.yml. A protected tag v* runs everything below; images are
-# pushed and signed only after the test and scan stages have passed for that
-# commit, so a red gate means no release. See docs/RELEASES.md.
+# build-publish,accessibility}.yml. A protected tag v* runs the test and scan
+# gates and the release jobs; images are pushed and signed only after the gate
+# has passed for that commit, so a red gate means no release. See
+# docs/RELEASES.md.
+#
+# GitLab security scanners (docs/RELEASES.md, "GitLab security scans"). None of
+# them runs in a tag pipeline, so none can hold up or alter a release:
+#
+#   every branch push   SAST, IaC (KICS), accessibility (axe-core)
+#   default branch      Container Scanning of the published ghcr.io images
+#   schedule / manual   DAST (passive) against $DAST_TARGET_URL, coverage fuzzing
+#   manual only         API fuzzing against $FUZZAPI_TARGET_URL (a throwaway instance)
+#
+# GitHub mirroring does not start GitLab pipelines on its own schedule, so the
+# scheduled scanners run from a GitLab pipeline schedule on the default branch.
 #
 # Every image here is pinned by digest, with its tag kept for readability. A tag
 # can be repointed after review; a digest cannot.
@@ -26,18 +38,45 @@
 # Secret Detection customization: https://docs.gitlab.com/user/application_security/secret_detection/pipeline/configure/
 # Dependency Scanning customization: https://docs.gitlab.com/user/application_security/dependency_scanning/dependency_scanning_sbom/#customizing-analyzer-behavior
 # Container Scanning customization: https://docs.gitlab.com/user/application_security/container_scanning/#customizing-analyzer-behavior
+# IaC scanning: https://docs.gitlab.com/user/application_security/iac_scanning/
+# DAST (browser-based): https://docs.gitlab.com/user/application_security/dast/browser/configuration/variables/
+# API fuzzing: https://docs.gitlab.com/user/application_security/api_fuzzing/configuration/variables/
+# Coverage fuzzing: https://docs.gitlab.com/user/application_security/coverage_fuzzing/
 # Note that environment variables can be set in several places
 # See https://docs.gitlab.com/ci/variables/#cicd-variable-precedence
 
 stages:
   - test
   - scan
+  - dast
+  - fuzz
   - release
 
 include:
-  - template: Security/SAST.gitlab-ci.yml
+  # Every scanner on the project's Security configuration page, declared here
+  # rather than in GitLab's UI: this repository is pull-mirrored from GitHub, so
+  # a configuration commit made in GitLab would be overwritten by the next sync.
+  # (Scan profiles may run some of these too; the page reads its status from
+  # the default branch's pipeline, which is what these jobs populate.)
+  - template: Security/SAST.gitlab-ci.yml            # SAST + Advanced SAST (variable below)
+  - template: Jobs/Secret-Detection.gitlab-ci.yml    # pipeline secret detection
+  - template: Jobs/Dependency-Scanning.v2.gitlab-ci.yml
+  - template: Jobs/SAST-IaC.gitlab-ci.yml
+  - template: Jobs/Container-Scanning.gitlab-ci.yml
+  - template: Security/DAST.gitlab-ci.yml
+  - template: Security/API-Fuzzing.gitlab-ci.yml
+  # Coverage-guided fuzzing is deprecated by GitLab (18.0) and its template is
+  # slated for removal. An include of a template that no longer exists makes the
+  # whole pipeline invalid, release tags included, so it is loaded only into
+  # the scheduled and manual pipelines that use it.
+  - local: .gitlab/ci/coverage-fuzzing.gitlab-ci.yml
+    rules:
+      - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
 
 variables:
+  # GitLab Advanced SAST (cross-file taint analysis) alongside the open-source
+  # analyzers. Ultimate only; ignored elsewhere.
+  GITLAB_ADVANCED_SAST_ENABLED: "true"
   PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
   NODE_IMAGE: node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
   TRIVY_IMAGE: aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
@@ -154,6 +193,221 @@ trivy-image:
         docker buildx build $extra --platform linux/amd64 --load -t pinpoint-scan/backend "$COMPONENT"
         docker run --rm --entrypoint python pinpoint-scan/backend -m app.cli.selfcheck --tools-only
       fi
+
+# IaC scanning (KICS) comes from Jobs/SAST-IaC.gitlab-ci.yml as kics-iac-sast,
+# unchanged: the Dockerfiles, the compose files and deploy/templates (Azure ARM,
+# AWS CloudFormation), on every branch pipeline, never on tags.
+
+# Container Scanning of the images this project publishes, not a local build
+# (trivy-image above gates the build itself). build-publish.yml pushes :latest
+# from the default branch, so this reports on what main ships today. Default
+# branch only: on another branch it would scan the same image again.
+#
+# The packages are private unless made public on GitHub, so set
+# CS_REGISTRY_USER (a GitHub user) and CS_REGISTRY_PASSWORD (a token with only
+# read:packages, masked) in Settings > CI/CD > Variables.
+container_scanning:
+  stage: scan
+  needs: []
+  variables:
+    CS_IMAGE: ghcr.io/pinpoint-311/pinpoint-311-backend:latest
+  rules:
+    - if: $CONTAINER_SCANNING_DISABLED == "true" || $CONTAINER_SCANNING_DISABLED == "1"
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+container_scanning_frontend:
+  extends: container_scanning
+  variables:
+    CS_IMAGE: ghcr.io/pinpoint-311/pinpoint-311-frontend:latest
+
+# WCAG 2.1 AA audit with axe-core, the same tool, version line and tags as
+# .github/workflows/accessibility.yml. It needs no deployed site: it builds the
+# frontend and serves it locally with vite preview, so it audits this commit.
+# With no backend the pages render their public shell (the API calls fail),
+# which is what a first-time visitor sees load; flows behind data are covered
+# by the frontend's own tests.
+#
+# Results appear in the merge request and the pipeline's Tests tab (JUnit).
+# Violations turn the job amber (allowed to fail), as the GitHub job only
+# reports them; nothing here holds up a merge or a release.
+accessibility:
+  stage: scan
+  image: $NODE_IMAGE
+  needs: []
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+  allow_failure: true
+  variables:
+    AXE_CLI_VERSION: 4.13.0
+    AXE_TAGS: wcag2a,wcag2aa,wcag21a,wcag21aa
+    # Debian's chromium and chromium-driver are built together, so they always
+    # match; the npm chromedriver package's own download is not needed.
+    CHROMEDRIVER_SKIP_DOWNLOAD: "true"
+  cache:
+    key:
+      files: [frontend/package-lock.json]
+    paths: [.cache/npm]
+  script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends chromium chromium-driver >/dev/null
+    - npm install -g --no-audit --no-fund --cache "$CI_PROJECT_DIR/.cache/npm" "@axe-core/cli@$AXE_CLI_VERSION"
+    - |
+      set -eu
+      (cd frontend && npm ci --no-audit --no-fund --cache "$CI_PROJECT_DIR/.cache/npm" && npx vite build)
+      (cd frontend && exec npx vite preview --host 127.0.0.1 --port 4173 --strictPort) > preview.log 2>&1 &
+      for _ in $(seq 60); do
+        curl -fsS -o /dev/null http://127.0.0.1:4173/ && break
+        sleep 1
+      done
+      curl -fsS -o /dev/null http://127.0.0.1:4173/ || { cat preview.log; exit 1; }
+      # The two pages the GitHub workflow audits: home and staff login.
+      for page in home:/ login:/login; do
+        axe "http://127.0.0.1:4173${page#*:}" \
+          --tags "$AXE_TAGS" \
+          --chrome-path /usr/bin/chromium \
+          --chromedriver-path /usr/bin/chromedriver \
+          --chrome-options="headless,no-sandbox,disable-gpu,disable-dev-shm-usage" \
+          --save "accessibility-${page%%:*}.json" || true
+      done
+      node scripts/axe-junit.mjs accessibility-home.json accessibility-login.json > accessibility-junit.xml
+  artifacts:
+    when: always
+    paths:
+      - accessibility-*.json
+      - accessibility-junit.xml
+    reports:
+      junit: accessibility-junit.xml
+    expire_in: 30 days
+
+# ------------------------------------------------------------------- dast ----
+
+# Passive DAST (browser-based analyzer) against a running site. The target
+# comes only from the CI/CD variable DAST_TARGET_URL; nothing here names one.
+# It must be a demo or staging instance the town owns and has agreed to have
+# scanned, never a production site residents use: passive checks send no attack
+# payloads, but the crawler still clicks buttons and fills in forms.
+#
+# Runs only from a pipeline schedule or a manual "Run pipeline", and only when
+# DAST_TARGET_URL is set. Never on tags.
+dast:
+  needs: []
+  allow_failure: true
+  timeout: 2h
+  variables:
+    DAST_FULL_SCAN: "false"   # passive only; "true" adds active attacks
+    DAST_CRAWL_TIMEOUT: 45m
+    # The crawler must not change anything on the target, so every route that
+    # writes data, reaches admin, or spends the town's third-party quota
+    # (geocoding, AI) is excluded from scope: DAST neither crawls it nor lets
+    # the browser send the request (it is blocked as BlockedByClient). From
+    # backend/app/main.py's router prefixes and the mutating routes in
+    # frontend/src/services/api.ts. Regular expressions, comma-separated; keep
+    # a new write route out of the crawler by adding it here.
+    DAST_SCOPE_EXCLUDE_URLS: "\
+      .*/api/open311/v2/portal/.*,\
+      .*/api/open311/v2/requests.*,\
+      .*/api/open311/v2/public/requests/.*/comments.*,\
+      .*/api/open311/v2/photos/.*,\
+      .*/api/open311/v2/admin.*,\
+      .*/api/requests/.*,\
+      .*/api/auth/.*,\
+      .*/api/feedback/.*,\
+      .*/api/system/.*,\
+      .*/api/setup/.*,\
+      .*/api/users/.*,\
+      .*/api/departments/.*,\
+      .*/api/services/.*,\
+      .*/api/map-layers/.*,\
+      .*/api/integrations/.*,\
+      .*/api/internal/.*,\
+      .*/api/provisioning/.*,\
+      .*/api/telemetry.*,\
+      .*/api/audit/.*,\
+      .*/api/export/.*,\
+      .*/api/research/.*,\
+      .*/api/resident-history/.*,\
+      .*/api/deploy-templates/.*,\
+      .*/api/road-check.*,\
+      .*/api/roads/.*,\
+      .*/api/health/uptime/check-now.*,\
+      .*/api/gis/boundaries.*,\
+      .*/api/gis/township-boundary.*,\
+      .*/api/gis/geocode.*,\
+      .*/api/gis/reverse-geocode.*,\
+      .*/api/gis/osm/.*,\
+      .*/api/gis/census-boundary-search.*,\
+      .*/staff.*,\
+      .*/admin.*,\
+      .*/setup.*,\
+      .*/research.*"
+    # And no form submission at all, as a second line behind the URL list.
+    DAST_SCOPE_EXCLUDE_ELEMENTS: "button[type='submit'],input[type='submit']"
+  rules:
+    - if: $DAST_DISABLED == "true" || $DAST_DISABLED == "1"
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $DAST_TARGET_URL && ($CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web") && $GITLAB_FEATURES =~ /\bdast\b/
+
+# ------------------------------------------------------------------- fuzz ----
+
+# API fuzzing sends thousands of malformed requests and will write junk into
+# whatever it is pointed at. FUZZAPI_TARGET_URL must be a throwaway instance
+# stood up for the run (a fresh stack with test data), NEVER a town's live or
+# demo site. So it never runs on its own: only from a manual "Run pipeline",
+# only with FUZZAPI_TARGET_URL set, and then only when someone presses play.
+#
+# The app serves no /api/openapi.json in production, so this job writes the
+# spec from the code instead. Importing app.main needs no database, network or
+# settings (the backend-tests job imports it the same way).
+openapi-spec:
+  stage: fuzz
+  image: $PYTHON_IMAGE
+  needs: []
+  variables:
+    PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+  cache:
+    key:
+      files: [backend/requirements.txt]
+    paths: [.cache/pip]
+  rules:
+    - if: $API_FUZZING_DISABLED == "true" || $API_FUZZING_DISABLED == "1"
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $FUZZAPI_TARGET_URL && $CI_PIPELINE_SOURCE == "web"
+  script:
+    - cd backend
+    - pip install -r requirements.txt
+    - python -c 'from app.main import app; import json; json.dump(app.openapi(), open("openapi.json","w"))'
+    - mv openapi.json "$CI_PROJECT_DIR/openapi.json"
+  artifacts:
+    paths: [openapi.json]
+    expire_in: 7 days
+
+apifuzzer_fuzz:
+  needs:
+    - job: openapi-spec
+      artifacts: true
+  allow_failure: true
+  variables:
+    FUZZAPI_OPENAPI: openapi.json
+    FUZZAPI_PROFILE: Quick-10
+  rules:
+    - if: $API_FUZZING_DISABLED == "true" || $API_FUZZING_DISABLED == "1"
+      when: never
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $FUZZAPI_TARGET_URL && $CI_PIPELINE_SOURCE == "web"
+      when: manual
+      allow_failure: true
+
+# Coverage-guided fuzzing of the backend's text parsers (fuzz/): see
+# .gitlab/ci/coverage-fuzzing.gitlab-ci.yml, included above for scheduled and
+# manual pipelines only.
 
 # ---------------------------------------------------------------- release ----
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 # Street-type suffixes collapsed to a canonical short form. Both the clerk's
 # entry and the geocoder's output are mapped through this, so either spelling
@@ -157,11 +157,45 @@ def routes_match(configured: str, detected: str) -> Optional[bool]:
 
 # "Oak Road (Elm Street to Route 10)". Whitespace is required around the
 # separator so a hyphenated name inside the parentheses survives.
-_LIMITS_RE = re.compile(
-    r"^\s*(?P<name>[^()]+?)\s*\(\s*(?:from\s+|between\s+)?(?P<a>[^()]+?)"
-    r"\s+(?:to|and|thru|through|-|–|—)\s+(?P<b>[^()]+?)\s*\)\s*$",
-    re.IGNORECASE,
-)
+#
+# Parsed by hand rather than with one regular expression. The expression this
+# replaces -- lazy `[^()]+?` groups next to `\s*` and `\s+` -- backtracked
+# polynomially: a few thousand spaces in a road name held a worker for
+# minutes, and road names arrive from imported street data and admin input.
+# This reads each word once. Same results, including where the stretch
+# splits: the first separator word that has a word on each side.
+_LIMIT_SEPARATORS = frozenset({"to", "and", "thru", "through", "-", "–", "—"})
+_LIMIT_PREFIXES = frozenset({"from", "between"})
+_WORD_RE = re.compile(r"\S+")
+
+
+def _split_limits(text: str) -> Optional[Tuple[str, str, str]]:
+    """(name, from, to) for "Name (A to B)", else None. Linear time."""
+    s = (text or "").strip()
+    if not s.endswith(")") or s.count("(") != 1 or s.count(")") != 1:
+        return None
+    open_at = s.index("(")
+    name = s[:open_at].strip()
+    if not name:
+        return None
+    inner = s[open_at + 1:-1]
+    words = list(_WORD_RE.finditer(inner))
+
+    def split(ws):
+        for i in range(1, len(ws) - 1):
+            if ws[i].group().lower() in _LIMIT_SEPARATORS:
+                return (inner[ws[0].start():ws[i - 1].end()],
+                        inner[ws[i + 1].start():ws[-1].end()])
+        return None
+
+    # "from"/"between" is optional and taken when the rest still splits,
+    # as the optional group in the old expression was.
+    if words and words[0].group().lower() in _LIMIT_PREFIXES:
+        found = split(words[1:])
+        if found:
+            return (name, *found)
+    found = split(words)
+    return (name, *found) if found else None
 
 
 @dataclass(frozen=True)
@@ -203,9 +237,10 @@ def parse_road_entry(value: Any) -> Optional[RoadEntry]:
     text = str(value or "").strip()
     if not text:
         return None
-    match = _LIMITS_RE.match(text)
-    if match:
-        return RoadEntry(match.group("name").strip(), match.group("a").strip(), match.group("b").strip())
+    limits = _split_limits(text)
+    if limits:
+        name, start, end = limits
+        return RoadEntry(name.strip(), start.strip(), end.strip())
     return RoadEntry(text)
 
 
@@ -226,9 +261,9 @@ def normalize_road_name(value: str) -> str:
         return ""
     # "Oak Rd (Elm St to Route 10)" is Oak Rd; the limits are not
     # part of its name.
-    match = _LIMITS_RE.match(value)
-    if match:
-        value = match.group("name")
+    limits = _split_limits(value)
+    if limits:
+        value = limits[0]
     tokens = _tokens(value)
     if not tokens:
         return ""

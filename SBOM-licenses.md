@@ -631,7 +631,7 @@ Nothing in this project is AGPL, GPL, SSPL, BUSL, Elastic License, CC-BY-NC, com
 - `pydantic` 2.10.6 **[direct]**
 - `pydantic-settings` 2.7.1 **[direct]**
 - `pydantic_core` 2.27.2
-- `PyJWT` 2.13.0 **[direct]**
+- `PyJWT` 2.15.1 **[direct]**
 - `PyYAML` 6.0.3
 - `redis` 5.0.1 **[direct]**
 - `sentry-sdk` 2.54.0 **[direct]**

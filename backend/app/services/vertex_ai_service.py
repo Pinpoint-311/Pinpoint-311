@@ -465,11 +465,17 @@ async def get_historical_context(db, address: str, service_code: str, lat: Optio
 async def get_spatial_context(db, lat: float, long: float, service_code: str) -> Dict[str, Any]:
     """
     Gather spatial context: Infrastructure proximity, Traffic, Vulnerable Areas, and Lighting.
+
+    Entirely local. Critical infrastructure comes from the town's facility
+    store (refreshed weekly in one query, app/services/critical_facilities.py)
+    plus the admin's own facility layers; no resident's location is sent to
+    any third party, and a slow public API can no longer blank the answer.
     """
-    from sqlalchemy import select, func, cast, text
+    from sqlalchemy import select, func, cast
     from geoalchemy2 import Geography
     from app.models import MapLayer, ServiceRequest
-    
+    from app.services import critical_facilities
+
     spatial_info = {
         "critical_infrastructure": [],
         "nearby_outages": 0,
@@ -477,133 +483,23 @@ async def get_spatial_context(db, lat: float, long: float, service_code: str) ->
         "is_school_zone": False,
         "vulnerable_pop_impact": "Unknown"
     }
-    
+
     if lat is None or long is None:
         return spatial_info
-        
+
     try:
         point = func.ST_SetSRID(func.ST_MakePoint(long, lat), 4326)
-        
-        # 1. Proximity to Critical Infrastructure & Zones (MapLayers with GeoJSON)
-        # Query each layer with critical keywords and check spatial proximity using PostGIS
+
         layers = await db.execute(select(MapLayer).where(MapLayer.is_active == True))
         all_layers = layers.scalars().all()
-        
-        for layer in all_layers:
-            # Check if layer name suggests critical infrastructure
-            name_lower = layer.name.lower()
-            critical_keywords = ["hospital", "fire station", "fire", "school", "emergency", "assisted living", "elderly", "police", "ems"]
-            
-            if any(kw in name_lower for kw in critical_keywords):
-                # Use PostGIS to check if request point is within 50m of any feature in this layer's GeoJSON
-                if layer.geojson and layer.geojson.get("features"):
-                    try:
-                        # Check each feature in the GeoJSON for proximity
-                        for feature in layer.geojson.get("features", [])[:50]:  # Limit to 50 features per layer
-                            if feature.get("geometry"):
-                                geom_json = json.dumps(feature["geometry"])
-                                # Use raw SQL to check distance with PostGIS
-                                proximity_query = text("""
-                                    SELECT ST_Distance(
-                                        ST_SetSRID(ST_MakePoint(:long, :lat), 4326)::geography,
-                                        ST_GeomFromGeoJSON(:geom)::geography
-                                    ) as distance_m
-                                """)
-                                result = await db.execute(proximity_query, {"lat": lat, "long": long, "geom": geom_json})
-                                row = result.fetchone()
-                                if row and row.distance_m is not None and row.distance_m <= 50:  # 50 meters
-                                    # Found a critical infrastructure within 50m!
-                                    feature_name = feature.get("properties", {}).get("name", layer.name)
-                                    spatial_info["critical_infrastructure"].append(f"{layer.name}: {feature_name} ({int(row.distance_m)}m)")
-                                    break  # Only need one match per layer
-                    except Exception as e:
-                        logger.warning(f"Failed to check spatial proximity for layer {layer.name}: {e}")
 
-        # Fallback: If no critical infrastructure found from GeoJSON layers, use Overpass API (OSM)
-        if not spatial_info["critical_infrastructure"]:
-            try:
-                import math
-
-                logger.info(f"[Critical Infrastructure] Using Overpass API fallback for {lat},{long}")
-
-                # Single Overpass query to find all critical infrastructure within 500m
-                overpass_url = "https://overpass-api.de/api/interpreter"
-                overpass_query = f"""
-[out:json][timeout:10];
-(
-  node["amenity"~"school|hospital|clinic|fire_station|police|nursing_home"](around:500,{lat},{long});
-  way["amenity"~"school|hospital|clinic|fire_station|police|nursing_home"](around:500,{lat},{long});
-  node["emergency"~"ambulance_station|fire_hydrant"](around:300,{lat},{long});
-  node["healthcare"](around:500,{lat},{long});
-);
-out center body;
-"""
-
-                import aiohttp
-
-                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=12)) as session:
-                    async with session.post(
-                        overpass_url,
-                        data={"data": overpass_query},
-                        headers={"User-Agent": "Pinpoint311/1.0 (infrastructure-check)"}
-                    ) as response:
-                        if response.status == 200:
-                            data = await response.json(content_type=None)
-                            elements = data.get("elements", [])
-                            logger.info(f"[Critical Infrastructure] Overpass returned {len(elements)} elements")
-
-                            # Type label mapping
-                            type_labels = {
-                                "school": "School",
-                                "hospital": "Hospital",
-                                "clinic": "Medical Clinic",
-                                "fire_station": "Fire Station",
-                                "police": "Police Station",
-                                "nursing_home": "Nursing Home/Assisted Living",
-                                "ambulance_station": "Ambulance Station",
-                            }
-
-                            seen_types = set()
-                            for el in elements:
-                                tags = el.get("tags", {})
-                                amenity = tags.get("amenity", "")
-                                emergency = tags.get("emergency", "")
-                                healthcare = tags.get("healthcare", "")
-
-                                # Determine type label
-                                infra_type = amenity or emergency or healthcare
-                                if infra_type in seen_types:
-                                    continue  # One per type
-
-                                label = type_labels.get(infra_type, infra_type.replace("_", " ").title())
-                                name = tags.get("name", label)
-
-                                # Get coordinates (center for ways)
-                                el_lat = el.get("center", {}).get("lat", el.get("lat", 0))
-                                el_lon = el.get("center", {}).get("lon", el.get("lon", 0))
-
-                                # Haversine distance
-                                R = 6371000
-                                d_lat = math.radians(el_lat - lat)
-                                d_lon = math.radians(el_lon - long)
-                                a = math.sin(d_lat / 2) ** 2 + math.cos(math.radians(lat)) * math.cos(math.radians(el_lat)) * math.sin(d_lon / 2) ** 2
-                                c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-                                distance_m = R * c
-
-                                if distance_m <= 500:
-                                    spatial_info["critical_infrastructure"].append(
-                                        f"{label}: {name} ({int(distance_m)}m)"
-                                    )
-                                    seen_types.add(infra_type)
-                                    logger.info(f"[Critical Infrastructure] Detected via Overpass: {name} ({label}) at {int(distance_m)}m")
-                        else:
-                            logger.warning(f"[Critical Infrastructure] Overpass API returned status {response.status}")
-
-                if not spatial_info["critical_infrastructure"]:
-                    logger.info("[Critical Infrastructure] No critical infrastructure found within 500m via Overpass")
-
-            except Exception as e:
-                logger.warning(f"Overpass critical infrastructure search failed: {e}")
+        # 1. Proximity to critical infrastructure, and school zones: the stored
+        # facilities merged with the admin's layers, nearest first.
+        nearby = await critical_facilities.proximity(db, lat, long, all_layers)
+        spatial_info["critical_infrastructure"] = nearby["critical_infrastructure"]
+        spatial_info["is_school_zone"] = nearby["is_school_zone"]
+        for line in nearby["critical_infrastructure"]:
+            logger.info(f"[Critical Infrastructure] {line}")
 
         # 2. Lighting / Outages (Streetlight reports within 100m)
         outage_query = select(func.count(ServiceRequest.id)).where(
@@ -612,18 +508,15 @@ out center body;
             ServiceRequest.deleted_at.is_(None),
             func.ST_DWithin(cast(ServiceRequest.location, Geography), cast(point, Geography), 100)
         )
-        outage_result = await db.execute(outage_query)
-        spatial_info["nearby_outages"] = outage_result.scalar() or 0
-        
-        # 3. Traffic / School Zone Heuristics
-        # If any active layer is "School Zones" or "High Traffic", we'll mark it
+        async with db.begin_nested():
+            spatial_info["nearby_outages"] = (await db.execute(outage_query)).scalar() or 0
+
+        # 3. Traffic heuristic
         for layer in all_layers:
-            if "school" in layer.name.lower():
-                spatial_info["is_school_zone"] = True
             if "traffic" in layer.name.lower() or "arterial" in layer.name.lower():
                 spatial_info["is_high_density"] = True
 
     except Exception as e:
         logger.warning(f"Error getting spatial context: {e}")
-        
+
     return spatial_info
