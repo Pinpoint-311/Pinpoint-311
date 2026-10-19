@@ -326,7 +326,10 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
     return (
         <Modal isOpen={isOpen} onClose={() => { if (!busy) onClose(); }} title={layer.name} size="xl"
             aria-describedby={id('meta')}>
-            <form onSubmit={save} className="space-y-4">
+            {/* -mb-6 here, not on the footer: a sticky element cannot leave its
+                parent, so the footer only reaches the dialog's bottom edge if
+                the form itself extends over the body's padding. */}
+            <form onSubmit={save} className="space-y-4 -mb-6">
                 <p id={id('meta')} className="-mt-2 text-sm text-white/70">
                     Polygon layer settings · {(layer.feature_count ?? 0).toLocaleString()} polygons
                     {imported && <> · imported {imported}</>}
@@ -523,7 +526,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                     )}
                 </Section>
 
-                <div className="sticky bottom-0 z-10 -mx-6 -mb-6 px-6 py-4 border-t border-white/10 bg-slate-900/95 backdrop-blur rounded-b-2xl flex flex-col sm:flex-row sm:items-center gap-3">
+                <div className="sticky bottom-0 z-10 -mx-6 px-6 py-4 border-t border-white/10 bg-slate-900/95 backdrop-blur rounded-b-2xl flex flex-col sm:flex-row sm:items-center gap-3">
                     <div className="min-w-0 flex-1 text-sm">
                         {progress && <p role="status" className="text-sky-200">{progress}</p>}
                         {message && <p role="status" className="text-emerald-200">{message}</p>}
