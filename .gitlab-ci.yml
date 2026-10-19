@@ -36,6 +36,38 @@ stages:
 
 include:
   - template: Security/SAST.gitlab-ci.yml
+  # Infrastructure as code. This repo ships the thing it is scanning: the ARM
+  # and CloudFormation templates a town deploys its own cloud from, plus the
+  # Dockerfiles and compose files every instance runs. A misconfiguration here
+  # is not a finding in our code, it is a finding in a hundred towns' clouds.
+  - template: Security/SAST-IaC.gitlab-ci.yml
+  # Container scanning, for the OS packages underneath the application. The
+  # trivy-image job below already scans the built images on every default-branch
+  # commit and gates on them; this one reports into the security dashboard and
+  # the dependency list, which is what Continuous Vulnerability Scanning watches
+  # for newly published advisories against images already released.
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  # DAST and API fuzzing both need something running to attack. They stay out of
+  # the normal pipeline and are opted into per run; see the job overrides below.
+  - template: Security/DAST.gitlab-ci.yml
+  - template: Security/API-Fuzzing.gitlab-ci.yml
+
+# NOT included, deliberately:
+#
+#   Security/Secret-Detection, Security/Dependency-Scanning
+#     Both already run, through GitLab's profile-based scanner configuration --
+#     the jobs appear as `secret-detection-profile-0` and
+#     `dependency-scanning:...-profile-2`, alongside `gitlab-advanced-sast-profile-1`.
+#     Including the templates as well would run each scanner twice and raise
+#     every finding twice. If the profiles are ever turned off, add them here.
+#
+#   Coverage-Fuzzing
+#     Not a template you enable. Coverage-guided fuzzing needs fuzz targets
+#     written against the code -- a harness per parser worth fuzzing -- and this
+#     codebase has obvious candidates (the Open311 request body, the GeoJSON and
+#     road-geometry parsers, the photo decode path, the deployment-output
+#     parser). That is a piece of work, not a line in this file, and a stub job
+#     with no targets would report "enabled" while testing nothing.
 
 variables:
   PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
@@ -310,3 +342,59 @@ release-notes:
   artifacts:
     paths: [notes.md, "*.digest", "sbom-*.spdx.json"]
     expire_in: 90 days
+
+# ---------------------------------------------------------------------------
+# Scanner wiring
+# ---------------------------------------------------------------------------
+#
+# The templates above ship their own stages (`dast`, `fuzz`) which this pipeline
+# does not define, and defaults that assume a deployed environment. Each one is
+# pinned to the `scan` stage and given a rule that keeps it out of the way until
+# it has something real to do.
+
+# Infrastructure as code: Dockerfiles, compose files, and the ARM and
+# CloudFormation templates under deploy/templates that towns deploy from.
+iac-sast:
+  stage: scan
+
+container_scanning:
+  stage: scan
+  # Only where an image actually exists to scan. Images are pushed on protected
+  # tags, so scanning the registry copy is the honest thing to point at; on a
+  # branch there is nothing published and the trivy-image job above covers the
+  # built image instead.
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v/
+  parallel:
+    matrix:
+      - COMPONENT: [backend, frontend]
+  variables:
+    CS_IMAGE: $CI_REGISTRY_IMAGE/$COMPONENT:$CI_COMMIT_TAG
+
+# Dynamic analysis. This sends real attack traffic at whatever DAST_WEBSITE
+# names, so it is manual and never runs on its own.
+#
+# Do NOT point it at demo.pinpoint311.org or any town's live instance: it will
+# submit, mutate and attempt injection against real endpoints, and this
+# application writes to a database and emails residents. Stand up a throwaway
+# stack (docker-compose.demo.yml) and point it there.
+dast:
+  stage: scan
+  rules:
+    - if: $DAST_WEBSITE
+      when: manual
+      allow_failure: true
+    - when: never
+
+# API fuzzing against the OpenAPI document FastAPI already publishes at
+# /openapi.json. Same rule and the same warning: a throwaway target, never a
+# town's instance.
+apifuzzer_fuzz:
+  stage: scan
+  rules:
+    - if: $FUZZAPI_TARGET_URL
+      when: manual
+      allow_failure: true
+    - when: never
+  variables:
+    FUZZAPI_OPENAPI: $FUZZAPI_TARGET_URL/openapi.json
