@@ -404,8 +404,19 @@ def _status_label(new_status: str, i18n: Dict[str, str]) -> str:
     }.get(new_status, str(new_status).replace("_", " ").title())
 
 
-def _tracking_url(portal_url: str, request_id: str) -> str:
-    return f"{(portal_url or '').rstrip('/')}/#track/{request_id}"
+def _tracking_url(portal_url: str, request_id: str) -> Optional[str]:
+    """The link to a request, or None when the site's address is not known.
+
+    A relative or localhost link in an email goes nowhere, so with no address
+    the button is left out rather than sent broken.
+    """
+    if not portal_url:
+        return None
+    return f"{portal_url.rstrip('/')}/#track/{request_id}"
+
+
+def _button(label: str, url: Optional[str]):
+    return L.button(label, url) if url else None
 
 
 def _absolute(url: Optional[str], portal_url: str) -> Optional[str]:
@@ -414,7 +425,7 @@ def _absolute(url: Optional[str], portal_url: str) -> Optional[str]:
     if not url:
         return None
     if url.startswith("/"):
-        return f"{(portal_url or '').rstrip('/')}{url}"
+        return f"{portal_url.rstrip('/')}{url}" if portal_url else None
     return _safe_url(url)
 
 
@@ -445,7 +456,7 @@ def _confirmation_parts(i18n, township_name, request_id, service_name,
     blocks = [
         L.heading(i18n.get("request_received", "Request received"), 2),
         L.fields(rows),
-        L.button(i18n.get("track_request", "Track your request"), tracking_url),
+        _button(i18n.get("track_request", "Track your request"), tracking_url),
     ]
     footer = [i18n.get("thank_you", "Thank you for helping make {township} a better place.")
               .format(township=township_name)]
@@ -479,7 +490,7 @@ def _status_update_parts(i18n, township_name, request_id, service_name, new_stat
     photo = _absolute(completion_photo_url, portal_url) if new_status == "closed" else None
     if photo:
         blocks.append(L.image(photo, i18n.get("completion_photo", "Completion photo")))
-    blocks.append(L.button(i18n.get("view_details", "View request details"), tracking_url))
+    blocks.append(_button(i18n.get("view_details", "View request details"), tracking_url))
     subject = i18n.get("subject_status", "Request #{id} status: {status} - {township}").format(
         id=request_id, status=label, township=township_name)
     footer = [i18n.get("receiving_because",
@@ -506,7 +517,7 @@ def _comment_parts(i18n, township_name, request_id, service_name, comment_author
             (i18n.get("request_id", "Request ID"), f"#{request_id}"),
             (i18n.get("category", "Category"), service_name),
         ]),
-        L.button(i18n.get("view_conversation", "View the full conversation"), tracking_url),
+        _button(i18n.get("view_conversation", "View the full conversation"), tracking_url),
     ]
     subject = i18n.get("subject_comment", "New update on request #{id} - {township}").format(
         id=request_id, township=township_name)

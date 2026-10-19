@@ -192,6 +192,24 @@ async def configure_notifications(db):
             }, provider_type="smtp")
 
 
+
+async def _portal_url(db) -> str:
+    """The address residents use, for links in emails; "" if nothing has set one.
+
+    Was `custom_domain`, then the DOMAIN env var, then "http://localhost:5173".
+    The worker that sends these emails was not given DOMAIN by the compose
+    file, so on any instance without a custom domain every "Track your request"
+    button pointed at localhost. Now the same lookup the rest of the app uses
+    (custom domain, then DOMAIN), and when neither is set the templates leave
+    the link out rather than send one that cannot work.
+    """
+    from app.api.system import public_origin
+    origin = await public_origin(db)
+    if not origin:
+        logger.error("[Notification] No public address configured (custom domain or DOMAIN); "
+                     "sending without links")
+    return origin or ""
+
 @celery_app.task(bind=True, max_retries=3)
 def analyze_request(self, request_id: int):
     """Analyze service request with Vertex AI (if enabled)"""
@@ -514,10 +532,7 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                 return {"status": "skipped", "reason": "notifications disabled"}
             
             # Get custom domain for portal URL
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -651,10 +666,7 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -739,10 +751,7 @@ def send_department_notification(request_id: int, department_email: str = None):
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -945,8 +954,7 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = (settings.custom_domain if settings else None) or os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
 
             result = await db.execute(select(ServiceRequest).where(ServiceRequest.id == request_id))
             request = result.scalar_one_or_none()
@@ -1435,10 +1443,7 @@ def send_weekly_digest():
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             from app.services import capability_switches
             if not await capability_switches.enabled("email"):
