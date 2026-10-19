@@ -86,7 +86,7 @@ updater (Phase 2) is its only writer; until then an operator writes it from the
 release notes:
 
 ```dotenv
-# /home/ubuntu/pinpoint-<instance>/release.lock
+# /srv/pinpoint/<instance>/release.lock
 PINPOINT_VERSION=1.8.0
 BACKEND_IMAGE=ghcr.io/pinpoint-311/pinpoint-311-backend@sha256:<64 hex>
 FRONTEND_IMAGE=ghcr.io/pinpoint-311/pinpoint-311-frontend@sha256:<64 hex>
@@ -97,10 +97,10 @@ Pass it **after** the instance's own env file. `--env-file` replaces the default
 
 ```bash
 docker compose -p pinpoint-<instance> \
-  --env-file /home/ubuntu/pinpoint-<instance>/.env.<instance> \
-  --env-file /home/ubuntu/pinpoint-<instance>/release.lock \
+  --env-file /srv/pinpoint/<instance>/.env.<instance> \
+  --env-file /srv/pinpoint/<instance>/release.lock \
   -f /opt/pinpoint/docker-compose.yml \
-  -f /home/ubuntu/pinpoint-<instance>/docker-compose.<instance>.yml \
+  -f /srv/pinpoint/<instance>/docker-compose.<instance>.yml \
   up -d db redis backend worker frontend
 ```
 
@@ -214,17 +214,18 @@ What changes for a stack:
   themselves unavailable (no Docker access is the secure setup). Phase 3
   replaces them with requests to the host updater.
 
-### This server (four stacks sharing `/home/ubuntu/Pinpoint-311`)
+### Several stacks sharing one checkout
 
-`pinpoint-311` (main demo), `pinpoint-a11y`, `pinpoint-passaic` and
-`pinpoint-staffordnjpilot` all layer `/home/ubuntu/Pinpoint-311/docker-compose.yml`.
+If more than one stack layers the same checkout's `docker-compose.yml` (for
+example a demo and a pilot on one VM, each with its own `-p` project, env file
+and override), move them one at a time.
 
 > [!CAUTION]
-> The moment the new `docker-compose.yml` is in `/home/ubuntu/Pinpoint-311`, the
-> next `up` of **any** of the four stacks recreates it without its source
-> mount, running whatever code is in the image it names. Have the release images
-> ready (step 1) before the compose change reaches that checkout, and do not run
-> `up` on a stack you have not prepared.
+> The moment the new `docker-compose.yml` is in the shared checkout, the next
+> `up` of **any** stack layered on it recreates that stack without its source
+> mount, running whatever code is in the image it names. Have the release
+> images ready (step 1) before the compose change reaches that checkout, and do
+> not run `up` on a stack you have not prepared.
 
 1. **Publish a release from the code the stacks run today.** Push a `v*` tag
    from `main` and wait for the pipeline (or, if it cannot run yet, build
@@ -236,52 +237,44 @@ What changes for a stack:
    `db_revision` is the release's `db_revision` or `min_db_revision`.
 3. **Back up the stack** (Admin Console > Backups, or the encrypted off-site
    backup), and confirm it landed.
-4. **Write its `release.lock`**:
-   - `pinpoint-311`: `/home/ubuntu/Pinpoint-311/release.lock` (ignored by git)
-   - the others: `/home/ubuntu/pinpoint-<name>/release.lock`
+4. **Write its `release.lock`** in the stack's own directory (for a stack run
+   from the checkout itself, `release.lock` there; it is ignored by git).
 5. **Remove the `image:` lines** for `backend`, `worker` and `frontend` from
-   the stack's override (`docker-compose.a11y.yml`, `docker-compose.passaic.yml`,
-   `docker-compose.staffordnjpilot.yml`); they point at the locally built
-   `pinpoint-311-backend:latest` / `pinpoint-311-worker:latest` and would beat
-   the lock. Keep the `networks:` and `environment:` entries.
-6. **Bring the compose change in** (first stack only): update
-   `/home/ubuntu/Pinpoint-311` to the commit with the new `docker-compose.yml`.
+   the stack's override; locally built images named there would beat the lock.
+   Keep the `networks:` and `environment:` entries.
+6. **Bring the compose change in** (first stack only): update the shared
+   checkout to the commit with the new `docker-compose.yml`.
 7. **Preview, then recreate** only that stack's app services:
 
    ```bash
-   # pinpoint-311 (the main demo; it also owns the shared Caddy)
-   cd /home/ubuntu/Pinpoint-311
-   docker compose -p pinpoint-311 --env-file .env --env-file release.lock \
-     -f docker-compose.yml -f docker-compose.caddy-towns.yml config | grep -E 'image:|/project|docker.sock'
-   docker compose -p pinpoint-311 --env-file .env --env-file release.lock \
-     -f docker-compose.yml -f docker-compose.caddy-towns.yml up -d backend worker frontend
-
-   # pinpoint-a11y / pinpoint-passaic / pinpoint-staffordnjpilot
-   N=staffordnjpilot
+   N=<instance>
+   D=/srv/pinpoint/$N            # the stack's own directory
    docker compose -p pinpoint-$N \
-     --env-file /home/ubuntu/pinpoint-$N/.env.$N \
-     --env-file /home/ubuntu/pinpoint-$N/release.lock \
-     -f /home/ubuntu/Pinpoint-311/docker-compose.yml \
-     -f /home/ubuntu/pinpoint-$N/docker-compose.$N.yml \
+     --env-file $D/.env.$N --env-file $D/release.lock \
+     -f <checkout>/docker-compose.yml -f $D/docker-compose.$N.yml \
+     config | grep -E 'image:|/project|docker.sock'
+   docker compose -p pinpoint-$N \
+     --env-file $D/.env.$N --env-file $D/release.lock \
+     -f <checkout>/docker-compose.yml -f $D/docker-compose.$N.yml \
      up -d backend worker frontend
    ```
 
    The `config` preview must show the digests and no `/project` or
-   `docker.sock`. For a11y the env file is `.env.a11y`, and so on.
+   `docker.sock`.
 8. **Health-check:** `/api/health/quick` reports the release's `version`,
    `git_sha` and `db_revision`; the home page and `/api/services/` return 200;
    `docker inspect pinpoint-$N-backend-1 --format '{{range .Mounts}}{{.Source}} {{end}}'`
-   lists no `/home/ubuntu/Pinpoint-311` path and no `docker.sock`; an existing
-   photo still loads.
+   lists no checkout path and no `docker.sock`; an existing photo still loads;
+   and a real backup completes (Admin Console > Backups > *Run now*).
 9. **Roll back if needed:** put the previous digests back in `release.lock`
    and repeat step 7. To return to the source-mounted layout, check out the
-   previous `docker-compose.yml` in `/home/ubuntu/Pinpoint-311`, restore the
-   override's `image:` lines and `up -d` again.
+   previous `docker-compose.yml` in the checkout, restore the override's
+   `image:` lines and `up -d` again.
 
-Then move on to the next stack. When all four run from images, the checkout at
-`/home/ubuntu/Pinpoint-311` is used by no running container and becomes an
-ordinary clone for development and releases. Panel-provisioned towns are
-unaffected: the orchestrator already runs them from signed digests.
+Then move on to the next stack. When all of them run from images, the checkout
+is used by no running container and becomes an ordinary clone for development
+and releases. Panel-provisioned towns are unaffected: the orchestrator already
+runs them from signed digests.
 
 ## Connecting the host updater
 
@@ -298,15 +291,15 @@ console so admins can request, approve and watch upgrades there
 
    ```bash
    sudo install -m 0600 -o pinpoint-updater -g pinpoint-updater /dev/null \
-       /home/ubuntu/pinpoint-staffordnjpilot/updater.token
-   sudo -e /home/ubuntu/pinpoint-staffordnjpilot/updater.token   # paste the token, nothing else
+       /srv/pinpoint/<instance>/updater.token
+   sudo -e /srv/pinpoint/<instance>/updater.token   # paste the token, nothing else
    ```
 
 3. **Register the instance** in `/etc/pinpoint-updater/instances.yml`:
 
    ```yaml
    instances:
-     staffordnjpilot:
+     <instance>:
        # ...project, dir, compose, env_file, app_url as before...
        token_file: updater.token              # relative to dir, or absolute
        api_url: http://127.0.0.1:58004        # the backend's loopback port (BACKEND_PORT)

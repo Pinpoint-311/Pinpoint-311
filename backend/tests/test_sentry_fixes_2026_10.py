@@ -1,4 +1,4 @@
-"""Fixes for the errors Sentry reported from staffordnjpilot on 2026-10-18."""
+"""Fixes for the errors Sentry reported from a pilot instance on 2026-10-18."""
 
 import asyncio
 import inspect

@@ -121,14 +121,13 @@ of a Python process with the libraries already imported:
 **Image size.** onnxruntime 1.23.2 adds 132 MB to the backend image with its declared
 dependencies. Installing it `--no-deps` adds only 46 MB, since it imports only numpy.
 
-## This server (staffordnjpilot and the other live stacks)
+## Pointing an instance at the models
 
-The model files are in `/home/ubuntu/pinpoint-models`, with a `SHA256SUMS` file. To use
-them, add this to each instance's `.env`, then recreate the backend and worker after
-the rollout:
+Keep the model files in one directory on the host, with a `SHA256SUMS` file, and
+add it to each instance's `.env`; then recreate the backend and worker:
 
 ```sh
-REDACTION_MODELS_DIR=/home/ubuntu/pinpoint-models
+REDACTION_MODELS_DIR=/opt/pinpoint/models
 ```
 
 ## Experimental: EgoBlur sidecar

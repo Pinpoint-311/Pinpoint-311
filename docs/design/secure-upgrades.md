@@ -33,10 +33,10 @@ reuses it rather than writing a second implementation.
 
 | # | Problem | Where | Effect |
 |---|---|---|---|
-| 1 | Shared checkout | Every stack's backend and worker mount `/home/ubuntu/Pinpoint-311/backend` | Switching versions from one town changes the code under all four stacks; their migrations do not run |
+| 1 | Shared checkout | Every stack's backend and worker mount the shared checkout's `./backend` | Switching versions from one town changes the code under every stack on the host; their migrations do not run |
 | 2 | Wrong compose project | `system.py` `switch_version` guesses the project from a legacy repo name | Falls back to a nonexistent project; `up` with container paths would start a broken duplicate stack; rollback aims at the same wrong project |
 | 3 | Docker socket in the backend | `docker-compose.yml` mounts `/var/run/docker.sock` read-write into `backend` | A compromise of the public web app is a compromise of the host |
-| 4 | Restart buttons hit the wrong stack | `system.py` maintenance actions run `docker compose` in `/project` with no `-p` | Staffordnjpilot's "restart" buttons restart the main demo's containers |
+| 4 | Restart buttons hit the wrong stack | `system.py` maintenance actions run `docker compose` in `/project` with no `-p` | One town's "restart" buttons restart another stack's containers |
 | 5 | No release identity | Images built on the server carry no version stamp | `/api/health/quick` reports `version: null`, `git_sha: null`; nothing can say what is running |
 | 6 | GitHub only | `GITHUB_REPO` and `api.github.com` are hard-coded for releases, commits, tags and CI status | Hosting on GitLab breaks the release list and security badges |
 | 7 | Rebuilds are no-ops | Backends run mounted source, not the image | "Rebuild the backend image" has had no effect on running code |
@@ -111,7 +111,7 @@ Each instance pins its images in its own lock file next to its compose override,
 written only by the updater:
 
 ```dotenv
-# /home/ubuntu/pinpoint-<instance>/release.lock
+# /srv/pinpoint/<instance>/release.lock
 PINPOINT_VERSION=v1.8.0
 BACKEND_IMAGE=ghcr.io/pinpoint-311/pinpoint-311-backend@sha256:…
 FRONTEND_IMAGE=ghcr.io/pinpoint-311/pinpoint-311-frontend@sha256:…
@@ -148,11 +148,11 @@ trust:
   identity: '^https://github.com/Pinpoint-311/Pinpoint-311/\.github/workflows/build-publish\.yml@refs/tags/v'
   # or: key: /etc/pinpoint-updater/cosign.pub   (KMS-backed key, see decisions)
 instances:
-  staffordnjpilot:
-    project: pinpoint-staffordnjpilot
-    dir: /home/ubuntu/pinpoint-staffordnjpilot
-    compose: [/opt/pinpoint/docker-compose.yml, docker-compose.staffordnjpilot.yml]
-    env_file: .env.staffordnjpilot
+  springfield:
+    project: pinpoint-springfield
+    dir: /srv/pinpoint/springfield
+    compose: [/opt/pinpoint/docker-compose.yml, docker-compose.springfield.yml]
+    env_file: .env.springfield
     app_url: http://127.0.0.1:58003
     token_file: updater.token
 ```
@@ -367,10 +367,10 @@ Panel towns are unaffected; the orchestrator already runs them this way.
 
 | Phase | Deliverables | Verification | Size |
 |---|---|---|---|
-| 0. Contain (now) | Switcher, update and restart actions refuse when the instance shares a checkout or cannot identify its own compose project; buttons hidden with an explanation | Tests; manual check on staffordnjpilot | Small (hours) |
-| 1. Immutable images | Pinned CI actions; SBOM and provenance; release gate; `release.lock`; production compose without mounts or socket; `docker-compose.dev.yml`; GitLab release job | A signed release; one stack moved over in a throwaway environment, then staffordnjpilot | 2–3 days |
+| 0. Contain (now) | Switcher, update and restart actions refuse when the instance shares a checkout or cannot identify its own compose project; buttons hidden with an explanation | Tests; manual check on a pilot instance | Small (hours) |
+| 1. Immutable images | Pinned CI actions; SBOM and provenance; release gate; `release.lock`; production compose without mounts or socket; `docker-compose.dev.yml`; GitLab release job | A signed release; one stack moved over in a throwaway environment, then a pilot instance | 2–3 days |
 | 2. Updater core | Shared package extracted from the orchestrator; `pinpoint-updater` CLI (`verify`, `upgrade`, `rollback`, `status`) with the full step list | End-to-end tests against throwaway stacks: good upgrade, bad signature, incompatible schema, failed health → rollback, gated migration | 3–4 days |
-| 3. App integration (**implemented**) | Internal updater routes and token; request, approve and status endpoints; Version Control panel; maintenance actions moved; old routes removed | Backend and frontend tests; a console e2e against a throwaway backend and stack (passes). Still to do: a real upgrade of staffordnjpilot through the console | 2–3 days |
+| 3. App integration (**implemented**) | Internal updater routes and token; request, approve and status endpoints; Version Control panel; maintenance actions moved; old routes removed | Backend and frontend tests; a console e2e against a throwaway backend and stack (passes). Still to do: a real upgrade of a pilot instance through the console | 2–3 days |
 | 4. Operations | Release source config for GitLab; scheduled windows; email notices; docs and runbook; migrate the other three stacks | A GitLab-hosted test release upgraded end to end | 1–2 days |
 
 Phases 1–3 are useful on their own: after phase 1 the socket can come out and

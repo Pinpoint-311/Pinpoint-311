@@ -1,7 +1,7 @@
 """A sender name with a comma still produces one, correct sender address.
 
-Unquoted, "Stafford, NJ Pilot <x@y>" is two addresses to an email parser, and
-smtplib sent MAIL FROM:<Stafford>. Live, every email failed with 501.
+Unquoted, "Springfield, IL Pilot <x@y>" is two addresses to an email parser, and
+smtplib sent MAIL FROM:<Springfield>. Live, every email failed with 501.
 """
 from email.utils import getaddresses
 
@@ -35,10 +35,10 @@ def test_a_comma_in_the_sender_name_keeps_the_address(monkeypatch):
     monkeypatch.setattr(notifications.smtplib, "SMTP", FakeSMTP)
     provider = notifications.EmailProvider(
         smtp_host="smtp.example.org", smtp_port=587, smtp_user="u", smtp_password="p",
-        from_email="pilot@example.org", from_name="Stafford, NJ Pilot - Pinpoint 311",
+        from_email="pilot@example.org", from_name="Springfield, IL Pilot - Pinpoint 311",
         use_tls=True,
     )
 
     assert provider.send_email("resident@example.org", "Hello", "<p>Hi</p>") is True
     addresses = getaddresses([sent[0]["From"]])
-    assert addresses == [("Stafford, NJ Pilot - Pinpoint 311", "pilot@example.org")]
+    assert addresses == [("Springfield, IL Pilot - Pinpoint 311", "pilot@example.org")]

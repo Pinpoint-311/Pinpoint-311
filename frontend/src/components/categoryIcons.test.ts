@@ -5,7 +5,7 @@ import {
 import { AlertCircle, Trash2 } from 'lucide-react';
 
 describe('suggestCategoryIcon', () => {
-    // A real town's category list (Stafford, NJ pilot).
+    // A real-world category list, as a pilot town set it up.
     const cases: [string, string][] = [
         ['ADA Accessibility Concerns', 'Accessibility'],
         ['General Questions/Other', 'MessageCircleQuestion'],

@@ -1,4 +1,4 @@
-import React, { useId, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
     Save, Upload, X, Sparkles, Plus, Globe, Facebook, Instagram, Youtube, Twitter, Linkedin, ExternalLink,
 } from 'lucide-react';
@@ -216,6 +216,17 @@ export function BrandingSettings({ form, setForm, onSave, isLoading, setIsLoadin
     const [domainRequired, setDomainRequired] = useState(false);
     const [touchedLinks, setTouchedLinks] = useState<Record<number, boolean>>({});
     const [saveBlocked, setSaveBlocked] = useState('');
+    // The address DNS should point at comes from this deployment, never a
+    // hardcoded IP: every town runs on its own server.
+    const [serverIp, setServerIp] = useState<string | null>(null);
+    useEffect(() => {
+        let live = true;
+        api.getDomainStatus()
+            .then((s) => { if (live) setServerIp(s.server_ip || null); })
+            .catch(() => { /* unknown: the copy below says so */ });
+        return () => { live = false; };
+    }, []);
+    const ipLabel = serverIp ?? "this server's public IP address";
     const domainInputRef = useRef<HTMLInputElement>(null);
 
     const domainError = validateDomain(form.custom_domain, domainRequired);
@@ -286,7 +297,7 @@ export function BrandingSettings({ form, setForm, onSave, isLoading, setIsLoadin
                 alert(
                     `${result.message}\n\n` +
                     `Next step: ${result.next_step || 'Restart Caddy container'}\n\n` +
-                    `Run on server:\nssh ubuntu@132.226.32.116\ncd ~/WWF-Open-Source-311-Template\ndocker-compose restart caddy`
+                    `On the server, in the Pinpoint 311 folder, run:\ndocker compose restart caddy`
                 );
             } else {
                 alert(`Error: ${result.message}`);
@@ -424,7 +435,7 @@ export function BrandingSettings({ form, setForm, onSave, isLoading, setIsLoadin
                             <h3 className="text-sm font-medium text-amber-300 mb-3">Step 1: Set up DNS records first</h3>
                             <ol className="text-sm text-white/70 space-y-2 list-decimal list-inside">
                                 <li>Log into your domain registrar (GoDaddy, Namecheap, etc.)</li>
-                                <li>Add an <strong className="text-white">A record</strong> pointing to: <code className="text-primary-300 bg-black/30 px-1 rounded">132.226.32.116</code></li>
+                                <li>Add an <strong className="text-white">A record</strong> pointing to: <code className="text-primary-300 bg-black/30 px-1 rounded">{ipLabel}</code></li>
                                 <li>Wait 5-30 minutes for DNS to update</li>
                                 <li>Enter the domain above and select Configure Domain</li>
                             </ol>
@@ -444,12 +455,12 @@ export function BrandingSettings({ form, setForm, onSave, isLoading, setIsLoadin
                                     <tr>
                                         <td className="py-1">A</td>
                                         <td className="py-1">@ or 311</td>
-                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
+                                        <td className="py-1"><code className="text-primary-300">{ipLabel}</code></td>
                                     </tr>
                                     <tr>
                                         <td className="py-1">A</td>
                                         <td className="py-1">www</td>
-                                        <td className="py-1"><code className="text-primary-300">132.226.32.116</code></td>
+                                        <td className="py-1"><code className="text-primary-300">{ipLabel}</code></td>
                                     </tr>
                                 </tbody>
                             </table>

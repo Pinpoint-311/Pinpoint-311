@@ -531,8 +531,10 @@ def test_caddy_refuses_the_internal_prefix_for_every_site():
     caddyfile = (ROOT / "Caddyfile").read_text()
     snippet = caddyfile[caddyfile.index("(pinpoint_site) {"):]
     snippet = snippet[: snippet.index("\n}\n")]
-    m = re.search(r"handle /api/internal/\* \{\s*respond 404\s*\}", snippet)
-    assert m, "pinpoint_site must answer 404 for /api/internal/*"
+    # `/api/internal*`, not `/api/internal/*`: the slash form let
+    # `/api/internal./...` and `/api/internal;x/...` through to the backend.
+    m = re.search(r"handle /api/internal\* \{\s*respond 404\s*\}", snippet)
+    assert m, "pinpoint_site must answer 404 for /api/internal*"
     assert m.start() < snippet.index("handle /api/* {")
 
 
@@ -674,7 +676,7 @@ async def test_turning_two_person_approval_off_emails_every_admin(h):
         await c.put("/api/system/upgrade-settings", json={"require_two_person_approval": True})   # on: audit only
         assert h.emails == [("two_person_disabled", None, "alice")]
     from app.services import email_layout as L
-    subject, blocks = U.compose_settings_email("alice", town="Stafford", L=L)
+    subject, blocks = U.compose_settings_email("alice", town="Springfield", L=L)
     text = json.dumps(blocks)
     assert "turned off" in subject and "alice" in text and "require_two_person_approval: true" in text
     changes = [a for a in await h.rows(models.AuditLog) if a.event_type == "upgrade_settings_changed"]

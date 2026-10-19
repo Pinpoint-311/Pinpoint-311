@@ -142,8 +142,8 @@ class EmailProvider:
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             # formataddr quotes a name that needs it. Unquoted, a comma in the
-            # name ("Stafford, NJ Pilot") splits the header into two addresses,
-            # and smtplib sent MAIL FROM:<Stafford> -- live, every email failed
+            # name ("Springfield, IL Pilot") splits the header into two addresses,
+            # and smtplib sent MAIL FROM:<Springfield> -- live, every email failed
             # with 501 "Was expecting MAIL arg syntax of FROM:<address>".
             msg["From"] = formataddr((sender_name, self.from_email))
             msg["To"] = to
