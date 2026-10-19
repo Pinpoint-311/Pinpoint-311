@@ -198,6 +198,10 @@ services:
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # The worker sends the emails, and their links need the site's address.
+      # Without this every "Track your request" button pointed at localhost on
+      # an instance with no custom domain set.
+      DOMAIN: ${DOMAIN:-localhost}
       # The worker runs the nightly Accela syncs, so it needs the same app
       # credentials to exchange refresh tokens.
       ACCELA_CLIENT_ID: ${ACCELA_CLIENT_ID:-}
