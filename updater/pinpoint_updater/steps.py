@@ -305,6 +305,13 @@ def _health_round(deps: Deps, images: ImageSet, expect_version: Optional[str],
         if inst.worker_ping:
             r = deps.compose.exec(inst.worker_service, inst.worker_ping, images, timeout=30)
             checks.append(_check("worker", r.ok, "worker answered ping" if r.ok else f"no heartbeat: {r.tail(300)}"))
+    if all(c["ok"] for c in checks) and inst.selfcheck:
+        # Can the new image do its job (backups, models)? A failure fails the
+        # health step, so the upgrade rolls back instead of committing it.
+        for svc in (inst.backend_service, inst.worker_service):
+            r = deps.compose.exec(svc, inst.selfcheck, images, timeout=60)
+            checks.append(_check(f"selfcheck {svc}", r.ok,
+                                 "image self-check passed" if r.ok else f"self-check failed: {r.tail(300)}"))
     return checks
 
 

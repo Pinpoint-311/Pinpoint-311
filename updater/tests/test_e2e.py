@@ -118,6 +118,7 @@ def stack(tmp_path_factory):
                 "backup": {"mode": "verify", "command": ["python", "/app/fakeapp.py", "backup"]},
                 "migrate_command": ["python", "/app/fakeapp.py", "migrate"],
                 "worker_ping": ["python", "/app/fakeapp.py", "ping"],
+                "selfcheck": [],  # the fake app has no app.cli.selfcheck
                 "health_timeout": 25, "health_interval": 1, "min_free_gb": 0.1,
             }},
         }

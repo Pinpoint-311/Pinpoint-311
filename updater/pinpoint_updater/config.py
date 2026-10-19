@@ -214,6 +214,11 @@ class InstanceConfig(_Strict):
     frontend_service: str = "frontend"
     # Run inside the worker container; exit 0 means the worker answered.
     # [] disables the heartbeat check.
+    # Run inside the new backend and worker after an upgrade, before release.lock
+    # is committed (app/cli/selfcheck.py): required programs, a real gpg round
+    # trip, the backup dir and model files. Empty list disables it. 1.9.0-rc1
+    # shipped without gpg and an upgrade would have committed it.
+    selfcheck: list[str] = Field(default_factory=lambda: ["python", "-m", "app.cli.selfcheck"])
     worker_ping: list[str] = Field(
         default_factory=lambda: ["celery", "-A", "app.core.celery_app", "inspect", "ping", "--timeout", "10"]
     )

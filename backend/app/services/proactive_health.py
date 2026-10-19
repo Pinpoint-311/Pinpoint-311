@@ -254,6 +254,35 @@ async def _backup_age_check() -> Dict[str, Any]:
         return _check("backup", "Backup freshness", "unknown", None, "Could not read backup status.")
 
 
+async def _backup_tools_check() -> Dict[str, Any]:
+    """Can a backup be taken and restored on this image, right now?
+
+    Backup freshness only notices a broken backup after the next scheduled run
+    has failed; 1.9.0-rc1 shipped without gpg and nobody knew until 02:00. This
+    checks the programs (and a real gpg round trip) every scan, so an admin
+    hears within 15 minutes of a bad deploy. Skipped when backups are not set up.
+    """
+    try:
+        from app.services.backup_service import get_backup_config
+        from app.services import runtime_tools
+        if not await get_backup_config():
+            return _check("backup_tools", "Backups can run", "ok", "not configured",
+                          "Backups are not set up, so there is nothing to check.")
+        problems = runtime_tools.backup_readiness()
+        if problems:
+            return _check(
+                "backup_tools", "Backups can run", "critical", len(problems),
+                "Backups will fail on this server: " + "; ".join(problems) + ".",
+                "Redeploy an image that includes these programs, then run a backup from "
+                "Compliance > Database Backups to confirm.",
+            )
+        return _check("backup_tools", "Backups can run", "ok", 0,
+                      "Backup programs are installed and encryption works.")
+    except Exception as e:
+        logger.warning(f"[proactive] backup tools check failed: {e}")
+        return _check("backup_tools", "Backups can run", "unknown", None, "Could not check backup programs.")
+
+
 async def _redis_check() -> Dict[str, Any]:
     try:
         import redis.asyncio as aioredis
@@ -566,6 +595,7 @@ CHECK_KEYS = (
     "cpu",
     "db_connections",
     "backup",
+    "backup_tools",
     "redis",
     "kms",
     "redaction",
@@ -582,6 +612,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _cpu_check(),
         await _db_connection_check(db),
         await _backup_age_check(),
+        await _backup_tools_check(),
         await _redis_check(),
         await _kms_check(),
         await _redaction_check(),

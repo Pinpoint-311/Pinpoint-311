@@ -84,7 +84,8 @@ def test_good_upgrade_runs_every_step_in_order_and_commits_the_lock(cfg):
 
     order = [next(w for w in ("app.cli.backup", "pull", "app.db.migrate", "up", "exec") if w in c)
              for c, _ in runner.compose_calls()]
-    assert order == ["app.cli.backup", "pull", "app.db.migrate", "up", "exec"]
+    # exec: the worker ping, then the image self-check in backend and worker
+    assert order == ["app.cli.backup", "pull", "app.db.migrate", "up", "exec", "exec", "exec"]
 
     # outcome + steps were reported and logged
     assert rec.outcomes[-1].outcome == "succeeded"
@@ -394,3 +395,38 @@ def test_committed_lock_records_the_app_version(cfg):
     lock = read_lock(cfg.instances["town"].lock_path)
     assert lock.current.app_version == "1.8.0" and lock.current.version == "v1.8.0"
     assert "PINPOINT_APP_VERSION=1.8.0" in cfg.instances["town"].lock_path.read_text()
+
+
+def test_failed_image_selfcheck_rolls_back(cfg):
+    """1.9.0-rc1 shipped without gpg: the new image ran, answered health, and
+    could not take a backup. The self-check in the health step catches that and
+    the upgrade rolls back instead of committing release.lock."""
+    runner = good_runner()
+    calls = {"n": 0}
+
+    def first_selfcheck(args):
+        # Fail only the first self-check round (the new image); the rollback's
+        # own health (old image) passes.
+        if is_compose("exec")(args) and "app.cli.selfcheck" in args:
+            calls["n"] += 1
+            return calls["n"] <= 2   # backend + worker of the new image
+        return False
+    runner.on(first_selfcheck, 1, '{"ok": false, "problems": ["gpg is not installed"]}', "")
+    probe = FakeProbe([healthy("1.7.0", "aaa"), healthy("1.8.0", "bbb"), healthy("1.7.0", "bbb")])
+    e, _ = engine(cfg, runner, probe)
+    out = upgrade(e)
+    assert out.outcome == "rolled_back", out.summary
+    detail = next(s for s in out.steps if s.name == "health").detail
+    assert "selfcheck backend" in detail and "gpg is not installed" in detail
+    assert read_lock(cfg.instances["town"].lock_path).current == OLD
+
+
+def test_selfcheck_runs_in_backend_and_worker_after_upgrade(cfg):
+    runner = good_runner()
+    probe = FakeProbe([healthy("1.7.0", "aaa"), healthy("1.8.0", "bbb")])
+    e, _ = engine(cfg, runner, probe)
+    out = upgrade(e)
+    assert out.outcome == "succeeded", out.summary
+    execs = [c for c in runner.calls if c[:2] == ["docker", "compose"] and "app.cli.selfcheck" in c]
+    services = {c[c.index("-T") + 1] for c in execs}
+    assert services == {"backend", "worker"}

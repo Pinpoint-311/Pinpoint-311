@@ -228,6 +228,15 @@ jobs:
           exit-code: '1'
           format: table
 
+      # The image must be able to do its job, not just pass a scan. 1.9.0-rc1
+      # shipped without gpg and could not encrypt a single backup; this fails
+      # the release before anything is pushed or signed.
+      - name: Image self-check (backend)
+        if: matrix.image == 'backend'
+        run: >
+          docker run --rm --entrypoint python
+          pinpoint-scan/backend:${{ github.sha }} -m app.cli.selfcheck --tools-only
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0

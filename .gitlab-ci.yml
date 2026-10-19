@@ -148,6 +148,12 @@ trivy-image:
       docker cp trivy:/usr/local/bin/trivy /usr/local/bin/trivy
       docker rm trivy >/dev/null
       trivy image $TRIVY_GATE_ARGS --input /tmp/image.tar
+      # The image must be able to do its job, not just pass a scan (1.9.0-rc1
+      # shipped without gpg). Same build, cached, loaded into the daemon.
+      if [ "$COMPONENT" = backend ]; then
+        docker buildx build $extra --platform linux/amd64 --load -t pinpoint-scan/backend "$COMPONENT"
+        docker run --rm --entrypoint python pinpoint-scan/backend -m app.cli.selfcheck --tools-only
+      fi
 
 # ---------------------------------------------------------------- release ----
 
