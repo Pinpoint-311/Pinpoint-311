@@ -42,10 +42,11 @@ def test_the_backup_service_still_uses_gpg():
 
 
 def test_tools_present_when_running_in_the_image():
-    # Only meaningful inside the built image (where tests run in CI's image job
-    # and in the prod-image test command); skipped on a bare host.
-    if not Path("/.dockerenv").exists():
-        pytest.skip("not running inside a container image")
+    # Only meaningful inside the built backend image (CI's image job, the
+    # prod-image test command); skipped anywhere else. "Any container" is not
+    # enough: a stock python image also has /.dockerenv and none of the tools.
+    if not Path("/app/app/cli/selfcheck.py").exists():
+        pytest.skip("not running inside the Pinpoint backend image")
     # gzip (pre-migration dumps, app/db/migrate.py) comes with the base image
     # rather than the apt block, so it is checked here only.
     absent = sorted(tool for tool in [*REQUIRED, "gzip"] if shutil.which(tool) is None)
