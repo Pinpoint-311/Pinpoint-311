@@ -559,10 +559,22 @@ async def test_exif_is_stripped_even_when_no_face_is_found(monkeypatch, spy):
 
 
 @pytest.mark.asyncio
-async def test_photos_past_the_limit_are_carried_through_not_dropped(monkeypatch, spy):
+async def test_photos_past_the_limit_are_held_not_dropped_and_not_published(monkeypatch, spy):
+    """Not dropped -- but not published either.
+
+    This used to assert `len(batch.media) == 5`: the two past the cap were
+    appended to the publishable list verbatim. Nothing had examined them --
+    not SafeSearch, not the blur, not even the EXIF strip -- and
+    `create_request` keeps the first three of what it is handed, so a
+    submission whose first photo is withheld promoted one of these onto the
+    public map. They go to `withheld` now, which is the list that already
+    means "a human decides", so the photo is still not lost.
+    """
     _configure(monkeypatch, "google")
     _, batch = await ir.screen_and_redact([PHOTO] * 5)
-    assert len(batch.media) == 5
+    assert len(batch.media) == 3
+    assert len(batch.kept) == 3
+    assert [p["reason"] for p in batch.withheld] == ["over-photo-limit"] * 2
 
 
 @pytest.mark.asyncio

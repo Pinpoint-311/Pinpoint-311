@@ -89,6 +89,53 @@ def _parse_address(value: str) -> Optional[ipaddress._BaseAddress]:
         return None
 
 
+# Resolved hostnames, with a short time to live.
+#
+# A container's address is not stable across restarts, so naming the edge by
+# CIDR means re-writing config whenever Docker renumbers it -- and the usual
+# response to that is to widen the range back out to the /12, which is the
+# problem this exists to solve. A name stays correct: Docker's embedded DNS on
+# a user-defined network resolves a container or service name to its current
+# address. The TTL keeps it to roughly one lookup per name per minute rather
+# than one per request, while still following a restart within a minute.
+_HOST_CACHE: dict = {}
+_HOST_TTL_SECONDS = 60
+
+
+def _resolve_host(name: str) -> List[ipaddress._BaseNetwork]:
+    """Every current address for a hostname, as single-address networks.
+
+    A name that does not resolve contributes nothing. That is the safe
+    direction: an unresolvable entry narrows what is trusted, where ignoring
+    the error and falling back to a default range would widen it.
+    """
+    import socket
+    import time
+
+    now = time.time()
+    cached = _HOST_CACHE.get(name)
+    if cached and cached[0] > now:
+        return cached[1]
+
+    networks: List[ipaddress._BaseNetwork] = []
+    try:
+        for family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
+            name, None, proto=socket.IPPROTO_TCP
+        ):
+            try:
+                networks.append(ipaddress.ip_network(sockaddr[0], strict=False))
+            except ValueError:
+                continue
+    except OSError as exc:
+        logger.warning(
+            "TRUSTED_PROXY_CIDRS: %r did not resolve (%s); trusting nothing for it",
+            name, exc,
+        )
+
+    _HOST_CACHE[name] = (now + _HOST_TTL_SECONDS, networks)
+    return networks
+
+
 def _parse_networks(raw: str) -> List[ipaddress._BaseNetwork]:
     networks: List[ipaddress._BaseNetwork] = []
     for chunk in (raw or "").split(","):
@@ -97,8 +144,18 @@ def _parse_networks(raw: str) -> List[ipaddress._BaseNetwork]:
             continue
         try:
             networks.append(ipaddress.ip_network(chunk, strict=False))
+            continue
         except ValueError:
-            logger.warning("ignoring unparseable TRUSTED_PROXY_CIDRS entry: %r", chunk)
+            pass
+        # Not an address or CIDR. Treat it as a hostname -- the edge container
+        # or service name -- rather than discarding it, so a deployment can
+        # name its one proxy instead of trusting the whole bridge it shares
+        # with every other tenant.
+        resolved = _resolve_host(chunk)
+        if resolved:
+            networks.extend(resolved)
+        else:
+            logger.warning("ignoring unresolvable TRUSTED_PROXY_CIDRS entry: %r", chunk)
     return networks
 
 
