@@ -736,7 +736,15 @@ class HeatmapDataResponse(BaseModel):
     report_points: List[HeatmapPoint]
     reporter_points: List[HeatmapPoint]
     total_reports: int
-    total_unique_reporters: int
+    # Distinct identified reporters (keyed email fingerprint). None when the
+    # town keeps no reporter fingerprints (Resident history off): unknown.
+    total_unique_reporters: Optional[int] = None
+    # Reports attributable to an identified reporter -- the numerator of the
+    # reports-per-reporter average -- and those that are not (no email, a
+    # placeholder, or a scrubbed record). Both None when identity is unknown.
+    identified_reports: Optional[int] = None
+    anonymous_reports: Optional[int] = None
+    reporter_identity_available: bool = False
 
 
 class HotspotData(BaseModel):
@@ -746,7 +754,8 @@ class HotspotData(BaseModel):
     cluster_id: int
     sample_address: Optional[str] = None  # Representative address for the cluster
     top_categories: Optional[List[str]] = None  # Most common issue types in cluster
-    unique_reporters: Optional[int] = None  # Count of distinct reporters (for bias detection)
+    unique_reporters: Optional[int] = None  # Distinct identified reporters; None = unknown
+    identified_reports: Optional[int] = None  # Reports in the cluster with an identified reporter
     oldest_days: Optional[int] = None  # Age of oldest open request in this cluster (in days)
 
 

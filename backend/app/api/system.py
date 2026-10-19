@@ -4213,7 +4213,7 @@ async def _advanced_statistics(db: AsyncSession):
         hotspot_query = text("""
             WITH clustered AS (
                 SELECT 
-                    id, lat, long, address, service_name, email,
+                    id, lat, long, address, service_name, resident_email_index,
                     ST_ClusterDBSCAN(location, eps := 0.005, minpoints := 2) OVER () as cluster_id
                 FROM service_requests
                 WHERE deleted_at IS NULL 
@@ -4225,20 +4225,29 @@ async def _advanced_statistics(db: AsyncSession):
                     AVG(lat) as center_lat,
                     AVG(long) as center_lng,
                     COUNT(*) as point_count,
-                    COUNT(DISTINCT email) as unique_reporters,
+                    -- The fingerprint, never the email column: that is
+                    -- ciphertext under a fresh nonce per row, so COUNT(DISTINCT)
+                    -- over it counted every report as its own reporter.
+                    COUNT(DISTINCT resident_email_index) as unique_reporters,
+                    COUNT(resident_email_index) as identified_reports,
                     (ARRAY_AGG(address ORDER BY id DESC))[1] as sample_address,
                     (ARRAY_AGG(DISTINCT service_name))[1:3] as top_categories
                 FROM clustered
                 WHERE cluster_id IS NOT NULL
                 GROUP BY cluster_id
             )
-            SELECT center_lat, center_lng, point_count, cluster_id, sample_address, top_categories, unique_reporters
+            SELECT center_lat, center_lng, point_count, cluster_id, sample_address, top_categories,
+                   unique_reporters, identified_reports
             FROM cluster_stats
             ORDER BY point_count DESC
             LIMIT 10
         """)
         hotspot_result = await db.execute(hotspot_query)
+        # Reporter counts only where fingerprints are kept; None reads as
+        # "unknown" and the cluster is not judged for bias.
+        identity_available = await _reporter_identity_available(db)
         for row in hotspot_result.mappings().all():
+            reporters = int(row['unique_reporters'] or 0) if identity_available else 0
             hotspots.append(HotspotData(
                 lat=float(row['center_lat']),
                 lng=float(row['center_lng']),
@@ -4246,7 +4255,8 @@ async def _advanced_statistics(db: AsyncSession):
                 cluster_id=int(row['cluster_id']),
                 sample_address=row.get('sample_address'),
                 top_categories=row.get('top_categories') or [],
-                unique_reporters=int(row['unique_reporters']) if row.get('unique_reporters') else None
+                unique_reporters=reporters or None,
+                identified_reports=int(row['identified_reports'] or 0) if reporters else None,
             ))
     except Exception as e:
         logger.warning(f"Hotspot query failed (PostGIS may not be enabled): {e}")
@@ -4690,6 +4700,21 @@ async def _advanced_statistics(db: AsyncSession):
 # ============ Spatial Bias Heatmap ============
 
 
+async def _reporter_identity_available(db: AsyncSession) -> bool:
+    """Whether reporter fingerprints are kept (the Resident history module).
+
+    Without them the database cannot tell two reports from one person apart
+    from reports by two people -- deliberately -- so every reporter count is
+    "unknown". Fails closed: an unreadable settings row reads as off."""
+    from app.core.resident_index import MODULE_KEY
+    try:
+        row = await read_settings_row(db)
+        return bool(((row.modules if row else None) or {}).get(MODULE_KEY, False))
+    except Exception as exc:
+        logger.warning("reporter identity check failed, treating as unavailable: %s", type(exc).__name__)
+        return False
+
+
 @router.get("/heatmap-data", response_model=HeatmapDataResponse)
 async def get_heatmap_data(
     db: AsyncSession = Depends(get_db),
@@ -4697,16 +4722,23 @@ async def get_heatmap_data(
 ):
     """
     Return two sets of weighted coordinates for spatial bias detection:
-    - report_points: every request location (weight 1)
-    - reporter_points: deduplicated by reporter email, rounded to ~100m grid
+    - report_points: every request location (weight 1), on a ~100m grid
+    - reporter_points: per grid cell, the number of distinct identified
+      reporters there
 
     Comparing the two heatmaps reveals areas where many reports come from
     few unique reporters (potential reporting bias / squeaky wheel effect).
-    """
-    from sqlalchemy import text as sa_text
 
-    # Check cache
-    cache_key = "heatmap_data"
+    A reporter is identified by the keyed fingerprint of their normalised
+    email (resident_email_index), never by the encrypted email itself, whose
+    ciphertext differs on every row. Reports with no fingerprint are counted
+    as anonymous, not as reporters. See services/reporter_bias.
+    """
+    from app.services.reporter_bias import summarise
+
+    # Versioned: the payload's meaning changed, and a cached copy of the old
+    # shape must not be served as the new one.
+    cache_key = "heatmap_data:v2"
     try:
         if redis_client:
             cached = await redis_client.get(cache_key)
@@ -4717,51 +4749,16 @@ async def get_heatmap_data(
         # recompute from the database.
         pass
 
-    # All request coordinates (for "reports" heatmap)
-    # Rounded to ~100m grid to avoid pinpointing individual addresses
-    report_query = sa_text("""
-        SELECT ROUND(lat::numeric, 3) as lat, ROUND(long::numeric, 3) as lng
-        FROM service_requests
-        WHERE deleted_at IS NULL
-          AND lat IS NOT NULL
-          AND long IS NOT NULL
-    """)
-    report_result = await db.execute(report_query)
-    report_points = [
-        {"lat": float(r["lat"]), "lng": float(r["lng"]), "weight": 1}
-        for r in report_result.mappings().all()
-    ]
-
-    # Deduplicated reporter locations (rounded to ~100m grid cells)
-    # Each unique (email, grid_cell) pair counts as 1 point
-    # ROUND(lat, 3) ≈ 111m, ROUND(long, 3) ≈ 85m at mid-latitudes
-    reporter_query = sa_text("""
-        SELECT
-            ROUND(lat::numeric, 3) as lat,
-            ROUND(long::numeric, 3) as lng,
-            COUNT(*) as weight
-        FROM (
-            SELECT DISTINCT ON (COALESCE(email, id::text), ROUND(lat::numeric, 3), ROUND(long::numeric, 3))
-                lat, long, email, id
-            FROM service_requests
-            WHERE deleted_at IS NULL
-              AND lat IS NOT NULL
-              AND long IS NOT NULL
-        ) unique_reporters
-        GROUP BY ROUND(lat::numeric, 3), ROUND(long::numeric, 3)
-    """)
-    reporter_result = await db.execute(reporter_query)
-    reporter_points = [
-        {"lat": float(r["lat"]), "lng": float(r["lng"]), "weight": int(r["weight"])}
-        for r in reporter_result.mappings().all()
-    ]
-
-    result = {
-        "report_points": report_points,
-        "reporter_points": reporter_points,
-        "total_reports": len(report_points),
-        "total_unique_reporters": len(reporter_points),
-    }
+    identity_available = await _reporter_identity_available(db)
+    rows = (await db.execute(
+        select(ServiceRequest.lat, ServiceRequest.long, ServiceRequest.resident_email_index)
+        .where(
+            ServiceRequest.deleted_at.is_(None),
+            ServiceRequest.lat.isnot(None),
+            ServiceRequest.long.isnot(None),
+        )
+    )).all()
+    result = summarise(rows, identity_available)
 
     # Cache for 5 minutes
     try:

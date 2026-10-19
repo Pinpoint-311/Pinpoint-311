@@ -263,25 +263,47 @@ function describeDensity(points: HeatmapPoint[], mode: HeatmapMode): string {
         `Warmer colors mark denser areas; white is the densest.`;
 }
 
-const BIAS_FILL = { high: '#f87171', moderate: '#fbbf24', low: '#34d399' } as const;
-const BIAS_STROKE = { high: '#fee2e2', moderate: '#fef3c7', low: '#d1fae5' } as const;
-const BIAS_LABEL = { high: 'High bias', moderate: 'Moderate bias', low: 'Balanced' } as const;
+/* `unknown`: the town keeps no reporter fingerprints, or none of the cluster's
+ * reports has one, so whether it is one resident or many cannot be said. It is
+ * never drawn or worded as "Balanced", which would be a claim. */
+const BIAS_FILL = { high: '#f87171', moderate: '#fbbf24', low: '#34d399', unknown: '#94a3b8' } as const;
+const BIAS_STROKE = { high: '#fee2e2', moderate: '#fef3c7', low: '#d1fae5', unknown: '#e2e8f0' } as const;
+const BIAS_LABEL = { high: 'High bias', moderate: 'Moderate bias', low: 'Balanced', unknown: 'Reporters unknown' } as const;
 /** Ring weight, so severity is legible with colour removed. */
-const BIAS_STROKE_WIDTH = { high: 4, moderate: 3, low: 2 } as const;
+const BIAS_STROKE_WIDTH = { high: 4, moderate: 3, low: 2, unknown: 2 } as const;
 
 /* The same three levels again, for the popup — which has a white ground, where
  * the marker fills are unreadable text colours: #f87171 is 2.77:1 there,
  * #fbbf24 1.67:1 and the old "BALANCED" green 2.28:1. These are the 700 tints,
  * 5.0–6.5:1 (1.4.3). */
-const BIAS_TEXT_ON_LIGHT = { high: '#b91c1c', moderate: '#b45309', low: '#047857' } as const;
+const BIAS_TEXT_ON_LIGHT = { high: '#b91c1c', moderate: '#b45309', low: '#047857', unknown: '#475569' } as const;
 
 type BiasLevel = keyof typeof BIAS_FILL;
 
-/** The one place the ratio→level rule lives; it was inlined in four. */
-function biasLevelOf(count: number, reporters: number): BiasLevel {
-    const ratio = count / (reporters || 1);
-    return ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low';
+export interface ClusterBias {
+    /** Distinct identified reporters, or null when that cannot be known. */
+    reporters: number | null;
+    /** Identified reports per identified reporter, or null. */
+    ratio: number | null;
+    level: BiasLevel;
 }
+
+/**
+ * The one place the ratio→level rule lives.
+ *
+ * A missing reporter count is "unknown", not 1: defaulting it to 1 made every
+ * cluster in a town without reporter fingerprints read as one resident filing
+ * all of it. Anonymous reports are left out of the ratio -- they are nobody's
+ * repeat reports -- so the numerator is the identified reports, not the total.
+ */
+export function clusterBias(hs: Pick<HotspotData, 'count' | 'unique_reporters' | 'identified_reports'>): ClusterBias {
+    const reporters = hs.unique_reporters ?? 0;
+    if (reporters <= 0) return { reporters: null, ratio: null, level: 'unknown' };
+    const ratio = (hs.identified_reports ?? hs.count) / reporters;
+    return { reporters, ratio, level: ratio > 4 ? 'high' : ratio > 2 ? 'moderate' : 'low' };
+}
+
+const isFlagged = (level: BiasLevel) => level === 'high' || level === 'moderate';
 
 // Google's style array. Deliberately routed through vendorOptions rather than
 // modelled generically: MapLibre wants a style URL and Esri a basemap id, so
@@ -300,19 +322,16 @@ const DARK_MAP_STYLE = [
 /** The two selectable heat layers, in radio-group order. */
 const MODE_OPTIONS = [
     { mode: 'reports' as const, label: 'All Reports', icon: FileText, selectedClass: 'bg-indigo-500/30 text-indigo-200 border border-indigo-500/40' },
-    { mode: 'reporters' as const, label: 'Unique Reporters', icon: Users, selectedClass: 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/40' },
+    { mode: 'reporters' as const, label: 'Identified Reporters', icon: Users, selectedClass: 'bg-emerald-500/30 text-emerald-200 border border-emerald-500/40' },
 ];
 
 const STAT_BOX = 'background: rgba(255,255,255,0.05); padding: 8px; border-radius: 6px; text-align: center;';
 
 /** Hotspot popup as DOM. Every untrusted value is set as text, never markup. */
 function hotspotPopup(hs: HotspotData): HTMLElement {
-    const reporters = hs.unique_reporters || 1;
-    const ratio = hs.count / reporters;
-    const level = biasLevelOf(hs.count, reporters);
-    const biased = ratio > 2;
+    const { reporters, ratio, level } = clusterBias(hs);
 
-    const stat = (value: number, label: string) => el('div', {
+    const stat = (value: number | string, label: string) => el('div', {
         style: STAT_BOX,
         children: [
             el('div', { style: 'font-size: 20px; font-weight: 700;', text: value }),
@@ -329,16 +348,16 @@ function hotspotPopup(hs: HotspotData): HTMLElement {
             }),
             el('div', {
                 style: 'display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;',
-                children: [stat(hs.count, 'Reports'), stat(reporters, 'Reporters')],
+                children: [stat(hs.count, 'Reports'), stat(reporters ?? '—', 'Identified reporters')],
             }),
             el('div', {
                 style: 'font-size: 12px; margin-bottom: 6px;',
                 children: [
                     el('span', {
                         style: `color: ${BIAS_TEXT_ON_LIGHT[level]}; font-weight: 600;`,
-                        text: biased ? `${level.toUpperCase()} BIAS` : 'BALANCED',
+                        text: BIAS_LABEL[level].toUpperCase(),
                     }),
-                    ` (${ratio.toFixed(1)} reports/reporter)`,
+                    ratio === null ? '' : ` (${ratio.toFixed(1)} reports/reporter)`,
                 ],
             }),
             (hs.top_categories || []).length > 0 && el('div', {
@@ -486,9 +505,9 @@ export default function SpatialBiasHeatmap({
 
         const layer = renderer.createMarkerLayer();
         layer.setMarkers(hotspots.map(hs => {
-            const reporters = hs.unique_reporters || 1;
-            const ratio = hs.count / reporters;
-            const level = biasLevelOf(hs.count, reporters);
+            const { reporters, ratio, level } = clusterBias(hs);
+            const near = hs.sample_address ? ` near ${hs.sample_address}` : '';
+            const identified = hs.identified_reports ?? hs.count;
             return {
                 position: { lat: hs.lat, lng: hs.lng },
                 // Through the shared puck routine, so a hotspot on this page has
@@ -502,13 +521,15 @@ export default function SpatialBiasHeatmap({
                     strokeWidth: BIAS_STROKE_WIDTH[level],
                     // Donut for a balanced cluster, solid for a flagged one:
                     // the flag survives greyscale, which the fill alone did not.
-                    hollow: level === 'low',
+                    hollow: !isFlagged(level),
                 }),
                 // The level in words. The tooltip used to give the two counts and
                 // leave the reader to infer the severity from the marker's colour
                 // — the one thing a colour-blind or screen-reader user could not
                 // do (1.4.1). This string is also the marker's accessible name.
-                title: `${BIAS_LABEL[level]}: ${hs.count} reports from ${reporters} reporter${reporters === 1 ? '' : 's'} (${ratio.toFixed(1)} per reporter)${hs.sample_address ? ` near ${hs.sample_address}` : ''}`,
+                title: reporters === null || ratio === null
+                    ? `${BIAS_LABEL[level]}: ${hs.count} reports${near}`
+                    : `${BIAS_LABEL[level]}: ${hs.count} reports${identified === hs.count ? '' : `, ${identified}`} from ${reporters} identified reporter${reporters === 1 ? '' : 's'} (${ratio.toFixed(1)} per reporter)${near}`,
                 zIndex: 100,
                 onClick: (_event, marker) => {
                     const popup = popupRef.current;
@@ -537,14 +558,18 @@ export default function SpatialBiasHeatmap({
     }
 
     const totalReports = heatmapData?.total_reports || 0;
-    const totalReporters = heatmapData?.total_unique_reporters || 0;
-    const globalRatio = totalReporters > 0 ? (totalReports / totalReporters).toFixed(1) : '—';
+    // Reporters are people, identified by a keyed fingerprint of their email.
+    // Without fingerprints (Resident history off) the count is unknown, and a
+    // dash says so; a number there would be a guess presented as a measurement.
+    const identityKnown = heatmapData?.reporter_identity_available === true
+        && heatmapData.total_unique_reporters != null;
+    const totalReporters = identityKnown ? heatmapData!.total_unique_reporters! : null;
+    const identifiedReports = heatmapData?.identified_reports ?? 0;
+    const anonymousReports = heatmapData?.anonymous_reports ?? 0;
+    // Over identified reports only: an anonymous report is nobody's repeat.
+    const globalRatio = totalReporters ? identifiedReports / totalReporters : null;
 
-    // Count biased hotspots
-    const biasedHotspots = hotspots.filter(hs => {
-        const reporters = hs.unique_reporters || 1;
-        return hs.count / reporters > 2;
-    });
+    const biasedHotspots = hotspots.filter(hs => isFlagged(clusterBias(hs).level));
 
     const activePoints = (mode === 'reporters' ? heatmapData?.reporter_points : heatmapData?.report_points) || [];
     const densitySummary = describeDensity(activePoints, mode);
@@ -579,7 +604,7 @@ export default function SpatialBiasHeatmap({
                     </button>
                 </div>
                 <p className="text-xs text-white/40 mb-4">
-                    Compare report density vs unique reporters to detect over-reporting bias
+                    Compare report density vs identified reporters to detect over-reporting bias
                 </p>
 
                 {/* Say so when the heat surface is unavailable rather than quietly
@@ -602,16 +627,30 @@ export default function SpatialBiasHeatmap({
                         <div className="text-[10px] text-white/40">Total Reports</div>
                     </div>
                     <div className="bg-white/5 rounded-lg p-2 text-center">
-                        <div className="text-lg font-bold text-emerald-400">{totalReporters}</div>
-                        <div className="text-[10px] text-white/40">Unique Reporters</div>
+                        <div className="text-lg font-bold text-emerald-400">{totalReporters ?? '—'}</div>
+                        <div className="text-[10px] text-white/40">Identified Reporters</div>
                     </div>
                     <div className="bg-white/5 rounded-lg p-2 text-center">
-                        <div className={`text-lg font-bold ${Number(globalRatio) > 2 ? 'text-amber-400' : 'text-white'}`}>
-                            {globalRatio}x
+                        <div className={`text-lg font-bold ${globalRatio !== null && globalRatio > 2 ? 'text-amber-400' : 'text-white'}`}>
+                            {globalRatio === null ? '—' : `${globalRatio.toFixed(1)}x`}
                         </div>
-                        <div className="text-[10px] text-white/40">Avg Reports/Person</div>
+                        <div className="text-[10px] text-white/40">Avg Reports/Reporter</div>
                     </div>
                 </div>
+                {heatmapData && !identityKnown && (
+                    <p className="text-[11px] text-white/60 -mt-2 mb-4">
+                        Reporter counts need the Resident history module, which links a
+                        resident&apos;s reports by a keyed fingerprint of their email. Without it,
+                        reports can&apos;t be attributed to people.
+                    </p>
+                )}
+                {identityKnown && anonymousReports > 0 && (
+                    <p className="text-[11px] text-white/60 -mt-2 mb-4">
+                        {anonymousReports} anonymous report{anonymousReports === 1 ? '' : 's'} (no
+                        contact email) {anonymousReports === 1 ? 'is' : 'are'} counted in Total Reports
+                        but not as reporters or in the average.
+                    </p>
+                )}
 
                 {/* Mode toggle.
                   *
@@ -683,9 +722,12 @@ export default function SpatialBiasHeatmap({
                     </div>
                     <ul className="space-y-1.5">
                         {biasedHotspots.slice(0, 5).map((hs, idx) => {
-                            const reporters = hs.unique_reporters || 1;
-                            const ratio = hs.count / reporters;
-                            const level = biasLevelOf(hs.count, reporters);
+                            // Only flagged clusters reach this list, and a
+                            // flagged cluster always has a known count.
+                            const bias = clusterBias(hs);
+                            const { level } = bias;
+                            const reporters = bias.reporters ?? 0;
+                            const ratio = bias.ratio ?? 0;
                             return (
                                 <li key={idx} className="flex items-center gap-2 p-2 bg-white/5 rounded-lg flex-wrap">
                                     {/* The dot was #ef4444 on this ground: 2.31:1, under
@@ -704,7 +746,7 @@ export default function SpatialBiasHeatmap({
                                         {hs.sample_address || `Area ${idx + 1}`}
                                     </span>
                                     <span className="text-xs text-white/70">
-                                        {hs.count} reports / {reporters} reporter{reporters !== 1 ? 's' : ''}
+                                        {hs.identified_reports ?? hs.count} reports / {reporters} reporter{reporters !== 1 ? 's' : ''}
                                     </span>
                                     {/* text-red-400 was 3.14:1 here, below 4.5:1 for
                                         small text; the 200 tints are 6.0:1 (1.4.3). */}

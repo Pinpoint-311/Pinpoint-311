@@ -463,7 +463,14 @@ export interface HeatmapData {
     report_points: HeatmapPoint[];
     reporter_points: HeatmapPoint[];
     total_reports: number;
-    total_unique_reporters: number;
+    /** Distinct identified reporters (keyed email fingerprint); null = unknown. */
+    total_unique_reporters: number | null;
+    /** Reports attributable to an identified reporter: the average's numerator. */
+    identified_reports?: number | null;
+    /** Reports with no attributable reporter (no email, placeholder, scrubbed). */
+    anonymous_reports?: number | null;
+    /** False when the town keeps no reporter fingerprints (Resident history off). */
+    reporter_identity_available?: boolean;
 }
 
 export interface HotspotData {
@@ -473,7 +480,8 @@ export interface HotspotData {
     cluster_id: number;
     sample_address?: string;  // Representative address for the cluster
     top_categories?: string[];  // Most common issue types in cluster
-    unique_reporters?: number;  // Count of distinct reporters (for bias detection)
+    unique_reporters?: number | null;  // Distinct identified reporters; null/absent = unknown
+    identified_reports?: number | null;  // Reports in the cluster with an identified reporter
     oldest_days?: number;  // Age of oldest open request in this cluster
 }
 
