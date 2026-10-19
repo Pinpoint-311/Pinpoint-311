@@ -41,6 +41,9 @@ import {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/** Quiet time after the last bounds change that counts as "settled". */
+const SETTLE_MS = 150;
+
 export const GOOGLE_CAPABILITIES: MapCapabilities = {
     canvasOverlay: true,
     clustering: true,
@@ -674,7 +677,35 @@ export class GoogleMapRenderer implements MapRenderer {
                 emit({ position: toLatLng(e.latLng) } as MapPointerEvent);
             });
         } else if (event === 'idle') {
-            listener = this.map.addListener('idle', () => emit(undefined));
+            // "Camera has settled", which is not quite Google's own `idle`: that
+            // waits for every tile to load, and on satellite imagery that is
+            // the slowest thing on the page -- parcel outlines and asset
+            // clusters sat waiting on it. So also fire shortly after the bounds
+            // stop changing, and let Google's idle through only for a view not
+            // already announced (the first load, or a settle we missed).
+            let last = '';
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            const fire = () => {
+                const key = this.map.getBounds()?.toUrlValue(7) ?? '';
+                if (key && key === last) return;
+                last = key;
+                emit(undefined);
+            };
+            const native = this.map.addListener('idle', () => {
+                if (timer) { clearTimeout(timer); timer = null; }
+                fire();
+            });
+            const moving = this.map.addListener('bounds_changed', () => {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(() => { timer = null; fire(); }, SETTLE_MS);
+            });
+            listener = {
+                remove: () => {
+                    if (timer) clearTimeout(timer);
+                    native.remove();
+                    moving.remove();
+                },
+            } as google.maps.MapsEventListener;
         } else {
             listener = this.map.addListener('maptypeid_changed', () => {
                 emit({ type: this.getBaseMapType() });
@@ -683,13 +714,13 @@ export class GoogleMapRenderer implements MapRenderer {
 
         this.listeners.push(listener);
         return () => {
-            window.google.maps.event.removeListener(listener);
+            listener.remove();
             this.listeners = this.listeners.filter(existing => existing !== listener);
         };
     }
 
     destroy(): void {
-        for (const listener of this.listeners) window.google.maps.event.removeListener(listener);
+        for (const listener of this.listeners) listener.remove();
         this.listeners = [];
         for (const layer of [...this.markerLayers]) layer.remove();
         for (const layer of [...this.geoJsonLayers]) layer.remove();

@@ -3797,6 +3797,12 @@ export default function StaffDashboard() {
                                                                 mapLayers={mapLayers}
                                                                 config={mapConfig}
                                                                 townshipBoundary={mapsConfig?.township_boundary}
+                                                                outlines={{
+                                                                    category: selectedRequest.service_code,
+                                                                    highlight: (selectedRequest.gis_context || [])
+                                                                        .filter(g => g.feature_key)
+                                                                        .map(g => ({ layer_id: g.layer_id, feature_key: g.feature_key })),
+                                                                }}
                                                             />
                                                         </div>
                                                     )}

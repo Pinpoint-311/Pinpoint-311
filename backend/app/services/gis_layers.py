@@ -63,7 +63,12 @@ MAX_CONTEXT_MATCHES = 20
 # Staff map: below this zoom a parcel is a few pixels wide and the request
 # would be thousands of features, so the client does not ask.
 MIN_BBOX_ZOOM = 15
-MAX_BBOX_FEATURES = 500
+# Past this many outlines in one request the answer is "zoom in". The map asks
+# for a margin around the screen so pans redraw from what it already has; at
+# zoom 15 over a dense subdivision that margin alone is several hundred
+# parcels, and at 500 the outlines stayed hidden until zoom 16. Simplified to
+# 6 decimals a parcel is about 230 bytes, so 1500 is roughly 350 KB.
+MAX_BBOX_FEATURES = 1500
 BACKFILL_BATCH = 500
 
 EMPTY_FEATURE_COLLECTION: Dict[str, Any] = {"type": "FeatureCollection", "features": []}

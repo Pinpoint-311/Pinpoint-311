@@ -314,11 +314,16 @@ export default function StaffDashboardMap({
         setCategoryFilters(newFilters);
     }, [services]);
 
+    // Asset layers start off on the staff dashboard: drawing every hydrant,
+    // drain and sign as a marker made the map slow to open, and staff turn on
+    // the one they need. The resident map keeps them on.
+    const assetLayersDefault = !operationalFilters;
+
     // Initialize layer filters when mapLayers change
     useEffect(() => {
         const newFilters: Record<number, boolean> = {};
         mapLayers.forEach(layer => {
-            newFilters[layer.id] = layerFilters[layer.id] ?? true;
+            newFilters[layer.id] = layerFilters[layer.id] ?? assetLayersDefault;
         });
         setLayerFilters(newFilters);
     }, [mapLayers]);
@@ -1129,7 +1134,7 @@ export default function StaffDashboardMap({
                                 <label key={layer.id} className="flex items-center gap-3 cursor-pointer group">
                                     <input
                                         type="checkbox"
-                                        checked={layerFilters[layer.id] ?? true}
+                                        checked={layerFilters[layer.id] ?? assetLayersDefault}
                                         onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))}
                                         className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
                                     />

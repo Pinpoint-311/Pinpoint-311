@@ -42,8 +42,11 @@ describe('resident map outlines', () => {
         expect(api.getContextLayerFeatures).not.toHaveBeenCalled();
         const opts = (map.addGeoJsonLayer.mock.calls[0] as any[])[0];
         expect(opts.onFeatureClick).toBeUndefined();              // no popup with attributes
-        expect(opts.style.strokeWidth).toBe(1);
-        expect(opts.style.fillOpacity).toBeLessThan(0.05);
+        // Readable over satellite imagery, but still faint enough not to look
+        // like a report, and never in the way of the pin.
+        expect(opts.style.strokeWidth).toBe(2);
+        expect(opts.style.fillOpacity).toBeLessThan(0.1);
+        expect(opts.style.clickable).toBe(false);
     });
 
     it('asks nothing below parcel zoom', async () => {

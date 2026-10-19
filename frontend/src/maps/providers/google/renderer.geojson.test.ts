@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { GoogleMapRenderer } from './renderer';
 
 /**
@@ -59,5 +59,43 @@ describe('Google GeoJSON layers and map clicks', () => {
     it('an explicit style wins either way', () => {
         renderer().addGeoJsonLayer({ data: parcel, style: { clickable: false }, onFeatureClick: () => { } });
         expect(created[0].styler!(fakeFeature).clickable).toBe(false);
+    });
+});
+
+describe('Google "idle" means the camera settled, not that every tile loaded', () => {
+    it('fires shortly after the bounds stop changing, once per view', () => {
+        vi.useFakeTimers();
+        const handlers: Record<string, (() => void)[]> = {};
+        let bounds = 'a';
+        (window as any).google.maps.Map = class {
+            addListener(name: string, fn: () => void) {
+                (handlers[name] ||= []).push(fn);
+                return { remove() { handlers[name] = handlers[name].filter(f => f !== fn); } };
+            }
+            getBounds() { return { toUrlValue: () => bounds }; }
+        };
+        const map = renderer();
+        const seen: number[] = [];
+        const off = map.on('idle', () => seen.push(Date.now()));
+
+        bounds = 'b';
+        handlers.bounds_changed.forEach(f => f());
+        handlers.bounds_changed.forEach(f => f());   // still moving
+        vi.advanceTimersByTime(100);
+        expect(seen).toHaveLength(0);
+        vi.advanceTimersByTime(100);
+        expect(seen).toHaveLength(1);                 // settled, without waiting for tiles
+
+        handlers.idle.forEach(f => f());              // Google's own idle for the same view
+        expect(seen).toHaveLength(1);
+
+        bounds = 'c';
+        handlers.idle.forEach(f => f());              // a view nobody announced yet
+        expect(seen).toHaveLength(2);
+
+        off();
+        expect(handlers.idle).toHaveLength(0);
+        expect(handlers.bounds_changed).toHaveLength(0);
+        vi.useRealTimers();
     });
 });

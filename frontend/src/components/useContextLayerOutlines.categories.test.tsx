@@ -68,16 +68,91 @@ describe('useContextLayerOutlines category filter', () => {
         await waitFor(() => expect(requested()).toEqual([1, 2, 3, 4]));
         api.getPublicLayerOutlines.mockClear();
         rerender({ c: ['graffiti'] });
-        await waitFor(() => expect(requested()).toEqual([1, 3, 4]));
-        expect(result.current.layers.map(l => l.id)).toEqual([1, 3, 4]);
+        await waitFor(() => expect(result.current.layers.map(l => l.id)).toEqual([1, 3, 4]));
+        // Same viewport: the outlines come from what was already fetched.
+        expect(api.getPublicLayerOutlines).not.toHaveBeenCalled();
     });
 
-    it('leaves the staff map alone', async () => {
-        api.getContextLayers.mockResolvedValue([{ ...polygon(9, ['potholes']), min_zoom: 15, feature_count: 1 }]);
+    it('filters the staff map by the categories the layer is recorded on, not the resident ones', async () => {
+        api.getContextLayers.mockResolvedValue([
+            { ...polygon(9, ['potholes']), service_codes: [], min_zoom: 15, feature_count: 1 },
+            { ...polygon(10, []), service_codes: ['tax'], min_zoom: 15, feature_count: 1 },
+        ]);
         api.getContextLayerFeatures.mockResolvedValue({ type: 'FeatureCollection', features: [], zoom_in: false, limit: 1 });
         const mapRef = { current: fakeMap() as any };
         const { result } = renderHook(() => useContextLayerOutlines(mapRef, { current: null }, true, 'staff', ['graffiti']));
         await waitFor(() => expect(api.getContextLayerFeatures).toHaveBeenCalled());
         expect(result.current.layers.map(l => l.id)).toEqual([9]);
+    });
+});
+
+/** A map whose viewport the test moves, and which fires its idle handlers on demand. */
+function movableMap(box = { north: 40.01, south: 40.0, east: -74.0, west: -74.01 }, zoom = 17) {
+    const idle: (() => void)[] = [];
+    const map = {
+        box, zoom,
+        getBounds: () => map.box,
+        getZoom: () => map.zoom,
+        on: vi.fn((_e: string, h: () => void) => { idle.push(h); return () => {}; }),
+        addGeoJsonLayer: vi.fn((_opts: any) => ({ remove: vi.fn() })),
+        settle: () => idle.forEach(h => h()),
+    };
+    return map;
+}
+
+describe('useContextLayerOutlines speed', () => {
+    beforeEach(() => {
+        api.getMapLayers.mockResolvedValue([polygon(1, [])]);
+    });
+
+    it('fetches a margin around the screen and redraws small pans from it', async () => {
+        const map = movableMap();
+        renderHook(() => useContextLayerOutlines({ current: map as any }, { current: null }, true, 'public'));
+        await waitFor(() => expect(api.getPublicLayerOutlines).toHaveBeenCalledTimes(1));
+        const asked = api.getPublicLayerOutlines.mock.calls[0][1];
+        expect(asked.north - asked.south).toBeCloseTo(0.015, 6);  // a quarter screen more each side
+
+        map.box = { north: 40.012, south: 40.002, east: -73.998, west: -74.008 };  // within the margin
+        map.settle();
+        await new Promise(r => setTimeout(r, 150));
+        expect(api.getPublicLayerOutlines).toHaveBeenCalledTimes(1);
+
+        map.box = { north: 40.05, south: 40.04, east: -73.95, west: -73.96 };  // well outside it
+        map.settle();
+        await waitFor(() => expect(api.getPublicLayerOutlines).toHaveBeenCalledTimes(2));
+    });
+
+    it('falls back to just the screen when the margin holds too many features', async () => {
+        api.getPublicLayerOutlines
+            .mockResolvedValueOnce({ type: 'FeatureCollection', features: [], zoom_in: true, limit: 1 })
+            .mockResolvedValueOnce({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: {}, properties: {} }], zoom_in: false, limit: 1 });
+        const map = movableMap();
+        const { result } = renderHook(() => useContextLayerOutlines({ current: map as any }, { current: null }, true, 'public'));
+        await waitFor(() => expect(result.current.status[1]).toBe('shown'));
+        const [wide, exact] = api.getPublicLayerOutlines.mock.calls.map(c => c[1]);
+        expect(exact).toEqual(map.box);
+        expect(wide.north).toBeGreaterThan(exact.north);
+    });
+
+    it("draws a report's own parcel stronger on the staff map, and resident outlines never take clicks", async () => {
+        api.getContextLayers.mockResolvedValue([{ ...polygon(5, []), service_codes: [], min_zoom: 15, feature_count: 2 }]);
+        api.getContextLayerFeatures.mockResolvedValue({ type: 'FeatureCollection', features: [], zoom_in: false, limit: 1 });
+        const staff = movableMap();
+        renderHook(() => useContextLayerOutlines({ current: staff as any }, { current: null }, true, 'staff', ['tax'],
+            [{ layer_id: 5, feature_key: '12-4' }]));
+        await waitFor(() => expect(staff.addGeoJsonLayer).toHaveBeenCalled());
+        const style = staff.addGeoJsonLayer.mock.calls[0][0].style;
+        const mine = style({ properties: { feature_key: '12-4' } });
+        const other = style({ properties: { feature_key: '12-5' } });
+        expect(mine.strokeWidth).toBeGreaterThan(other.strokeWidth);
+        expect(mine.fillOpacity).toBeGreaterThan(other.fillOpacity);
+
+        const resident = movableMap();
+        renderHook(() => useContextLayerOutlines({ current: resident as any }, { current: null }, true, 'public'));
+        await waitFor(() => expect(resident.addGeoJsonLayer).toHaveBeenCalled());
+        const opts = resident.addGeoJsonLayer.mock.calls[0][0];
+        expect(opts.style.clickable).toBe(false);
+        expect(opts.onFeatureClick).toBeUndefined();
+        expect(opts.style.strokeWidth).toBeGreaterThanOrEqual(2);
     });
 });
