@@ -272,12 +272,19 @@ export default function StaffDashboardMap({
     // UI state
     const [isLoading, setIsLoading] = useState(true);
     const [mapReady, setMapReady] = useState(false);
+    // Resident map: only the outline layers scoped to the categories ticked in
+    // the filter. Every category ticked is no filter at all.
+    const outlineCategories = useMemo(() => {
+        const ticked = services.filter(s => categoryFilters[s.service_code] !== false).map(s => s.service_code);
+        return ticked.length === services.length ? null : ticked;
+    }, [services, categoryFilters]);
     // Staff only: the resident portal renders this map without operationalFilters.
     const {
         layers: contextLayers, visible: contextVisible, setVisible: setContextVisible, status: contextStatus,
     } = useContextLayerOutlines(
         mapInstanceRef, popupRef, mapReady,
         operationalFilters ? 'staff' : residentOutlines ? 'public' : 'off',
+        operationalFilters ? null : outlineCategories,
     );
     const [showFilters, setShowFilters] = useState(true);
     // Close filters on mobile after mount

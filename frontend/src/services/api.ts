@@ -1460,6 +1460,7 @@ class ApiClient {
         stroke_width?: number;
         is_active?: boolean;
         service_codes?: string[];
+        resident_service_codes?: string[];
         geojson?: object;
         routing_mode?: string;
         routing_config?: object | null;
@@ -2275,6 +2276,9 @@ export interface MapLayer {
     is_active: boolean;
     show_on_resident_portal: boolean;
     service_codes?: string[];  // Categories this layer applies to (empty = all)
+    /** Polygon layers on the resident portal: the categories whose residents
+     *  see the outlines. Empty or null = all categories. */
+    resident_service_codes?: string[] | null;
     routing_mode?: 'none' | 'log' | 'block' | 'context';  // Polygon behavior; context = record which feature a report falls in
     visible_on_map?: boolean;  // Whether to render the layer visually
     routing_config?: {
@@ -2319,6 +2323,10 @@ export interface ContextLayer {
     fill_opacity: number;
     stroke_width: number;
     visible_on_map: boolean;
+    /** The reports the layer is recorded on (empty = all categories). */
+    service_codes?: string[];
+    /** The categories whose residents see the outlines (empty/null = all). */
+    resident_service_codes?: string[] | null;
     feature_count: number | null;
     min_zoom: number;
 }

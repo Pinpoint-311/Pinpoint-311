@@ -962,6 +962,11 @@ class MapLayer(Base):
     
     # Category association - which service categories this layer applies to
     service_codes = Column(JSON, default=list)  # ["streetlight", "pothole", etc.] - empty = all categories
+    # Polygon context layers only: the categories whose residents see the
+    # outlines (report form map, Community Requests map). Separate from
+    # service_codes, which decides the reports staff get the context on.
+    # Empty or NULL = all categories.
+    resident_service_codes = Column(JSON, nullable=True)
     
     # Polygon routing behavior
     routing_mode = Column(String(20), default="none")  # none, log, block

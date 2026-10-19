@@ -1,8 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Upload } from 'lucide-react';
-import { Button, Chip, Input, Modal } from './ui';
+import { useEffect, useId, useMemo, useState } from 'react';
+import {
+    AlertTriangle, Check, Database, Eye, FileUp, History, Layers, ListChecks, MapPin, Search, Tag, Target, Upload,
+    type LucideIcon,
+} from 'lucide-react';
+import { Button, Chip, Input, Modal, Select } from './ui';
 import { api, MapLayer } from '../services/api';
+import type { ServiceDefinition } from '../types';
 import { useDialog } from './DialogProvider';
+import { Switch } from './capabilityUI';
+import { CategoryScopePicker } from './CategoryScopePicker';
 
 /**
  * Polygon layers for the admin console: tax parcels, zoning, districts.
@@ -18,7 +24,10 @@ import { useDialog } from './DialogProvider';
  *   - which fields staff see -- none until chosen. Nothing outside this list
  *     is ever copied onto a report or shown anywhere;
  *   - the resident portal, off by default and refused while no fields are
- *     chosen or a chosen field looks like owner details.
+ *     chosen or a chosen field looks like owner details;
+ *   - which categories each side applies to: the reports the feature is
+ *     recorded on (service_codes), and the residents who see the outlines
+ *     (resident_service_codes). Empty is every category on both.
  */
 
 export const MAX_LAYER_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -154,6 +163,29 @@ interface SettingsProps {
     onSaved: (layer: MapLayer) => void;
 }
 
+/** A titled block of the settings dialog. Each is a region named by its heading. */
+function Section({ id, icon: Icon, title, aside, children }: {
+    id: string; icon: LucideIcon; title: string; aside?: React.ReactNode; children: React.ReactNode;
+}) {
+    return (
+        <section aria-labelledby={id} className="isolate rounded-2xl border border-white/10 bg-white/[0.04] p-4 sm:p-5 space-y-4">
+            <div className="flex items-center justify-between gap-3">
+                <h3 id={id} className="flex items-center gap-2 text-base font-semibold text-white">
+                    <Icon className="w-4 h-4 text-primary-300" aria-hidden="true" />
+                    {title}
+                </h3>
+                {aside}
+            </div>
+            {children}
+        </section>
+    );
+}
+
+const PURPOSES = [
+    { value: 'context' as const, icon: MapPin, title: 'Location context', detail: 'Record the polygon each report falls in. Staff see it on the report and work order.' },
+    { value: 'none' as const, icon: Eye, title: 'Display only', detail: 'Outlines on the map. Nothing is recorded on reports.' },
+];
+
 export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: SettingsProps) {
     const [purpose, setPurpose] = useState<'context' | 'none'>('context');
     const [idProp, setIdProp] = useState('');
@@ -161,12 +193,19 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
     const [staff, setStaff] = useState<string[]>([]);
     const [portal, setPortal] = useState(false);
     const [visibleOnMap, setVisibleOnMap] = useState(true);
+    const [staffCodes, setStaffCodes] = useState<string[]>([]);
+    const [residentCodes, setResidentCodes] = useState<string[]>([]);
+    const [services, setServices] = useState<ServiceDefinition[]>([]);
+    const [servicesLoading, setServicesLoading] = useState(false);
+    const [fieldQuery, setFieldQuery] = useState('');
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState<string | null>(null);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [reuploadFile, setReuploadFile] = useState<File | null>(null);
+    const [dragging, setDragging] = useState(false);
     const { progress, error, setError, run } = useUpload();
     const dialog = useDialog();
+    const uid = useId();
 
     useEffect(() => {
         if (!layer || !isOpen) return;
@@ -176,6 +215,9 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
         setStaff(layer.staff_properties || []);
         setPortal(!!layer.show_on_resident_portal);
         setVisibleOnMap(layer.visible_on_map !== false);
+        setStaffCodes(layer.service_codes || []);
+        setResidentCodes(layer.resident_service_codes || []);
+        setFieldQuery('');
         setMessage(null);
         setWarnings(layer.warnings || []);
         setError(null);
@@ -183,17 +225,38 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [layer?.id, isOpen]);
 
+    // The admin category list, hidden-from-public categories included: the
+    // same source the point-layer form uses.
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        setServicesLoading(true);
+        api.getServices()
+            .then(rows => { if (!cancelled) setServices(rows); })
+            .catch(() => { /* the pickers say there are no categories */ })
+            .finally(() => { if (!cancelled) setServicesLoading(false); });
+        return () => { cancelled = true; };
+    }, [isOpen]);
+
     const fields = layer?.available_properties || [];
     const flags = layer?.field_flags || {};
     const ownerChosen = staff.filter(f => flags[f] === 'owner');
     const portalBlocked = staff.length === 0
-        ? 'Choose the fields staff see first. A layer with no reviewed fields stays staff-only.'
+        ? 'Choose the fields staff see first.'
         : ownerChosen.length
-            ? `Layers whose staff fields include owner details (${ownerChosen.join(', ')}) stay off the resident portal.`
+            ? `Owner details are among the staff fields (${ownerChosen.join(', ')}).`
             : null;
+    const portalOn = portal && !portalBlocked;
     const fieldOptions = useMemo(() => fields.map(f => ({ value: f, label: f })), [fields]);
+    const shownFields = useMemo(() => {
+        const q = fieldQuery.trim().toLowerCase();
+        return q ? fields.filter(f => f.toLowerCase().includes(q)) : fields;
+    }, [fields, fieldQuery]);
 
     if (!layer) return null;
+
+    const busy = saving || !!progress;
+    const id = (part: string) => `${uid}-${part}`;
 
     const toggleStaff = (field: string, on: boolean) => {
         setStaff(prev => on ? [...prev, field] : prev.filter(f => f !== field));
@@ -211,7 +274,10 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                 label_property: labelProp,
                 staff_properties: staff,
                 visible_on_map: visibleOnMap,
-                show_on_resident_portal: portal && !portalBlocked,
+                show_on_resident_portal: portalOn,
+                // Empty = every category, on both.
+                service_codes: staffCodes,
+                resident_service_codes: residentCodes,
             });
             setWarnings(saved.warnings || []);
             setMessage('Saved.');
@@ -225,7 +291,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
 
     const reupload = async () => {
         if (!reuploadFile) return;
-        const saved = await run(reuploadFile, id => api.reuploadLayerFeatures(layer.id, id));
+        const saved = await run(reuploadFile, uploadId => api.reuploadLayerFeatures(layer.id, uploadId));
         if (saved) {
             setMessage(`Replaced with ${saved.feature_count?.toLocaleString()} features. Reports keep the context they were recorded with.`);
             setReuploadFile(null);
@@ -253,113 +319,220 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
         }
     };
 
+    const imported = layer.features_imported_at
+        ? new Date(layer.features_imported_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+        : null;
+
     return (
-        <Modal isOpen={isOpen} onClose={() => { if (!progress && !saving) onClose(); }} title={`Layer settings: ${layer.name}`} size="lg">
-            <form onSubmit={save} className="space-y-5">
-                <p className="text-xs text-white/50">
-                    {(layer.feature_count ?? 0).toLocaleString()} polygons
-                    {layer.features_imported_at && <> · imported {new Date(layer.features_imported_at).toLocaleDateString()}</>}
+        <Modal isOpen={isOpen} onClose={() => { if (!busy) onClose(); }} title={layer.name} size="xl"
+            aria-describedby={id('meta')}>
+            <form onSubmit={save} className="space-y-4">
+                <p id={id('meta')} className="-mt-2 text-sm text-white/70">
+                    Polygon layer settings · {(layer.feature_count ?? 0).toLocaleString()} polygons
+                    {imported && <> · imported {imported}</>}
                 </p>
 
-                <fieldset className="space-y-2">
-                    <legend className="text-sm font-medium text-white/70 mb-1">Purpose</legend>
-                    <label className="flex items-start gap-2 text-sm text-white/80">
-                        <input type="radio" name="layer-purpose" checked={purpose === 'context'} onChange={() => setPurpose('context')} className="mt-1" />
-                        <span>Location context <span className="block text-xs text-white/45">Record which polygon each new report falls in. Staff see it on the report, with other reports in the same polygon, and on the work order.</span></span>
-                    </label>
-                    <label className="flex items-start gap-2 text-sm text-white/80">
-                        <input type="radio" name="layer-purpose" checked={purpose === 'none'} onChange={() => setPurpose('none')} className="mt-1" />
-                        <span>Display only <span className="block text-xs text-white/45">Nothing is recorded on reports.</span></span>
-                    </label>
-                </fieldset>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label htmlFor="layer-id-field" className="block text-sm font-medium text-white/70 mb-1">ID field</label>
-                        <select id="layer-id-field" value={idProp} onChange={e => setIdProp(e.target.value)}
-                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3">
-                            <option value="">None (identify by shape)</option>
-                            {fieldOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
-                        <p className="text-xs text-white/40 mt-1">Keeps a parcel's report history together when the layer is re-uploaded.</p>
+                <Section id={id('purpose')} icon={Target} title="Purpose">
+                    <div role="radiogroup" aria-labelledby={id('purpose')} className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {PURPOSES.map(p => {
+                            const on = purpose === p.value;
+                            return (
+                                <label key={p.value}
+                                    className={`relative flex gap-3 rounded-xl border p-4 cursor-pointer transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-amber-300 ${on ? 'border-primary-300 bg-primary-500/20' : 'border-white/20 bg-white/[0.03] hover:bg-white/[0.07] hover:border-white/40'}`}>
+                                    <input type="radio" name={id('purpose-radio')} value={p.value} checked={on}
+                                        onChange={() => setPurpose(p.value)} className="sr-only"
+                                        aria-describedby={id(`purpose-${p.value}`)} />
+                                    <p.icon className={`w-5 h-5 mt-0.5 shrink-0 ${on ? 'text-primary-200' : 'text-white/60'}`} aria-hidden="true" />
+                                    <span className="min-w-0">
+                                        <span className="block text-sm font-semibold text-white">{p.title}</span>
+                                        <span id={id(`purpose-${p.value}`)} className="block mt-0.5 text-xs text-white/70">{p.detail}</span>
+                                    </span>
+                                    {on && <Check className="absolute top-3 right-3 w-4 h-4 text-primary-200" aria-hidden="true" />}
+                                </label>
+                            );
+                        })}
                     </div>
-                    <div>
-                        <label htmlFor="layer-label-field" className="block text-sm font-medium text-white/70 mb-1">Label field</label>
-                        <select id="layer-label-field" value={labelProp} onChange={e => setLabelProp(e.target.value)}
-                            className="w-full h-10 rounded-lg bg-white/10 border border-white/20 text-white px-3">
-                            <option value="">Use the ID</option>
-                            {fieldOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                        </select>
-                        <p className="text-xs text-white/40 mt-1">The name shown on the report and the map, e.g. the property address.</p>
-                    </div>
-                </div>
+                </Section>
 
-                <fieldset>
-                    <legend className="text-sm font-medium text-white/70 mb-1">Fields staff see</legend>
-                    <p className="text-xs text-white/45 mb-2">
-                        None until you choose. Only these are copied onto reports (as they read when the report came in);
-                        every other field in the file is used for matching and never shown.
+                <Section id={id('identify')} icon={Tag} title="Identify features">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Select label="ID field" value={idProp} onChange={e => setIdProp(e.target.value)}
+                            options={[{ value: '', label: 'None (identify by shape)' }, ...fieldOptions]}
+                            helperText="Keeps a parcel's history together across re-uploads." />
+                        <Select label="Label field" value={labelProp} onChange={e => setLabelProp(e.target.value)}
+                            options={[{ value: '', label: 'Use the ID' }, ...fieldOptions]}
+                            helperText="Shown on reports and the map, e.g. the address." />
+                    </div>
+                </Section>
+
+                <Section id={id('fields')} icon={ListChecks} title="What staff see"
+                    aside={fields.length > 0 && (
+                        <span className="text-xs font-medium text-white/70 whitespace-nowrap">{staff.length} of {fields.length} selected</span>
+                    )}>
+                    <p className="-mt-2 text-xs text-white/70">
+                        Only these fields are copied onto reports. The rest are used for matching and never shown.
                     </p>
                     {fields.length === 0 ? (
-                        <p className="text-sm text-white/40">The file has no fields.</p>
+                        <p className="text-sm text-white/60">The file has no fields.</p>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-56 overflow-y-auto p-2 rounded-lg bg-white/5 border border-white/10">
-                            {fields.map(field => (
-                                <label key={field} className="flex items-center gap-2 text-sm text-white/75 p-1.5 rounded hover:bg-white/5">
-                                    <input type="checkbox" checked={staff.includes(field)} onChange={e => toggleStaff(field, e.target.checked)} />
-                                    <span className="min-w-0 truncate font-mono text-[13px]">{field}</span>
-                                    {flags[field] === 'owner' && <Chip tone="danger">Owner details</Chip>}
-                                    {flags[field] === 'maybe' && <Chip tone="warning">May be personal</Chip>}
-                                </label>
-                            ))}
+                        <>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                                <div className="relative flex-1 min-w-0">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/50 pointer-events-none z-10" aria-hidden="true" />
+                                    <input type="search" value={fieldQuery} onChange={e => setFieldQuery(e.target.value)}
+                                        aria-label="Search fields" placeholder="Search fields"
+                                        className="glass-input !py-2 pl-9 text-sm w-full" />
+                                </div>
+                                <div className="flex gap-2 shrink-0">
+                                    <button type="button" className="btn-outline" disabled={shownFields.length === 0}
+                                        onClick={() => setStaff(prev => [...prev, ...shownFields.filter(f => !prev.includes(f))])}>
+                                        {fieldQuery.trim() ? 'Select shown' : 'Select all'}
+                                    </button>
+                                    <button type="button" className="btn-outline" disabled={staff.length === 0}
+                                        onClick={() => setStaff(prev => prev.filter(f => !shownFields.includes(f)))}>
+                                        None
+                                    </button>
+                                </div>
+                            </div>
+                            {shownFields.length === 0 ? (
+                                <p className="text-sm text-white/60">No field matches "{fieldQuery.trim()}".</p>
+                            ) : (
+                                <ul aria-label="Fields staff see" className="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-[22rem] overflow-y-auto p-1.5 rounded-xl bg-black/10 border border-white/10">
+                                    {shownFields.map(field => {
+                                        const on = staff.includes(field);
+                                        return (
+                                            <li key={field}>
+                                                <label className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm cursor-pointer transition-colors ${on ? 'bg-primary-500/15 text-white' : 'text-white/85 hover:bg-white/10'}`}>
+                                                    <input type="checkbox" checked={on} onChange={e => toggleStaff(field, e.target.checked)}
+                                                        className="w-4 h-4 shrink-0 rounded border-white/40 bg-white/10 text-primary-500 focus:ring-primary-500 focus:ring-offset-0" />
+                                                    <span className="min-w-0 flex-1 break-all">{field}</span>
+                                                    {flags[field] === 'owner' && <Chip tone="danger">Owner details</Chip>}
+                                                    {flags[field] === 'maybe' && <Chip tone="warning">May be personal</Chip>}
+                                                </label>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            )}
+                        </>
+                    )}
+                </Section>
+
+                <Section id={id('visibility')} icon={Eye} title="Visibility">
+                    <div className="divide-y divide-white/10">
+                        <div className="flex items-start justify-between gap-4 pb-4">
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium text-white">Show outlines on the staff map</p>
+                                <p id={id('staffmap-help')} className="text-xs text-white/70">Drawn at parcel zoom.</p>
+                            </div>
+                            <Switch on={visibleOnMap} onChange={() => setVisibleOnMap(v => !v)}
+                                label="Show outlines on the staff map" aria-describedby={id('staffmap-help')} />
+                        </div>
+                        <div className="flex items-start justify-between gap-4 pt-4">
+                            <div className="min-w-0">
+                                <p className="text-sm font-medium text-white">Show on the resident portal</p>
+                                <p id={id('portal-help')} className={`text-xs ${portalBlocked ? 'text-amber-200' : 'text-white/70'}`}>
+                                    {portalBlocked
+                                        ? <><AlertTriangle className="inline w-3.5 h-3.5 mr-1 -mt-0.5" aria-hidden="true" />{portalBlocked} Stays staff-only until then.</>
+                                        : 'Faint outlines at parcel zoom. Shapes only, never field values or IDs.'}
+                                </p>
+                            </div>
+                            <Switch on={portalOn} disabled={!!portalBlocked} onChange={() => setPortal(v => !v)}
+                                label="Show on the resident portal" aria-describedby={id('portal-help')} />
+                        </div>
+                    </div>
+                    {warnings.length > 0 && (
+                        <ul className="space-y-1 rounded-xl border border-amber-400/40 bg-amber-400/10 p-3 text-xs text-amber-100">
+                            {warnings.map(w => <li key={w}>{w}</li>)}
+                        </ul>
+                    )}
+                </Section>
+
+                <Section id={id('categories')} icon={Layers} title="Categories">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <CategoryScopePicker
+                            label="Record on reports in"
+                            description="Reports in these categories get this layer's feature attached for staff."
+                            services={services}
+                            loading={servicesLoading}
+                            value={staffCodes}
+                            onChange={setStaffCodes}
+                            disabled={purpose !== 'context'}
+                            disabledReason="Display-only layers are not recorded on reports."
+                        />
+                        <CategoryScopePicker
+                            label="Show outlines to residents in"
+                            description="Residents reporting in these categories see the outlines on the map."
+                            services={services}
+                            loading={servicesLoading}
+                            value={residentCodes}
+                            onChange={setResidentCodes}
+                            disabled={!portalOn}
+                            disabledReason="Turn on “Show on the resident portal” to choose."
+                        />
+                    </div>
+                </Section>
+
+                <Section id={id('data')} icon={Database} title="Data">
+                    <div className="space-y-3">
+                        <label
+                            onDragOver={e => { e.preventDefault(); setDragging(true); }}
+                            onDragLeave={() => setDragging(false)}
+                            onDrop={e => {
+                                e.preventDefault();
+                                setDragging(false);
+                                const f = e.dataTransfer.files?.[0];
+                                if (f) setReuploadFile(f);
+                            }}
+                            className={`flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border-2 border-dashed p-4 cursor-pointer transition-colors has-[:focus-visible]:outline has-[:focus-visible]:outline-[3px] has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-amber-300 ${dragging ? 'border-primary-300 bg-primary-500/15' : 'border-white/30 hover:border-white/50 hover:bg-white/[0.04]'}`}>
+                            <input type="file" accept=".geojson,.json,application/geo+json,application/json"
+                                aria-label="Replacement GeoJSON file" aria-describedby={id('file-help')}
+                                onChange={e => setReuploadFile(e.target.files?.[0] || null)}
+                                className="sr-only" />
+                            <FileUp className="w-6 h-6 shrink-0 text-white/70" aria-hidden="true" />
+                            <span className="min-w-0 flex-1">
+                                <span className="block text-sm font-medium text-white break-all">
+                                    {reuploadFile ? reuploadFile.name : 'Replace the polygons'}
+                                </span>
+                                <span id={id('file-help')} className="block text-xs text-white/70">
+                                    {reuploadFile
+                                        ? `${mb(reuploadFile.size)} · ready to upload`
+                                        : 'Drop a GeoJSON file here or choose one. Up to 100 MB.'}
+                                </span>
+                            </span>
+                            <span className="btn-outline btn-outline-md self-start sm:self-center" aria-hidden="true">Choose file</span>
+                        </label>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <Button type="button" size="sm" disabled={!reuploadFile || busy} onClick={reupload}
+                                leftIcon={<Upload className="w-4 h-4" />}>
+                                Upload replacement
+                            </Button>
+                            <span className="text-xs text-white/70">Reports keep the context they were recorded with.</span>
+                        </div>
+                    </div>
+                    {purpose === 'context' && layer.routing_mode === 'context' && (
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3 border-t border-white/10 pt-4">
+                            <Button type="button" size="sm" variant="secondary" disabled={busy} onClick={backfill}
+                                leftIcon={<History className="w-4 h-4" />} aria-describedby={id('backfill-help')}>
+                                Record on existing reports
+                            </Button>
+                            <span id={id('backfill-help')} className="text-xs text-white/70">
+                                Attach this layer to reports filed before it was added.
+                            </span>
                         </div>
                     )}
-                </fieldset>
+                </Section>
 
-                <div className="space-y-2">
-                    <label className="flex items-center gap-2 text-sm text-white/80">
-                        <input type="checkbox" checked={visibleOnMap} onChange={e => setVisibleOnMap(e.target.checked)} />
-                        Show outlines on the staff map (at parcel zoom)
-                    </label>
-                    <label className="flex items-start gap-2 text-sm text-white/80">
-                        <input type="checkbox" checked={portal && !portalBlocked} disabled={!!portalBlocked}
-                            onChange={e => setPortal(e.target.checked)} className="mt-1"
-                            aria-describedby="layer-portal-help" />
-                        <span>Show on the resident portal
-                            <span id="layer-portal-help" className="block text-xs text-white/45">
-                                {portalBlocked || 'Off by default. Residents see faint outlines on the Community Requests map at parcel zoom: shapes only, never field values or IDs.'}
-                            </span>
-                        </span>
-                    </label>
-                </div>
-
-                {warnings.length > 0 && (
-                    <ul className="space-y-1 rounded-lg border border-amber-400/30 bg-amber-400/10 p-3 text-xs text-amber-200">
-                        {warnings.map(w => <li key={w}>{w}</li>)}
-                    </ul>
-                )}
-
-                <div className="rounded-lg border border-white/10 p-3 space-y-2">
-                    <p className="text-sm font-medium text-white/70">Replace the polygons</p>
-                    <input type="file" accept=".geojson,.json,application/geo+json,application/json"
-                        aria-label="Replacement GeoJSON file"
-                        onChange={e => setReuploadFile(e.target.files?.[0] || null)}
-                        className="w-full text-xs text-white/60" />
-                    <div className="flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="secondary" disabled={!reuploadFile || !!progress} onClick={reupload}>Upload replacement</Button>
-                        {purpose === 'context' && layer.routing_mode === 'context' && (
-                            <Button type="button" size="sm" variant="secondary" disabled={saving || !!progress} onClick={backfill}>Record on existing reports</Button>
-                        )}
+                <div className="sticky bottom-0 z-10 -mx-6 -mb-6 px-6 py-4 border-t border-white/10 bg-slate-900/95 backdrop-blur rounded-b-2xl flex flex-col sm:flex-row sm:items-center gap-3">
+                    <div className="min-w-0 flex-1 text-sm">
+                        {progress && <p role="status" className="text-sky-200">{progress}</p>}
+                        {message && <p role="status" className="text-emerald-200">{message}</p>}
+                        {error && <p role="alert" className="text-red-200">{error}</p>}
                     </div>
-                </div>
-
-                {progress && <p role="status" className="text-sm text-sky-300">{progress}</p>}
-                {message && <p role="status" className="text-sm text-emerald-300">{message}</p>}
-                {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-
-                <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
-                    <Button type="button" variant="ghost" onClick={onClose} disabled={saving || !!progress}>Close</Button>
-                    <Button type="submit" isLoading={saving}>Save settings</Button>
+                    <div className="flex justify-end gap-3">
+                        <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+                        <Button type="submit" isLoading={saving}>Save settings</Button>
+                    </div>
                 </div>
             </form>
         </Modal>

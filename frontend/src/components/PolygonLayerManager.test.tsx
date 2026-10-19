@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 
 const api = vi.hoisted(() => ({
     startLayerUpload: vi.fn(),
@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
     reuploadLayerFeatures: vi.fn(),
     backfillLayerContext: vi.fn(),
     updateMapLayer: vi.fn(),
+    getServices: vi.fn(),
 }));
 vi.mock('../services/api', () => ({ api, default: api }));
 const dialog = vi.hoisted(() => ({ confirm: vi.fn(), alert: vi.fn() }));
@@ -52,8 +53,17 @@ describe('uploadInChunks', () => {
     });
 });
 
+const services = [
+    { id: 1, service_code: 'potholes', service_name: 'Potholes' },
+    { id: 2, service_code: 'streetlights', service_name: 'Streetlights' },
+    { id: 3, service_code: 'graffiti', service_name: 'Graffiti' },
+];
+
 describe('ContextLayerSettingsModal', () => {
-    beforeEach(() => { api.updateMapLayer.mockImplementation(async (_id, body) => ({ ...layer, ...body, warnings: [] })); });
+    beforeEach(() => {
+        api.updateMapLayer.mockImplementation(async (_id, body) => ({ ...layer, ...body, warnings: [] }));
+        api.getServices.mockResolvedValue(services);
+    });
     afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
     const open = (overrides = {}) => render(
@@ -70,14 +80,14 @@ describe('ContextLayerSettingsModal', () => {
 
     it('keeps the resident portal off until fields are chosen, and off with owner fields', () => {
         open();
-        const portal = () => screen.getByRole('checkbox', { name: /show on the resident portal/i }) as HTMLInputElement;
+        const portal = () => screen.getByRole('switch', { name: /show on the resident portal/i }) as HTMLButtonElement;
         expect(portal().disabled).toBe(true);
         expect(screen.getByText(/choose the fields staff see first/i)).toBeTruthy();
         fireEvent.click(screen.getByRole('checkbox', { name: /ZONE/ }));
         expect(portal().disabled).toBe(false);
         fireEvent.click(screen.getByRole('checkbox', { name: /OWNER_NAME/ }));
         expect(portal().disabled).toBe(true);
-        expect(screen.getByText(/owner details \(OWNER_NAME\)/i)).toBeTruthy();
+        expect(screen.getByText(/owner details are among the staff fields \(OWNER_NAME\)/i)).toBeTruthy();
     });
 
     it('saves the purpose, fields and portal choice', async () => {
@@ -86,7 +96,7 @@ describe('ContextLayerSettingsModal', () => {
         fireEvent.click(screen.getByRole('checkbox', { name: /PAMS_PIN/ }));
         fireEvent.click(screen.getByRole('checkbox', { name: /ZONE/ }));
         fireEvent.change(screen.getByLabelText('Label field'), { target: { value: 'ST_NAME' } });
-        fireEvent.click(screen.getByRole('checkbox', { name: /show on the resident portal/i }));
+        fireEvent.click(screen.getByRole('switch', { name: /show on the resident portal/i }));
         fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
         await waitFor(() => expect(saved).toHaveBeenCalled());
         expect(api.updateMapLayer).toHaveBeenCalledWith(7, expect.objectContaining({
@@ -113,5 +123,65 @@ describe('ContextLayerSettingsModal', () => {
         fireEvent.click(button);
         expect(await screen.findByText(/340 now carry/)).toBeTruthy();
         expect(api.backfillLayerContext).toHaveBeenCalledWith(7);
+    });
+
+    it('offers both category pickers, defaulting to all categories', async () => {
+        open();
+        const staffGroup = screen.getByRole('group', { name: /record on reports in/i });
+        const residentGroup = screen.getByRole('group', { name: /show outlines to residents in/i });
+        expect(within(staffGroup).getByRole('radio', { name: 'All categories' })).toHaveProperty('checked', true);
+        expect(within(residentGroup).getByRole('radio', { name: 'All categories' })).toHaveProperty('checked', true);
+        expect(api.getServices).toHaveBeenCalled();
+        // Each section is a heading a screen-reader user can jump between.
+        for (const name of ['Purpose', 'Identify features', 'What staff see', 'Visibility', 'Categories', 'Data']) {
+            expect(screen.getByRole('heading', { level: 3, name })).toBeTruthy();
+        }
+    });
+
+    it('keeps the resident picker disabled, with the reason, while the portal is off', () => {
+        open();
+        const residentGroup = screen.getByRole('group', { name: /show outlines to residents in/i }) as HTMLFieldSetElement;
+        expect(residentGroup.disabled).toBe(true);
+        expect(within(residentGroup).getByText(/turn on .show on the resident portal. to choose/i)).toBeTruthy();
+        fireEvent.click(screen.getByRole('checkbox', { name: /ZONE/ }));
+        fireEvent.click(screen.getByRole('switch', { name: /show on the resident portal/i }));
+        expect(residentGroup.disabled).toBe(false);
+        // A display-only layer is recorded on nothing, so its staff picker is off.
+        fireEvent.click(screen.getByRole('radio', { name: /display only/i }));
+        expect((screen.getByRole('group', { name: /record on reports in/i }) as HTMLFieldSetElement).disabled).toBe(true);
+    });
+
+    it('saves both category lists, empty meaning all', async () => {
+        open({ staff_properties: ['ZONE'], show_on_resident_portal: true, service_codes: ['graffiti'] });
+        const staffGroup = screen.getByRole('group', { name: /record on reports in/i });
+        const residentGroup = await waitFor(() => {
+            const g = screen.getByRole('group', { name: /show outlines to residents in/i });
+            expect(within(staffGroup).getByRole('checkbox', { name: 'Graffiti' })).toBeTruthy();
+            return g;
+        });
+        expect(within(staffGroup).getByText('1 of 3 categories')).toBeTruthy();
+
+        // Staff: back to every category. Residents: Potholes only, found by search.
+        fireEvent.click(within(staffGroup).getByRole('radio', { name: 'All categories' }));
+        fireEvent.click(within(residentGroup).getByRole('radio', { name: 'Only some' }));
+        fireEvent.change(within(residentGroup).getByRole('searchbox'), { target: { value: 'pot' } });
+        expect(within(residentGroup).queryByRole('checkbox', { name: 'Streetlights' })).toBeNull();
+        fireEvent.click(within(residentGroup).getByRole('checkbox', { name: 'Potholes' }));
+        expect(within(residentGroup).getByText('1 of 3 categories')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: /save settings/i }));
+        await waitFor(() => expect(api.updateMapLayer).toHaveBeenCalled());
+        expect(api.updateMapLayer).toHaveBeenCalledWith(7, expect.objectContaining({
+            service_codes: [], resident_service_codes: ['potholes'], show_on_resident_portal: true,
+        }));
+    });
+
+    it('narrows and counts the staff fields', () => {
+        open();
+        expect(screen.getByText('0 of 4 selected')).toBeTruthy();
+        fireEvent.change(screen.getByRole('searchbox', { name: 'Search fields' }), { target: { value: 'zo' } });
+        expect(screen.queryByRole('checkbox', { name: /PAMS_PIN/ })).toBeNull();
+        fireEvent.click(screen.getByRole('button', { name: 'Select shown' }));
+        expect(screen.getByText('1 of 4 selected')).toBeTruthy();
     });
 });

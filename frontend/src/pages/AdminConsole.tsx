@@ -74,6 +74,7 @@ import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import Open311ApiKeys from '../components/Open311ApiKeys';
 import { ContextLayerSettingsModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import { CategoryScopePicker } from '../components/CategoryScopePicker';
 import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
 import SignInProviderNote from '../components/SignInProviderNote';
@@ -5331,72 +5332,16 @@ export default function AdminConsole() {
                                 )}
                             </div>
 
-                            {/* Category selector */}
-                            <div>
-                                <div className="flex items-center justify-between mb-2">
-                                    <label className="block text-sm font-medium text-white/70">
-                                        Show for Categories
-                                    </label>
-                                    <div className="flex gap-2">
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewLayer(p => ({ ...p, service_codes: services.map(s => s.service_code) }))}
-                                            className="btn-outline"
-                                        >
-                                            Select All
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => setNewLayer(p => ({ ...p, service_codes: [] }))}
-                                            className="btn-outline"
-                                        >
-                                            Clear All
-                                        </button>
-                                    </div>
-                                </div>
-                                {services.length === 0 ? (
-                                    <p className="text-sm text-white/40 p-3 rounded-lg bg-white/5 border border-white/10">
-                                        Loading categories...
-                                    </p>
-                                ) : (
-                                    <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto p-3 rounded-lg bg-white/5 border border-white/10">
-                                        {services.map((service) => (
-                                            <label
-                                                key={service.service_code}
-                                                className="flex items-center gap-2 text-sm text-white/70 hover:text-white cursor-pointer p-2 rounded hover:bg-white/10"
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={newLayer.service_codes.includes(service.service_code)}
-                                                    onChange={(e) => {
-                                                        if (e.target.checked) {
-                                                            setNewLayer(p => ({
-                                                                ...p,
-                                                                service_codes: [...p.service_codes, service.service_code]
-                                                            }));
-                                                        } else {
-                                                            setNewLayer(p => ({
-                                                                ...p,
-                                                                service_codes: p.service_codes.filter(c => c !== service.service_code)
-                                                            }));
-                                                        }
-                                                    }}
-                                                    className="w-4 h-4 rounded border-white/30 bg-white/10 text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                                />
-                                                {service.service_name}
-                                            </label>
-                                        ))}
-                                    </div>
-                                )}
-                                <p className="text-xs text-white/40 mt-1">
-                                    {newLayer.service_codes.length === 0
-                                        ? 'Layer is hidden until you select at least one category'
-                                        : newLayer.service_codes.length === services.length
-                                            ? 'Layer visible for all categories'
-                                            : `Layer visible for ${newLayer.service_codes.length} ${newLayer.service_codes.length === 1 ? 'category' : 'categories'}`
-                                    }
-                                </p>
-                            </div>
+                            {/* Category selector. Empty = every category, which is
+                                how the resident form and call intake read it. */}
+                            <CategoryScopePicker
+                                label="Show for categories"
+                                description="The report categories this layer is used in."
+                                services={services}
+                                loading={services.length === 0}
+                                value={newLayer.service_codes}
+                                onChange={codes => setNewLayer(p => ({ ...p, service_codes: codes }))}
+                            />
 
                             <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
                                 <Button variant="ghost" onClick={() => setShowLayerModal(false)}>Cancel</Button>

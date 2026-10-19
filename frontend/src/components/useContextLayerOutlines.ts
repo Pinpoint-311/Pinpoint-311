@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { api, ContextLayer } from '../services/api';
 import { GeoJsonLayerHandle, MapRenderer, PopupHandle, el, popupRoot } from '../maps';
 
 /**
- * Context-layer outlines (tax parcels, zones) on the staff map.
+ * Context-layer outlines (tax parcels, zones) on the staff map, and in public
+ * mode on the resident maps (Community Requests, the report form).
  *
  * A parcel layer is tens of thousands of polygons, so it is never shipped to
  * the browser whole. At parcel zoom the map asks the server for the outlines
@@ -26,6 +27,21 @@ export type OutlineMode = 'staff' | 'public' | 'off';
 const DEBOUNCE_MS = 250;
 const MIN_ZOOM = 15;
 
+/**
+ * Whether residents looking at `categories` see this layer. An admin scopes a
+ * resident-visible layer with resident_service_codes; empty means every
+ * category. `categories` null means no filter at all; an empty array means
+ * none chosen, which leaves only the layers that apply everywhere.
+ */
+export function layerAppliesToCategories(
+    layer: Pick<ContextLayer, 'resident_service_codes'>,
+    categories: readonly string[] | null | undefined,
+): boolean {
+    const codes = layer.resident_service_codes || [];
+    if (!categories || codes.length === 0) return true;
+    return codes.some(code => categories.includes(code));
+}
+
 /** The resident-visible polygon layers, from the public layer list. */
 async function publicPolygonLayers(): Promise<ContextLayer[]> {
     const layers = await api.getMapLayers();
@@ -34,6 +50,7 @@ async function publicPolygonLayers(): Promise<ContextLayer[]> {
         .map(l => ({
             id: l.id, name: l.name, fill_color: l.fill_color, stroke_color: l.stroke_color,
             fill_opacity: l.fill_opacity, stroke_width: l.stroke_width, visible_on_map: true,
+            resident_service_codes: l.resident_service_codes ?? [],
             feature_count: null, min_zoom: MIN_ZOOM,
         }));
 }
@@ -43,10 +60,24 @@ export function useContextLayerOutlines(
     popupRef: MutableRefObject<PopupHandle | null>,
     mapReady: boolean,
     mode: OutlineMode,
+    /**
+     * Public mode: draw only the layers that apply to these categories (see
+     * layerAppliesToCategories). Omitted or null: every layer, as the staff
+     * map always has.
+     */
+    categories?: readonly string[] | null,
 ) {
     const enabled = mode !== 'off';
     const isPublic = mode === 'public';
-    const [layers, setLayers] = useState<ContextLayer[]>([]);
+    const [allLayers, setLayers] = useState<ContextLayer[]>([]);
+    // A new array each render from most callers; keyed on its contents so the
+    // drawing effect only re-runs when the categories really change.
+    const categoryKey = categories ? categories.join('\u0000') : null;
+    const layers = useMemo(() => {
+        if (!isPublic || categoryKey === null) return allLayers;
+        const chosen = categoryKey === '' ? [] : categoryKey.split('\u0000');
+        return allLayers.filter(l => layerAppliesToCategories(l, chosen));
+    }, [allLayers, isPublic, categoryKey]);
     const [visible, setVisible] = useState<Record<number, boolean>>({});
     const [status, setStatus] = useState<Record<number, OutlineStatus>>({});
     const handles = useRef<Record<number, GeoJsonLayerHandle>>({});

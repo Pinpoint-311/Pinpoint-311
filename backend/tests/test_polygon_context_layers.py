@@ -684,3 +684,53 @@ async def test_public_outlines_are_shapes_only_and_capped(pgdb, monkeypatch):
     await pgdb.commit()
     with pytest.raises(HTTPException):
         await _outlines_route()(None, layer.id, bbox=view, zoom=17, db=pgdb)
+
+
+# ------------------------------------------- categories residents see outlines in
+
+def test_resident_categories_are_public_and_in_every_layer_schema():
+    """The resident list is a list of category codes, not layer content: the
+    public response carries it so the report form can filter outlines."""
+    from app import schemas
+    from app.api.map_layers import public_layer
+    for name in ("MapLayerBase", "MapLayerUpdate", "MapLayerPolygonCreate", "MapLayerResponse"):
+        assert "resident_service_codes" in getattr(schemas, name).model_fields, name
+    out = public_layer(_ctx_layer(show_on_resident_portal=True, staff_properties=["PIN"],
+                                  resident_service_codes=["potholes"]))
+    assert out["resident_service_codes"] == ["potholes"]
+    assert public_layer(_ctx_layer())["resident_service_codes"] is None  # NULL reads as all
+
+
+@pg
+async def test_resident_categories_round_trip(pgdb, staging):
+    from app.api.map_layers import (create_polygon_layer, list_all_layers, list_context_layers,
+                                    list_public_layers, update_layer)
+    from app.schemas import MapLayerPolygonCreate, MapLayerUpdate
+    _, _, staff, admin = await _seed_people(pgdb)
+    raw = json.dumps(PARCELS).encode()
+    up = gis_layers.start_upload(len(raw), admin.id)
+    gis_layers.append_chunk(up["upload_id"], 0, raw, admin.id)
+    out = await create_polygon_layer(MapLayerPolygonCreate(
+        name="Springfield Parcels", upload_id=up["upload_id"],
+        service_codes=["potholes"], resident_service_codes=["potholes", "streetlights"]),
+        db=pgdb, admin=admin)
+    assert out.service_codes == ["potholes"]
+    assert out.resident_service_codes == ["potholes", "streetlights"]
+
+    # Left out of an update: kept. An empty list: all categories again.
+    kept = await update_layer(out.id, MapLayerUpdate(staff_properties=["PIN"]), db=pgdb, admin=admin)
+    assert kept.resident_service_codes == ["potholes", "streetlights"]
+    upd = await update_layer(out.id, MapLayerUpdate(resident_service_codes=["streetlights"],
+                                                    service_codes=[], show_on_resident_portal=True),
+                             db=pgdb, admin=admin)
+    assert upd.resident_service_codes == ["streetlights"] and upd.service_codes == []
+
+    [admin_row] = await list_all_layers(db=pgdb, _=admin)
+    assert admin_row.resident_service_codes == ["streetlights"]
+    [public_row] = await list_public_layers(db=pgdb)
+    assert public_row["resident_service_codes"] == ["streetlights"]
+    [staff_row] = await list_context_layers(db=pgdb, _=staff)
+    assert staff_row["resident_service_codes"] == ["streetlights"] and staff_row["service_codes"] == []
+
+    cleared = await update_layer(out.id, MapLayerUpdate(resident_service_codes=[]), db=pgdb, admin=admin)
+    assert cleared.resident_service_codes == []

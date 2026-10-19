@@ -903,6 +903,7 @@ class MapLayerBase(BaseModel):
     visible_on_map: bool = True  # Whether to show layer visually on map
     routing_mode: Optional[str] = "log"  # log, block
     service_codes: Optional[List[str]] = None  # Categories this layer applies to (empty = all)
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None  # { message, contacts }
 
     @field_validator("routing_mode")
@@ -931,6 +932,7 @@ class MapLayerUpdate(BaseModel):
     routing_mode: Optional[str] = None
     geojson: Optional[Dict[str, Any]] = None
     service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None
     # Context layers (see app/services/gis_layers.py). Each must name a field
     # the uploaded file actually has; checked against available_properties.
@@ -958,6 +960,7 @@ class MapLayerPolygonCreate(BaseModel):
     visible_on_map: bool = True
     routing_mode: str = "context"
     service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     feature_id_property: Optional[str] = Field(None, max_length=100)
 
     @field_validator("routing_mode")
@@ -981,6 +984,7 @@ class MapLayerResponse(MapLayerBase):
     visible_on_map: Optional[bool] = True
     routing_mode: Optional[str] = "log"
     service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None  # resident outlines; empty = all
     routing_config: Optional[Dict[str, Any]] = None
     feature_storage: Optional[str] = "inline"
     created_at: Optional[datetime] = None

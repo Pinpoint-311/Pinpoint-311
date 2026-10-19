@@ -1376,6 +1376,7 @@ export default function ResidentPortal() {
                                                                 const codes = layer.service_codes || [];
                                                                 return codes.length === 0 || codes.includes(selectedService.service_code);
                                                             })}
+                                                            outlineCategory={selectedService.service_code}
                                                             value={location}
                                                             onOutOfBounds={() => setIsLocationOutOfBounds(true)}
                                                             onAssetSelect={(asset) => {

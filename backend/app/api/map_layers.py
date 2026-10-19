@@ -156,6 +156,8 @@ async def list_context_layers(
             "fill_color": layer.fill_color, "stroke_color": layer.stroke_color,
             "fill_opacity": layer.fill_opacity, "stroke_width": layer.stroke_width,
             "visible_on_map": layer.visible_on_map is not False,
+            "service_codes": list(layer.service_codes or []),
+            "resident_service_codes": list(layer.resident_service_codes or []),
             "feature_count": layer.feature_count,
             "min_zoom": gis_layers.MIN_BBOX_ZOOM,
         }
@@ -259,6 +261,7 @@ async def create_polygon_layer(
         visible_on_map=data.visible_on_map,
         routing_mode=data.routing_mode,
         service_codes=data.service_codes or [],
+        resident_service_codes=data.resident_service_codes or [],
         feature_storage=gis_layers.TABLE,
         feature_id_property=data.feature_id_property,
         staff_properties=[],
@@ -349,6 +352,7 @@ async def create_layer(
         visible_on_map=layer_data.visible_on_map if hasattr(layer_data, 'visible_on_map') else True,
         routing_mode=layer_data.routing_mode if hasattr(layer_data, 'routing_mode') else 'log',
         service_codes=layer_data.service_codes or [],
+        resident_service_codes=layer_data.resident_service_codes or [],
         routing_config=layer_data.routing_config,
         feature_storage=gis_layers.INLINE,
     )
@@ -592,6 +596,8 @@ async def update_layer(
         layer.visible_on_map = layer_data.visible_on_map
     if layer_data.service_codes is not None:
         layer.service_codes = layer_data.service_codes
+    if layer_data.resident_service_codes is not None:
+        layer.resident_service_codes = layer_data.resident_service_codes
     if layer_data.routing_config is not None:
         layer.routing_config = layer_data.routing_config
 
