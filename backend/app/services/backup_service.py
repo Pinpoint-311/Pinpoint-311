@@ -724,7 +724,7 @@ async def restore_backup(backup_name: str) -> Dict[str, Any]:
             # Step 4: Restore to database
             logger.info("Restoring database...")
             if not restore_database_dump(decrypted_path):
-                return {"status": "error", "message": "Failed to restore database - check pg_restore logs"}
+                return {"status": "error", "message": "The database restore failed. The server log has the details."}
             
             logger.info(f"Database restored from backup: {sanitize_for_log(safe_backup_name)}")
             

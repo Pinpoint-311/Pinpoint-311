@@ -87,7 +87,7 @@ export default function SystemHealthDashboard() {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                throw new Error(`System health didn't load (error ${response.status}). Try again.`);
             }
 
             const data = await response.json();
@@ -96,7 +96,7 @@ export default function SystemHealthDashboard() {
             // report that anything happened is a spinner that has stopped.
             announce(`System health refreshed. Overall status: ${humanize(data.overall_status)}.`);
         } catch (err: any) {
-            const message = err.message || 'Failed to fetch health status';
+            const message = err.message || "System health didn't load. Try again.";
             setError(message);
             announce(message, 'assertive');
         } finally {

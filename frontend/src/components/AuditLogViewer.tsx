@@ -125,7 +125,7 @@ const EVENT_SENTENCES: Record<string, (d: Details) => string | null> = {
             + (Array.isArray(d.sensitive_fields) && d.sensitive_fields.length
                 ? ` including sensitive fields (${listOf(d.sensitive_fields)})` : '')
         : null,
-    data_export_pii: d => `Exported service requests including resident PII (${d.format || 'csv'})`,
+    data_export_pii: d => `Exported service requests including residents' personal details (${d.format || 'csv'})`,
     // Resident history. The searched-for email or name is never recorded --
     // only that a lookup happened, on which report or by which kind, and the count.
     resident_history_viewed: d => d.service_request_id
@@ -263,7 +263,7 @@ export default function AuditLogViewer() {
             });
 
             if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                throw new Error(`The audit log didn't load (error ${response.status}). Try again.`);
             }
 
             const data = await response.json();
@@ -283,7 +283,7 @@ export default function AuditLogViewer() {
                 setStats(statsData);
             }
         } catch (err: any) {
-            const message = err.message || 'Failed to fetch audit logs';
+            const message = err.message || "The audit log didn't load. Try again.";
             setError(message);
             announce(message, 'assertive');
         } finally {

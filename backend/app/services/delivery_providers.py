@@ -201,7 +201,7 @@ def switched_off(value: Optional[str]) -> bool:
 KMS_CATALOG: Dict[str, Dict[str, Any]] = {
     "google": {
         "name": "Google Cloud KMS",
-        "description": "Wraps the key that encrypts resident personal information. Uses your existing Google Cloud service account.",
+        "description": "Protects the key that encrypts residents' personal information. Uses your existing Google Cloud service account.",
         "boundary": "Google Cloud — Assured Workloads / FedRAMP High",
         # The three KMS_* fields only *name* a key; none of them is what makes
         # this provider work. `encryption._is_kms_available()` returns False
@@ -230,7 +230,7 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure Key Vault",
-        "description": "Wraps the PII encryption key in Key Vault. The natural choice for an Azure town.",
+        "description": "Protects the key that encrypts residents' personal information, using Key Vault. The natural choice for an Azure town.",
         "boundary": "Azure Government / GCC High",
         "credential_fields": [
             {"key": "AZURE_KEYVAULT_URL", "label": "Key Vault URL", "required": True},
@@ -244,7 +244,7 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "aws": {
         "name": "AWS KMS",
-        "description": "Wraps the PII encryption key in AWS KMS, using your existing AWS credentials.",
+        "description": "Protects the key that encrypts residents' personal information, using AWS KMS and your existing AWS credentials.",
         "boundary": "AWS — GovCloud available",
         "credential_fields": [
             {"key": "AWS_REGION", "label": "AWS Region", "required": True},
@@ -254,9 +254,9 @@ KMS_CATALOG: Dict[str, Dict[str, Any]] = {
     "local": {
         "name": "Application key (no cloud KMS)",
         "description": (
-            "Personal information is still encrypted, using the application's own SECRET_KEY "
-            "rather than a cloud key service. Workable for a small town, but the key lives with "
-            "the app, so a cloud KMS is the stronger choice where one is available."
+            "Personal information is still encrypted, using this server's own key (its "
+            "SECRET_KEY setting) rather than a cloud key service. Fine for a small town, but the "
+            "key is stored with the app, so a cloud key service is safer where one is available."
         ),
         "boundary": "Self-hosted",
         "credential_fields": [],
@@ -410,7 +410,7 @@ SECRETS_CATALOG: Dict[str, Dict[str, Any]] = {
     },
     "azure": {
         "name": "Azure Key Vault",
-        "description": "Keeps every credential this town enters, in the vault that also wraps the PII key if you use it for that.",
+        "description": "Keeps every credential this town enters, in the same vault that protects the encryption key if you use it for that.",
         "boundary": "Azure Government / GCC High",
         "credential_fields": [],
         "requires": [

@@ -1597,6 +1597,12 @@ async def _test_identity(db) -> dict:
         f"(the token endpoint answered HTTP {resp.status_code}).")}
 
 
+def _kms_label(provider: str) -> str:
+    """The name an admin recognizes, for a provider id stored in settings."""
+    return {"google": "Google Cloud KMS", "azure": "Azure Key Vault", "aws": "AWS KMS",
+            "local": "the application key"}.get(provider, provider)
+
+
 async def _test_kms(db=None) -> dict:
     """Wrap a throwaway key and see which service actually did it.
 
@@ -1614,29 +1620,28 @@ async def _test_kms(db=None) -> dict:
     probe = pii_crypto.probe_wrap()
     actual = probe["backend"]
     if actual == selected:
-        label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
-                 "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
-        evidence = (f"a {probe['wrapped_len']}-byte wrapped key came back"
-                    + (f" (ciphertext begins {probe['peek']}…)" if probe.get("peek") else ""))
+        label = _kms_label(actual)
+        evidence = (f"it returned a {probe['wrapped_len']}-byte encrypted copy"
+                    + (f" (starting {probe['peek']}…)" if probe.get("peek") else ""))
         return {"ok": True, "detail": _steps(
-            "Generated a throwaway 256-bit data key on this server.",
-            f"Asked the key service to wrap it — {evidence}.",
-            f"The wrapping is tagged as {label}, which is the provider you selected — "
-            f"so resident data is being encrypted with the key you chose.",
-            "Discarded the test key. Nothing was stored.",
+            "Made a temporary test key on this server.",
+            f"Asked the key service to encrypt it with your key: {evidence}.",
+            f"The encrypted copy is marked as coming from {label}, the provider you "
+            f"selected, so resident data is being encrypted with the key you chose.",
+            "Deleted the test key. Nothing was stored.",
         )}
     if actual == "unknown":
         # The wrap failed rather than being done by some other service. Saying
         # it "was wrapped with unknown" described a mystery backend and named
         # nothing to fix; the reason now comes back with the probe.
-        reason = probe.get("error") or "the wrap did not complete."
+        reason = probe.get("error") or "the test encryption did not complete."
         return {"ok": False, "detail": (
-            f"Resident data is not being encrypted with the {selected} key you "
-            f"selected: {reason}")}
+            f"Resident data is not being encrypted with the {_kms_label(selected)} key "
+            f"you selected: {reason}")}
     return {"ok": False, "detail": (
-        f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
-        f"data is not being encrypted with the key you chose — check the "
-        f"credentials and that the key still exists.")}
+        f"You selected {_kms_label(selected)}, but the test key was encrypted with "
+        f"{_kms_label(actual)} instead. Resident data is not being encrypted with the "
+        f"key you chose. Check the credentials and that the key still exists.")}
 
 
 async def _test_redaction(db=None) -> dict:
@@ -2352,10 +2357,10 @@ async def _test_secrets(db=None) -> dict:
         if got is None:
             return {"ok": False, "detail": (
                 f"{label} accepted a test write and then had nothing to return. Credentials "
-                f"saved here may not be readable by the workers that need them.")}
+                f"saved here may not be readable by the parts of Pinpoint that need them.")}
         return {"ok": False, "detail": (
             f"{label} returned a different value than the one just written to it. "
-            f"Something else is writing the same key, or reads are being served stale.")}
+            f"Something else is writing the same key, or it is returning an out-of-date copy.")}
 
     removed = await _cleanup()
     if not removed:
@@ -4102,8 +4107,8 @@ async def get_advanced_statistics(
         raise HTTPException(
             status_code=500,
             detail=(
-                f"The advanced statistics could not be built ({type(exc).__name__}). "
-                f"The full error and its traceback are in the server log."
+                f"The advanced statistics could not be built (error type: {type(exc).__name__}). "
+                f"The full error is in the server log."
             ),
         )
 
@@ -5711,8 +5716,8 @@ async def execute_runbook(
 
     if action == "restart-all" or action.startswith("restart-"):
         raise HTTPException(status_code=410, detail=(
-            "Restarts are now requests the host updater runs for this instance only. "
-            "Use Restart in System Health (POST /api/system/upgrade-requests with action=restart)."
+            "Restarts are requested from System Health → Restart, and the host updater runs "
+            "them for this instance only. (API: POST /api/system/upgrade-requests with action=restart.)"
         ))
 
     try:

@@ -61,12 +61,12 @@ FIELDS: List[Dict[str, Any]] = [
     {"id": "long", "label": "Longitude", "attr": "long", "default": False, "sensitive": False},
     {"id": "description", "label": "What was reported", "attr": "description",
      "default": True, "sensitive": False,
-     "note": "Written by the resident, so it can name people even when the PII fields are off."},
+     "note": "Written by the resident, so it can name people even when the reporter's contact fields are off."},
     {"id": "custom_fields", "label": "Answers to the town's own questions", "attr": "custom_fields",
      "default": True, "sensitive": False,
      "note": "Written by the resident, like the description, so it can name people even "
-             "when the PII fields are off. Omitting it made the export an incomplete "
-             "answer to a records request."},
+             "when the reporter's contact fields are off. Leave it out and the export may "
+             "not fully answer a records request."},
     {"id": "completion_message", "label": "Resolution", "attr": "completion_message",
      "default": True, "sensitive": False},
     {"id": "closed_substatus", "label": "Closure reason", "attr": "closed_substatus",

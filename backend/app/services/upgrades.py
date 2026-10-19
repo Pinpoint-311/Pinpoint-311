@@ -512,7 +512,7 @@ def compose_settings_email(actor: str, *, town: str, L) -> Tuple[str, List[Dict[
         L.callout(f"{actor} turned off two-person approval. One admin can now upgrade or roll back this "
                   "instance without anyone else approving.", tone="warning", title="Two-person approval is off"),
         L.paragraph("If you did not expect this, turn it back on in Admin Console → Version Control and review "
-                    "the audit log: switching this off is the first thing a misused admin account would do."),
+                    "the audit log. An unexpected change here can mean an admin account is being misused."),
         L.note("The server operator can make two-person approval non-negotiable for this instance by setting "
                "require_two_person_approval: true in /etc/pinpoint-updater/instances.yml. The updater then refuses "
                "an upgrade or rollback approved only by its requester, whatever this setting says."),

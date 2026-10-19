@@ -170,7 +170,7 @@ def build_alerts(
                 subject=f"Road data for {township} shrank sharply and was not applied",
                 body=(
                     f"The update returned {changes.current_count} named roads against "
-                    f"{changes.previous_count} before. That points to a truncated response, "
+                    f"{changes.previous_count} before. That suggests the download was cut short, "
                     "so the previous data was kept."
                 ),
             ))

@@ -122,7 +122,7 @@ describe('pasting what the deployment gave back', () => {
 
         expect(listed).toContain('AZURE_OPENAI_API_KEY');
         expect(listed).toContain('AZURE_KEYVAULT_CLIENT_SECRET');
-        expect(container.textContent).toContain('Keys are not in the outputs');
+        expect(container.textContent).toContain('keys are not included in the outputs');
         expect(container.textContent).toContain('Keys and Endpoint');
     });
 
@@ -153,7 +153,7 @@ describe('AWS, where the stack creates no key', () => {
             />,
         );
         expect(container.querySelector('[data-manual-credential]')).toBeNull();
-        expect(container.textContent).not.toContain('Keys are not in the outputs');
+        expect(container.textContent).not.toContain('keys are not included in the outputs');
     });
 });
 

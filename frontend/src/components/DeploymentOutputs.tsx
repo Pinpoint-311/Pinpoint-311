@@ -170,7 +170,7 @@ export default function DeploymentOutputs({
                         <div key={u.output} className="flex items-start gap-2 text-xs" data-output-status="unmatched" data-output={u.output}>
                             <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/80" aria-hidden="true" />
                             <dt className="text-amber-100/80">{u.output}</dt>
-                            <dd className="text-[11px] text-amber-100/50">no box for this — worth reporting</dd>
+                            <dd className="text-[11px] text-amber-100/50">Pinpoint doesn’t use this value</dd>
                         </div>
                     ))}
                 </dl>
@@ -189,8 +189,8 @@ export default function DeploymentOutputs({
 
             {saved && (
                 <p className="mt-2 text-xs text-emerald-300/80">
-                    Saved. Those cards read as configured now; use Save &amp; Test on each to check
-                    it against the real resource.
+                    Saved. Those cards now show as set up. Use Save &amp; Test on each one to
+                    confirm it works.
                 </p>
             )}
 
@@ -200,8 +200,8 @@ export default function DeploymentOutputs({
             {outstanding.length > 0 && (
                 <div className="mt-3.5 border-t border-white/10 pt-3">
                     <p className="text-xs text-white/60 leading-relaxed">
-                        Keys are not in the outputs — deployment history is readable by more people
-                        than the person deploying. Copy these from the portal:
+                        For security, keys are not included in the outputs. Copy these from the
+                        portal:
                     </p>
                     <ul className="mt-1.5 space-y-0.5">
                         {outstanding.map(m => (

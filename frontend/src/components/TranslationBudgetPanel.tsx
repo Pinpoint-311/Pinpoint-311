@@ -125,7 +125,7 @@ export default function TranslationBudgetPanel() {
             </p>
             {usage.counter_store === 'memory' && (
                 <p role="status" className="text-amber-300/90 text-[11px]">
-                    The shared counter (Redis) is unreachable, so each server process is counting on its own.
+                    The shared usage counter can’t be reached, so each part of the server is counting on its own. Usage may go slightly over budget until it’s back.
                 </p>
             )}
             {editing && (
