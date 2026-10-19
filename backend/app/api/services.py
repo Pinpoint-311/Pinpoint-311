@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func as sa_func
 from sqlalchemy.orm import selectinload
-from typing import List
+from typing import Any, Dict, List
 
 from app.db.session import get_db
 from app.models import ServiceDefinition, Department, User
@@ -227,6 +227,36 @@ async def get_service(service_id: int, db: AsyncSession = Depends(get_db)):
     return service
 
 
+def _agency_changes(before: Any, after: Any) -> Dict[str, Any]:
+    """Agencies added, removed or edited between two routing configs, by name."""
+    from app.services.road_matching import _as_list
+
+    def agencies(config: Any) -> Dict[str, Any]:
+        items = (config or {}).get("third_party_contacts") if isinstance(config, dict) else None
+        out: Dict[str, Any] = {}
+        for agency in items if isinstance(items, list) else []:
+            if isinstance(agency, dict) and str(agency.get("name") or "").strip():
+                roads = _as_list(agency.get("roads")) or _as_list(agency.get("road_list"))
+                out[str(agency["name"]).strip()] = (
+                    sorted(r.lower() for r in roads),
+                    tuple(str(agency.get(k) or "") for k in ("phone", "email", "url", "message")),
+                )
+        return out
+
+    old, new = agencies(before), agencies(after)
+    changes: Dict[str, Any] = {}
+    added = sorted(set(new) - set(old))
+    removed = sorted(set(old) - set(new))
+    edited = sorted(n for n in set(old) & set(new) if old[n] != new[n])
+    if added:
+        changes["agencies_added"] = [{"name": n, "roads": len(new[n][0])} for n in added]
+    if removed:
+        changes["agencies_removed"] = removed
+    if edited:
+        changes["agencies_changed"] = edited
+    return changes
+
+
 @router.put("/{service_id}", response_model=ServiceResponse)
 async def update_service(
     service_id: int,
@@ -309,10 +339,15 @@ async def update_service(
     # What actually changed, not what the form sent (it sends everything).
     changed_fields = sorted(f for f in _tracked if getattr(service, f, None) != before[f])
     if changed_fields:
+        details = {"service_code": service.service_code, "service_name": service.service_name,
+                   "fields": changed_fields}
+        # Which third-party agencies came and went, by name. An agency copied
+        # in from another category, or imported from a file, is otherwise just
+        # "routing_config changed" in the log.
+        if "routing_config" in changed_fields:
+            details.update(_agency_changes(before["routing_config"], service.routing_config))
         await record_admin_action(
-            db, event_type="service_updated", actor=_,
-            details={"service_code": service.service_code, "service_name": service.service_name,
-                     "fields": changed_fields},
+            db, event_type="service_updated", actor=_, details=details,
         )
 
     # Its own audit event: taking a whole category off the public map is a

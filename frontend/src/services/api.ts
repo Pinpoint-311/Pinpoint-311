@@ -27,6 +27,22 @@ import type {
 
 const API_BASE = '/api';
 
+/** A road limited to a stretch ("Oak Rd (Elm St to Route 10)"), as resolved on the map. */
+export interface RoadLimit {
+    agency: string;
+    entry: string;
+    road: string;
+    from_street: string;
+    to_street: string;
+    status: string;
+    /** False means the limits could not be found and the whole road is claimed. */
+    resolved: boolean;
+    message: string;
+    stretch_m: number | null;
+    road_length_m: number | null;
+    stretch_geojson: unknown;
+}
+
 /** What POST /open311/v2/photos/screen answers with. */
 export interface ScreenedPhotoResult {
     /** Opaque, single-use, expires in an hour. Quoted in media_urls at submit. */
@@ -1174,7 +1190,7 @@ class ApiClient {
 
     async getDomainStatus(): Promise<{
         configured_domains: Array<{ domain: string; has_ssl: boolean }>;
-        server_ip: string;
+        server_ip: string | null;
     }> {
         return this.request('/system/domain/status');
     }
@@ -1336,6 +1352,7 @@ class ApiClient {
         issues: { severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[] }[];
         can_save: boolean;
         roads_known: number;
+        limits?: RoadLimit[];
     }> {
         return this.request('/roads/config-check', {
             method: 'POST',

@@ -60,7 +60,7 @@ import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { useDialog } from '../components/DialogProvider';
-import { api, MapLayer, ResearchPackSwitch } from '../services/api';
+import { api, MapLayer, ResearchPackSwitch, RoadLimit } from '../services/api';
 import { User, ServiceDefinition, SystemSettings, SystemSecret, Department, RoutingContact, LocationMode } from '../types';
 import CategoryIconPicker from '../components/CategoryIconPicker';
 import { categoryIconFor, DEFAULT_CATEGORY_ICON, isDefaultOrUnknownIcon, suggestCategoryIcon } from '../components/categoryIcons';
@@ -68,10 +68,13 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import ClientErrorPanel from '../components/ClientErrorPanel';
 import OperationsPanel from '../components/OperationsPanel';
 import RoadListInput from '../components/RoadListInput';
+import AgencyReusePicker from '../components/AgencyReusePicker';
+import { combinedRoadList } from '../utils/agencyLibrary';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import Open311ApiKeys from '../components/Open311ApiKeys';
-import { ContextLayerSettingsModal, PolygonLayerUploadModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import { ContextLayerSettingsModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
 import SignInProviderNote from '../components/SignInProviderNote';
 import { useSignInProvider } from '../hooks/useSignInProvider';
@@ -808,6 +811,8 @@ export default function AdminConsole() {
         severity: 'error' | 'warning' | 'info'; kind: string; message: string; roads: string[];
     }[]>([]);
     const [routingCanSave, setRoutingCanSave] = useState(true);
+    // Roads limited to a stretch, as the server resolved them on the map.
+    const [roadLimits, setRoadLimits] = useState<RoadLimit[]>([]);
     // Stretches the clerk switched off, keyed to the publisher's feature ids so
     // a monthly data refresh keeps the corrections while still picking up newly
     // built sections of the same road.
@@ -821,6 +826,7 @@ export default function AdminConsole() {
         if (serviceRouting.routing_mode !== 'road_based') {
             setRoutingIssues([]);
             setRoutingCanSave(true);
+            setRoadLimits([]);
             return;
         }
         const split = (v: string) => v.split(',').map(r => r.trim()).filter(Boolean);
@@ -829,10 +835,18 @@ export default function AdminConsole() {
                 default_handler: serviceRouting.routing_config.default_handler,
                 exclusion_list: split(serviceRouting.routing_config.exclusion_list),
                 inclusion_list: split(serviceRouting.routing_config.inclusion_list),
+                // Per agency, so a road claimed by two agencies is caught and
+                // each agency's limited stretches are resolved on the map.
+                third_party_contacts: (serviceRouting.routing_config.third_party_contacts || [])
+                    .map(a => ({ name: a?.name || '', road_list: a?.road_list || '', roads: a?.roads || [] })),
             })
-                .then(result => { setRoutingIssues(result.issues); setRoutingCanSave(result.can_save); })
+                .then(result => {
+                    setRoutingIssues(result.issues);
+                    setRoutingCanSave(result.can_save);
+                    setRoadLimits(result.limits || []);
+                })
                 // A check that cannot run must not lock a clerk out of saving.
-                .catch(() => { setRoutingIssues([]); setRoutingCanSave(true); });
+                .catch(() => { setRoutingIssues([]); setRoutingCanSave(true); setRoadLimits([]); });
         }, 350);
         return () => clearTimeout(timer);
     }, [
@@ -840,6 +854,7 @@ export default function AdminConsole() {
         serviceRouting.routing_config.default_handler,
         serviceRouting.routing_config.exclusion_list,
         serviceRouting.routing_config.inclusion_list,
+        serviceRouting.routing_config.third_party_contacts,
     ]);
 
     // Department management state
@@ -911,7 +926,8 @@ export default function AdminConsole() {
     const [mapLayers, setMapLayers] = useState<MapLayer[]>([]);
     const [showLayerModal, setShowLayerModal] = useState(false);
     const [editingLayer, setEditingLayer] = useState<MapLayer | null>(null);
-    const [polygonUploadOpen, setPolygonUploadOpen] = useState(false);
+    // An upload in progress in the Add Layer dialog; closing then would orphan it.
+    const [layerUploadBusy, setLayerUploadBusy] = useState(false);
     const [polygonSettingsLayer, setPolygonSettingsLayer] = useState<MapLayer | null>(null);
     const [newLayer, setNewLayer] = useState({
         name: '',
@@ -2642,15 +2658,6 @@ export default function AdminConsole() {
                                                     leftIcon={<Plus className="w-4 h-4" />}
                                                 >
                                                     Add Layer
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="secondary"
-                                                    className="shrink-0"
-                                                    onClick={() => setPolygonUploadOpen(true)}
-                                                    leftIcon={<Plus className="w-4 h-4" />}
-                                                >
-                                                    Add Polygon Layer
                                                 </Button>
                                                 </div>
                                     </div>
@@ -4678,6 +4685,26 @@ export default function AdminConsole() {
                                     </button>
                                 </div>
 
+                                {/* Reuse an agency already set up on another category, or
+                                    import a ready-made set. Always a copy -- see
+                                    AgencyReusePicker -- so categories never share one. */}
+                                <AgencyReusePicker
+                                    services={services}
+                                    currentServiceId={editingService?.id}
+                                    currentAgencies={serviceRouting.routing_config.third_party_contacts || []}
+                                    onApply={(added) => setServiceRouting(p => {
+                                        const updated = [...(p.routing_config.third_party_contacts || []), ...added];
+                                        return {
+                                            ...p,
+                                            routing_config: {
+                                                ...p.routing_config,
+                                                third_party_contacts: updated,
+                                                exclusion_list: combinedRoadList(updated) || p.routing_config.exclusion_list,
+                                            },
+                                        };
+                                    })}
+                                />
+
                                 {(serviceRouting.routing_config.third_party_contacts || []).map((agency: any, idx: number) => {
                                     return (
                                         <div key={idx} className="p-5 rounded-3xl bg-white/[0.04] border border-white/15 space-y-4 shadow-xl">
@@ -4794,6 +4821,29 @@ export default function AdminConsole() {
                                                         }));
                                                     }}
                                                 />
+                                                <p className="text-[11px] text-white/45 mt-1.5">
+                                                    Only part of a road? Write it as &ldquo;Oak Road (Elm Street to Route 10)&rdquo;.
+                                                </p>
+                                                {(() => {
+                                                    const mine = roadLimits.filter(l => (l.agency || '') === (agency.name || 'Another agency'));
+                                                    if (!mine.length) return null;
+                                                    return (
+                                                        <ul className="mt-2 space-y-1.5" aria-label={`Road limits for ${agency.name || 'this agency'}`}>
+                                                            {mine.map(limit => (
+                                                                <li key={limit.entry} className="flex items-start gap-2 text-xs">
+                                                                    <Chip tone={limit.resolved ? 'success' : 'warning'}>
+                                                                        {limit.resolved ? 'Limits found' : 'Whole road'}
+                                                                    </Chip>
+                                                                    <span className={limit.resolved ? 'text-white/70' : 'text-amber-200'}>
+                                                                        {limit.resolved
+                                                                            ? limit.message
+                                                                            : `${limit.entry}: Limits not found on the map, so the whole road is treated as theirs.`}
+                                                                    </span>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                     );
@@ -4973,17 +5023,7 @@ export default function AdminConsole() {
                 </form>
             </Modal>
 
-            {/* Polygon (context) layers: chunked upload and settings */}
-            <PolygonLayerUploadModal
-                isOpen={polygonUploadOpen}
-                onClose={() => setPolygonUploadOpen(false)}
-                onCreated={(layer) => {
-                    setPolygonUploadOpen(false);
-                    loadTabData();
-                    // Straight on to choosing what staff see: nothing is shown until then.
-                    setPolygonSettingsLayer(layer);
-                }}
-            />
+            {/* Polygon (context) layer settings: the step after a polygon upload */}
             <ContextLayerSettingsModal
                 layer={polygonSettingsLayer}
                 isOpen={!!polygonSettingsLayer}
@@ -4997,9 +5037,28 @@ export default function AdminConsole() {
             {/* Layer Upload/Edit Modal */}
             <Modal
                 isOpen={showLayerModal}
-                onClose={() => setShowLayerModal(false)}
+                onClose={() => { if (!layerUploadBusy) setShowLayerModal(false); }}
                 title={editingLayer ? `Edit Layer: ${editingLayer.name}` : 'Add New Layer'}
             >
+                {/* One way in for every kind of layer. The type is chosen first,
+                    and decides the rest of the dialog: points are drawn in the
+                    browser and saved whole; polygons (parcels, zoning, wards) can
+                    be far larger, so they go up in parts and are built on the
+                    server, then continue straight to choosing what staff see. */}
+                <AddLayerTypeStep
+                    editing={!!editingLayer}
+                    layerType={newLayer.layer_type as NewLayerType}
+                    onTypeChange={(type) => setNewLayer(p => ({ ...p, layer_type: type }))}
+                    onCancel={() => setShowLayerModal(false)}
+                    onBusyChange={setLayerUploadBusy}
+                    onPolygonCreated={(layer) => {
+                        setLayerUploadBusy(false);
+                        setShowLayerModal(false);
+                        loadTabData();
+                        // Straight on to choosing what staff see: nothing is shown until then.
+                        setPolygonSettingsLayer(layer);
+                    }}
+                >
                 <form
                     onSubmit={async (e) => {
                         e.preventDefault();
@@ -5065,27 +5124,6 @@ export default function AdminConsole() {
                         value={newLayer.description}
                         onChange={(e) => setNewLayer(p => ({ ...p, description: e.target.value }))}
                     />
-
-                    {/* Layer Type Selection - Must choose first */}
-                    <div className="space-y-2">
-                        <label className="block text-sm font-medium text-white/70">
-                            Layer Type <span className="text-red-400">*</span>
-                        </label>
-                        <div className="grid grid-cols-1 gap-3">
-                            <button
-                                type="button"
-                                onClick={() => setNewLayer(p => ({ ...p, layer_type: 'point' }))}
-                                className={`p-4 rounded-lg border-2 transition-all ${newLayer.layer_type === 'point'
-                                    ? 'border-primary-500 bg-primary-500/20 text-white'
-                                    : 'border-white/20 bg-white/5 text-white/60 hover:border-white/40'
-                                    }`}
-                            >
-                                <MapPin className="w-6 h-6 mx-auto mb-1" aria-hidden="true" />
-                                <div className="font-semibold">Points</div>
-                                <div className="text-xs opacity-60">Individual locations (trees, lights, signs, etc.)</div>
-                            </button>
-                        </div>
-                    </div>
 
                     {/* Only show rest of form after layer type is selected */}
                     {newLayer.layer_type && (
@@ -5367,6 +5405,7 @@ export default function AdminConsole() {
                         </>
                     )}
                 </form>
+                </AddLayerTypeStep>
             </Modal>
 
             {/* Password management is handled by the town's identity provider */}

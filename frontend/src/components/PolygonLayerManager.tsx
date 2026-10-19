@@ -64,22 +64,25 @@ function useUpload() {
     return { progress, error, setError, run };
 }
 
-interface UploadProps {
-    isOpen: boolean;
-    onClose: () => void;
+interface UploadFormProps {
+    onCancel: () => void;
     onCreated: (layer: MapLayer) => void;
+    /** Told when an upload starts and ends, so a host dialog can refuse to close mid-upload. */
+    onBusyChange?: (busy: boolean) => void;
 }
 
-export function PolygonLayerUploadModal({ isOpen, onClose, onCreated }: UploadProps) {
+/**
+ * The polygon upload itself: name, file, chunked upload, import. Rendered
+ * inside the console's one "Add Layer" dialog once Polygons is chosen, and by
+ * PolygonLayerUploadModal on its own.
+ */
+export function PolygonLayerUploadForm({ onCancel, onCreated, onBusyChange }: UploadFormProps) {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const { progress, error, setError, run } = useUpload();
 
-    useEffect(() => {
-        if (isOpen) { setName(''); setDescription(''); setFile(null); setError(null); }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [isOpen]);
+    useEffect(() => { onBusyChange?.(!!progress); }, [progress, onBusyChange]);
 
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -94,37 +97,52 @@ export function PolygonLayerUploadModal({ isOpen, onClose, onCreated }: UploadPr
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={() => { if (!progress) onClose(); }} title="Add polygon layer">
-            <form onSubmit={submit} className="space-y-4">
-                <p className="text-sm text-white/60">
-                    Tax parcels, zoning, wards or any other polygons. Each new report records which
-                    polygon it falls in, and staff see that on the report and the work order.
+        <form onSubmit={submit} className="space-y-4">
+            <p className="text-sm text-white/60">
+                Tax parcels, zoning, wards or any other polygons. Each new report records which
+                polygon it falls in, and staff see that on the report and the work order.
+            </p>
+            <Input label="Layer name" placeholder="e.g., Tax Parcels" value={name}
+                onChange={e => setName(e.target.value)} required maxLength={100} />
+            <Input label="Description (optional)" value={description}
+                onChange={e => setDescription(e.target.value)} maxLength={500} />
+            <div>
+                <label htmlFor="polygon-layer-file" className="block text-sm font-medium text-white/70 mb-2">GeoJSON file</label>
+                <input
+                    id="polygon-layer-file"
+                    type="file"
+                    accept=".geojson,.json,application/geo+json,application/json"
+                    onChange={e => setFile(e.target.files?.[0] || null)}
+                    className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
+                />
+                <p className="text-xs text-white/40 mt-1">
+                    A FeatureCollection of Polygon / MultiPolygon features in WGS 84 (EPSG:4326),
+                    up to 100 MB and 200,000 features. Next you choose which field identifies a
+                    polygon and what staff may see; nothing is shown until then.
                 </p>
-                <Input label="Layer name" placeholder="e.g., Tax Parcels" value={name}
-                    onChange={e => setName(e.target.value)} required maxLength={100} />
-                <Input label="Description (optional)" value={description}
-                    onChange={e => setDescription(e.target.value)} maxLength={500} />
-                <div>
-                    <label htmlFor="polygon-layer-file" className="block text-sm font-medium text-white/70 mb-2">GeoJSON file</label>
-                    <input
-                        id="polygon-layer-file"
-                        type="file"
-                        accept=".geojson,.json,application/geo+json,application/json"
-                        onChange={e => setFile(e.target.files?.[0] || null)}
-                        className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
-                    />
-                    <p className="text-xs text-white/40 mt-1">
-                        A FeatureCollection of Polygon / MultiPolygon features in WGS 84 (EPSG:4326),
-                        up to 100 MB and 200,000 features.
-                    </p>
-                </div>
-                {progress && <p role="status" className="text-sm text-sky-300">{progress}</p>}
-                {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-                <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
-                    <Button type="button" variant="ghost" onClick={onClose} disabled={!!progress}>Cancel</Button>
-                    <Button type="submit" isLoading={!!progress} leftIcon={<Upload className="w-4 h-4" />}>Upload and create</Button>
-                </div>
-            </form>
+            </div>
+            {progress && <p role="status" className="text-sm text-sky-300">{progress}</p>}
+            {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+            <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
+                <Button type="button" variant="ghost" onClick={onCancel} disabled={!!progress}>Cancel</Button>
+                <Button type="submit" isLoading={!!progress} leftIcon={<Upload className="w-4 h-4" />}>Upload and create</Button>
+            </div>
+        </form>
+    );
+}
+
+interface UploadProps {
+    isOpen: boolean;
+    onClose: () => void;
+    onCreated: (layer: MapLayer) => void;
+}
+
+export function PolygonLayerUploadModal({ isOpen, onClose, onCreated }: UploadProps) {
+    const [busy, setBusy] = useState(false);
+    return (
+        <Modal isOpen={isOpen} onClose={() => { if (!busy) onClose(); }} title="Add polygon layer">
+            {/* Remounted on every open, so it starts empty each time. */}
+            {isOpen && <PolygonLayerUploadForm onCancel={onClose} onCreated={onCreated} onBusyChange={setBusy} />}
         </Modal>
     );
 }

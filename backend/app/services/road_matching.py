@@ -62,19 +62,66 @@ _DIRECTIONS = {
     "southwest": "sw", "sw": "sw",
 }
 
-# Route designators -> canonical prefix. Order matters only for readability;
-# matching is done on the whole normalized token sequence.
+# Route designators -> canonical prefix. The third element says whether the
+# designator names its system. A bare "Route 500" does not: in New Jersey that
+# is as likely to be County Route 500 or US 9 as a state highway, and residents,
+# clerks and road publishers all write it that way.
 _ROUTE_PATTERNS = [
-    (re.compile(r"\b(?:county\s+(?:route|road|rte|rd)|cr|co\s+rd)[\s.\-#]*(\d+[a-z]?)\b"), "CR"),
-    (re.compile(r"\b(?:interstate|i)[\s.\-#]*(\d+[a-z]?)\b"), "I"),
-    (re.compile(r"\b(?:us\s*(?:route|highway|hwy|rte)?|u\.s\.)[\s.\-#]*(\d+[a-z]?)\b"), "US"),
-    (re.compile(r"\b(?:state\s+(?:route|highway|hwy|rte)|nj|njsh|route|rte|rt|sr)[\s.\-#]*(\d+[a-z]?)\b"), "SR"),
+    (re.compile(r"\b(?:county\s+(?:route|road|rte|rd)|cr|co\s+rd)[\s.\-#]*(\d+[a-z]?)\b"), "CR", False),
+    (re.compile(r"\b(?:interstate|i)[\s.\-#]*(\d+[a-z]?)\b"), "I", False),
+    (re.compile(r"\b(?:us\s*(?:route|highway|hwy|rte)?|u\.s\.)[\s.\-#]*(\d+[a-z]?)\b"), "US", False),
+    (re.compile(r"\b(?:state\s+(?:route|highway|hwy|rte)|nj|njsh|sr)[\s.\-#]*(\d+[a-z]?)\b"), "SR", False),
+    (re.compile(r"\b(?:route|rte|rt)[\s.\-#]*(\d+[a-z]?)\b"), "SR", True),
 ]
+
+# A word after the number that makes it a different road: "Route 501 Spur" is
+# not Route 501, and must not claim it.
+_ROUTE_QUALIFIERS = {
+    "spur": "SPUR", "alt": "ALT", "alternate": "ALT", "bus": "BUS",
+    "business": "BUS", "truck": "TRUCK", "connector": "CONN", "conn": "CONN",
+}
+
+
+@dataclass(frozen=True)
+class _RouteParts:
+    system: str
+    number: str
+    bare: bool
+
+    @property
+    def key(self) -> str:
+        return f"{self.system}-{self.number}"
 
 
 def _tokens(value: str) -> List[str]:
     cleaned = re.sub(r"[^\w\s]", " ", value.lower())
     return [t for t in cleaned.split() if t]
+
+
+def _route_parts(value: str) -> Optional[_RouteParts]:
+    """The first numbered route named in `value`, or None.
+
+    First by position, not by pattern order: a ramp named "FR NJ 10 EB to US 1
+    NB" leaves Route 10, and used to be read as US 1 because the US pattern was
+    tried first.
+    """
+    if not value:
+        return None
+    lowered = re.sub(r"[^\w\s.\-#]", " ", value.lower())
+    best = None
+    for order, (pattern, prefix, bare) in enumerate(_ROUTE_PATTERNS):
+        match = pattern.search(lowered)
+        if match and (best is None or (match.start(), order) < (best[0].start(), best[1])):
+            best = (match, order, prefix, bare)
+    if best is None:
+        return None
+    match, _, prefix, bare = best
+    number = match.group(1).upper()
+    following = lowered[match.end():].split()
+    word = following[0].strip(".") if following else ""
+    if word in _ROUTE_QUALIFIERS:
+        number = f"{number}-{_ROUTE_QUALIFIERS[word]}"
+    return _RouteParts(prefix, number, bare)
 
 
 def extract_route_key(value: str) -> Optional[str]:
@@ -83,16 +130,89 @@ def extract_route_key(value: str) -> Optional[str]:
     "County Route 516", "CR-516" and "Co Rd 516" all yield "CR-516". The state
     designator is normalized to SR rather than the state's own abbreviation, so
     "NJ 35" and "Route 35" compare equal -- a clerk in one town writes one and
-    the geocoder returns the other.
+    the geocoder returns the other. A qualifier stays part of the key:
+    "Route 501 Spur" is "SR-501-SPUR", a different road from Route 501.
     """
-    if not value:
+    parts = _route_parts(value)
+    return parts.key if parts else None
+
+
+def routes_match(configured: str, detected: str) -> Optional[bool]:
+    """Compare two names as numbered routes. None when either is not one.
+
+    Same number and qualifier, and either the same system or one side written
+    with a bare "Route": "Route 9" is US 9 when the data calls it "US Highway
+    9", and "Route 500" is County Route 500. Two explicit, different systems
+    ("CR 35" and "NJ 35") stay different roads.
+    """
+    a, b = _route_parts(configured), _route_parts(detected)
+    if not a or not b:
         return None
-    lowered = re.sub(r"[^\w\s.\-#]", " ", value.lower())
-    for pattern, prefix in _ROUTE_PATTERNS:
-        match = pattern.search(lowered)
-        if match:
-            return f"{prefix}-{match.group(1).upper()}"
-    return None
+    if a.number != b.number:
+        return False
+    return a.system == b.system or a.bare or b.bare
+
+
+# ---- limits on a road entry ------------------------------------------------
+
+# "Oak Road (Elm Street to Route 10)". Whitespace is required around the
+# separator so a hyphenated name inside the parentheses survives.
+_LIMITS_RE = re.compile(
+    r"^\s*(?P<name>[^()]+?)\s*\(\s*(?:from\s+|between\s+)?(?P<a>[^()]+?)"
+    r"\s+(?:to|and|thru|through|-|–|—)\s+(?P<b>[^()]+?)\s*\)\s*$",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True)
+class RoadEntry:
+    """One road on an agency's list, optionally limited to a stretch of it.
+
+    Stored in the routing config as text, "Name (From to To)", so every reader
+    of the config and the admin road picker keep working with plain strings.
+    A dict ``{name, from_street, to_street}`` is accepted too and read as that
+    text.
+    """
+
+    name: str
+    from_street: Optional[str] = None
+    to_street: Optional[str] = None
+
+    @property
+    def has_limits(self) -> bool:
+        return bool(self.from_street and self.to_street)
+
+    @property
+    def label(self) -> str:
+        if self.has_limits:
+            return f"{self.name} ({self.from_street} to {self.to_street})"
+        return self.name
+
+
+def parse_road_entry(value: Any) -> Optional[RoadEntry]:
+    """Read a configured road, with its limits if it has them. None if empty."""
+    if isinstance(value, dict):
+        name = str(value.get("name") or "").strip()
+        if not name:
+            return None
+        start = str(value.get("from_street") or value.get("from") or "").strip() or None
+        end = str(value.get("to_street") or value.get("to") or "").strip() or None
+        if not (start and end):
+            start = end = None  # one limit alone does not bound anything
+        return RoadEntry(name, start, end)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    match = _LIMITS_RE.match(text)
+    if match:
+        return RoadEntry(match.group("name").strip(), match.group("a").strip(), match.group("b").strip())
+    return RoadEntry(text)
+
+
+def road_entry_name(value: Any) -> str:
+    """The road itself, without any limits -- what name matching compares."""
+    entry = parse_road_entry(value)
+    return entry.name if entry else ""
 
 
 def normalize_road_name(value: str) -> str:
@@ -104,6 +224,11 @@ def normalize_road_name(value: str) -> str:
     """
     if not value:
         return ""
+    # "Oak Rd (Elm St to Route 10)" is Oak Rd; the limits are not
+    # part of its name.
+    match = _LIMITS_RE.match(value)
+    if match:
+        value = match.group("name")
     tokens = _tokens(value)
     if not tokens:
         return ""
@@ -134,11 +259,15 @@ def road_matches(configured: str, detected: str) -> bool:
     """
     if not configured or not detected:
         return False
+    # Limits say which stretch, not which road. Matching the whole entry read
+    # "Oak Rd (Elm St to Route 10)" as Route 10.
+    configured = road_entry_name(configured)
+    if not configured:
+        return False
 
-    config_route = extract_route_key(configured)
-    detected_route = extract_route_key(detected)
-    if config_route and detected_route:
-        return config_route == detected_route
+    same_route = routes_match(configured, detected)
+    if same_route is not None:
+        return same_route
     # One is a numbered route and the other is not: fall through to name
     # comparison rather than returning False, since a road can be known by both
     # a number and a name and the lists may use either.
@@ -172,7 +301,16 @@ class JurisdictionMatch:
 
 def _as_list(value: Any) -> List[str]:
     if isinstance(value, list):
-        return [str(v) for v in value if str(v).strip()]
+        out: List[str] = []
+        for v in value:
+            if isinstance(v, dict):
+                # {name, from_street, to_street} -> "Name (From to To)".
+                entry = parse_road_entry(v)
+                if entry:
+                    out.append(entry.label)
+            elif str(v).strip():
+                out.append(str(v).strip())
+        return out
     if isinstance(value, str):
         return [part.strip() for part in value.split(",") if part.strip()]
     return []

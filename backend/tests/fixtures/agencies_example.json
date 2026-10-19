@@ -1,0 +1,23 @@
+{
+  "format": "pinpoint311.agencies",
+  "version": 1,
+  "title": "Springfield: county and state roads (made-up example)",
+  "agencies": [
+    {
+      "name": "County Road Department",
+      "phone": "555-0300",
+      "email": "",
+      "url": "",
+      "message": "",
+      "roads": [
+        "Example Road A (First Street to Second Street)",
+        "Example Road B",
+        {"name": "Example Road C", "from_street": "First Street", "to_street": "Route 10"}
+      ]
+    },
+    {
+      "name": "State Highway Agency",
+      "roads": ["Route 10", "Route 20 Spur"]
+    }
+  ]
+}
