@@ -1,4 +1,5 @@
 import type { CustomQuestion } from '../types';
+import { Checkbox } from './ui';
 
 /**
  * The questions a municipality adds to a category, as form fields.
@@ -111,24 +112,28 @@ export default function CustomQuestionFields({
                                                 : 'bg-white/5 border-white/20 hover:border-white/40'}`
                                             : ''}`}
                                     >
-                                        <input
-                                            type={multi ? 'checkbox' : 'radio'}
-                                            name={multi ? undefined : `${namePrefix}${q.id}`}
-                                            value={opt}
-                                            checked={checked}
-                                            onChange={(e) => {
-                                                if (!multi) {
-                                                    onChange(q.label, opt);
-                                                    return;
-                                                }
-                                                const current = (answers[q.label] as string[]) || [];
-                                                const updated = e.target.checked
-                                                    ? [...current, opt]
-                                                    : current.filter(v => v !== opt);
-                                                onChange(q.label, updated);
-                                            }}
-                                            className={`w-4 h-4 accent-primary-500 ${multi ? 'rounded' : ''}`}
-                                        />
+                                        {multi ? (
+                                            <Checkbox
+                                                value={opt}
+                                                checked={checked}
+                                                onChange={(e) => {
+                                                    const current = (answers[q.label] as string[]) || [];
+                                                    const updated = e.target.checked
+                                                        ? [...current, opt]
+                                                        : current.filter(v => v !== opt);
+                                                    onChange(q.label, updated);
+                                                }}
+                                            />
+                                        ) : (
+                                            <input
+                                                type="radio"
+                                                name={`${namePrefix}${q.id}`}
+                                                value={opt}
+                                                checked={checked}
+                                                onChange={() => onChange(q.label, opt)}
+                                                className="w-4 h-4 accent-primary-500"
+                                            />
+                                        )}
                                         <span>{opt}</span>
                                     </label>
                                 );

@@ -9,3 +9,5 @@ export type { ChipTone, BadgeVariant } from './Badge';
 export { AccordionSection, AccordionGroup } from './Accordion';
 export { CollapsibleSection } from './CollapsibleSection';
 export { Tooltip } from './Tooltip';
+export { Checkbox, CheckboxCard } from './Checkbox';
+export type { CheckboxProps, CheckboxCardProps, CheckboxSize } from './Checkbox';

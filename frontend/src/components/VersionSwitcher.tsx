@@ -10,7 +10,7 @@ import {
     type UpgradeAction, type UpgradeRequestRecord, type UpgradeStatus,
 } from '../services/upgradeTypes';
 import { useOptionalAnnounce } from './liveAnnounce';
-import { AccordionSection, Chip, Modal, statusTone, type ChipTone } from './ui';
+import { AccordionSection, Checkbox, Chip, Modal, statusTone, type ChipTone } from './ui';
 import { humanize } from '../utils/humanize';
 
 /**
@@ -556,8 +556,8 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                             {form.action === 'upgrade' && (
                                 <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3 space-y-1">
                                     <div className="flex items-start gap-2">
-                                        <input id={destructiveId} type="checkbox" checked={allowDestructive}
-                                            onChange={e => setAllowDestructive(e.target.checked)} className="mt-0.5" />
+                                        <Checkbox id={destructiveId} checked={allowDestructive}
+                                            onChange={e => setAllowDestructive(e.target.checked)} size="sm" />
                                         <label htmlFor={destructiveId} className="text-xs font-medium">Allow a destructive migration</label>
                                     </div>
                                     <p className="text-xs text-red-200/90">
@@ -606,9 +606,9 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                         </section>
                     )}
 
-                    <label className="flex items-start gap-2 text-xs text-white/70">
-                        <input type="checkbox" checked={twoPerson} disabled={busy !== null}
-                            onChange={e => toggleTwoPerson(e.target.checked)} className="mt-0.5" />
+                    <label className="flex !items-start gap-2 text-xs text-white/70">
+                        <Checkbox checked={twoPerson} disabled={busy !== null}
+                            onChange={e => toggleTwoPerson(e.target.checked)} size="sm" />
                         <span>Require a second admin to approve upgrades and rollbacks (recommended). Restarts need one admin. Changes to this setting are audited.</span>
                     </label>
                 </>

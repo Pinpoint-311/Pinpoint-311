@@ -6,6 +6,7 @@ import { useTranslation } from '../context/TranslationContext';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { BANDS, bandFor, bandLabel } from './priority';
 import { humanize } from '../utils/humanize';
+import { Checkbox } from './ui';
 import { useContextLayerOutlines } from './useContextLayerOutlines';
 import {
     GeoJsonLayerHandle,
@@ -918,12 +919,9 @@ export default function StaffDashboardMap({
                     >
                         {Object.entries(statusFilters).map(([status, enabled]) => (
                             <label key={status} className="flex items-center gap-3 cursor-pointer group">
-                                <input
-                                    type="checkbox"
+                                <Checkbox
                                     checked={enabled}
-                                    onChange={(e) => setStatusFilters(prev => ({ ...prev, [status]: e.target.checked }))}
-                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                />
+                                    onChange={(e) => setStatusFilters(prev => ({ ...prev, [status]: e.target.checked }))} />
                                 <StatusSwatch status={status} />
                                 <span className="text-sm text-white/80 group-hover:text-white transition-colors">
                                     {statusLabel(status)}
@@ -958,12 +956,9 @@ export default function StaffDashboardMap({
                         </div>
                         {services.map(service => (
                             <label key={service.service_code} className="flex items-center gap-3 cursor-pointer group">
-                                <input
-                                    type="checkbox"
+                                <Checkbox
                                     checked={categoryFilters[service.service_code] ?? true}
-                                    onChange={(e) => setCategoryFilters(prev => ({ ...prev, [service.service_code]: e.target.checked }))}
-                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                />
+                                    onChange={(e) => setCategoryFilters(prev => ({ ...prev, [service.service_code]: e.target.checked }))} />
                                 <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
                                     {service.service_name}
                                 </span>
@@ -997,24 +992,18 @@ export default function StaffDashboardMap({
                                 </button>
                             </div>
                             <label className="flex items-center gap-3 cursor-pointer group">
-                                <input
-                                    type="checkbox"
+                                <Checkbox
                                     checked={departmentFilters[0] ?? true}
-                                    onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [0]: e.target.checked }))}
-                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                />
+                                    onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [0]: e.target.checked }))} />
                                 <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
                                     Unassigned
                                 </span>
                             </label>
                             {departments.map(dept => (
                                 <label key={dept.id} className="flex items-center gap-3 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={departmentFilters[dept.id] ?? true}
-                                        onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [dept.id]: e.target.checked }))}
-                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                    />
+                                        onChange={(e) => setDepartmentFilters(prev => ({ ...prev, [dept.id]: e.target.checked }))} />
                                     <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
                                         {dept.name}
                                     </span>
@@ -1049,24 +1038,18 @@ export default function StaffDashboardMap({
                                 </button>
                             </div>
                             <label className="flex items-center gap-3 cursor-pointer group">
-                                <input
-                                    type="checkbox"
+                                <Checkbox
                                     checked={staffFilters[''] ?? true}
-                                    onChange={(e) => setStaffFilters(prev => ({ ...prev, ['']: e.target.checked }))}
-                                    className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                />
+                                    onChange={(e) => setStaffFilters(prev => ({ ...prev, ['']: e.target.checked }))} />
                                 <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors italic">
                                     {"Unassigned"}
                                 </span>
                             </label>
                             {users.filter(u => u.role === 'staff' || u.role === 'admin').map(user => (
                                 <label key={user.username} className="flex items-center gap-3 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={staffFilters[user.username] ?? true}
-                                        onChange={(e) => setStaffFilters(prev => ({ ...prev, [user.username]: e.target.checked }))}
-                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                    />
+                                        onChange={(e) => setStaffFilters(prev => ({ ...prev, [user.username]: e.target.checked }))} />
                                     <span className="text-sm text-white/70 truncate group-hover:text-white transition-colors">
                                         {user.full_name || user.username}
                                     </span>
@@ -1086,12 +1069,9 @@ export default function StaffDashboardMap({
                         >
                             {BANDS.map(b => ({ value: b.level, label: bandLabel(b.level), color: b.hex })).map(option => (
                                 <label key={option.value} className="flex items-center gap-3 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={priorityFilters[option.value]}
-                                        onChange={(e) => setPriorityFilters(prev => ({ ...prev, [option.value]: e.target.checked }))}
-                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                    />
+                                        onChange={(e) => setPriorityFilters(prev => ({ ...prev, [option.value]: e.target.checked }))} />
                                     <span
                                         className="w-4 h-4 rounded-full shadow-lg"
                                         style={{ backgroundColor: option.color }}
@@ -1132,12 +1112,9 @@ export default function StaffDashboardMap({
                             </div>
                             {mapLayers.map(layer => (
                                 <label key={layer.id} className="flex items-center gap-3 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={layerFilters[layer.id] ?? assetLayersDefault}
-                                        onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))}
-                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                    />
+                                        onChange={(e) => setLayerFilters(prev => ({ ...prev, [layer.id]: e.target.checked }))} />
                                     <span
                                         className="w-4 h-4 rounded border-2"
                                         style={{
@@ -1155,12 +1132,9 @@ export default function StaffDashboardMap({
                             {/* Context layers (parcels, zones): outlines fetched per viewport */}
                             {contextLayers.map(layer => (
                                 <label key={`ctx-${layer.id}`} className="flex items-center gap-3 cursor-pointer group">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={contextVisible[layer.id] ?? true}
-                                        onChange={(e) => setContextVisible(prev => ({ ...prev, [layer.id]: e.target.checked }))}
-                                        className="w-5 h-5 rounded border-2 border-white/20 bg-transparent text-primary-500 focus:ring-primary-500 focus:ring-offset-0"
-                                    />
+                                        onChange={(e) => setContextVisible(prev => ({ ...prev, [layer.id]: e.target.checked }))} />
                                     <span
                                         className="w-4 h-4 rounded border-2"
                                         style={{ borderColor: layer.stroke_color }}

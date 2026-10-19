@@ -3,7 +3,7 @@ import {
     AlertTriangle, Check, Database, Eye, FileUp, History, Layers, ListChecks, MapPin, Search, Tag, Target, Upload,
     type LucideIcon,
 } from 'lucide-react';
-import { Button, Chip, Input, Modal, Select } from './ui';
+import { Button, Checkbox, Chip, Input, Modal, Select } from './ui';
 import { api, MapLayer } from '../services/api';
 import type { ServiceDefinition } from '../types';
 import { useDialog } from './DialogProvider';
@@ -406,8 +406,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                                         return (
                                             <li key={field}>
                                                 <label className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-sm cursor-pointer transition-colors ${on ? 'bg-primary-500/15 text-white' : 'text-white/85 hover:bg-white/10'}`}>
-                                                    <input type="checkbox" checked={on} onChange={e => toggleStaff(field, e.target.checked)}
-                                                        className="w-4 h-4 shrink-0 rounded border-white/40 bg-white/10 text-primary-500 focus:ring-primary-500 focus:ring-offset-0" />
+                                                    <Checkbox checked={on} onChange={e => toggleStaff(field, e.target.checked)} />
                                                     <span className="min-w-0 flex-1 break-all">{field}</span>
                                                     {flags[field] === 'owner' && <Chip tone="danger">Owner details</Chip>}
                                                     {flags[field] === 'maybe' && <Chip tone="warning">May be personal</Chip>}

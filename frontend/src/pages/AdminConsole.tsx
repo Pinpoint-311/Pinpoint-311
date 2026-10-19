@@ -55,7 +55,7 @@ import {
     MapPinOff,
     UserSearch,
 } from 'lucide-react';
-import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge } from '../components/ui';
+import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge, Checkbox } from '../components/ui';
 import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -81,6 +81,7 @@ import SignInProviderNote from '../components/SignInProviderNote';
 import { useSignInProvider } from '../hooks/useSignInProvider';
 import BackupRestore from '../components/BackupRestore';
 import VersionSwitcher from '../components/VersionSwitcher';
+import RetentionPolicyEditor from '../components/RetentionPolicyEditor';
 import StayInformedHost from '../components/StayInformed';
 import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
 
@@ -1013,8 +1014,6 @@ export default function AdminConsole() {
        there is no schedule to pre-fill it from, and a pre-filled number here
        is a destruction date nobody chose. */
     const [retentionDays, setRetentionDays] = useState<string>('');
-    const [isSavingRetention, setIsSavingRetention] = useState(false);
-    const [isRunningRetention, setIsRunningRetention] = useState(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [deletedRequests, setDeletedRequests] = useState<any[]>([]);
 
@@ -2973,360 +2972,58 @@ export default function AdminConsole() {
                                     icon={Clock}
                                     iconClassName="text-amber-400"
                                 >
-                                    {/* No state picker, and no default period. It looked up a
-                                        retention period in a table of all 51 US jurisdictions
-                                        that nobody had checked — 41 of them five years, each
-                                        citing that state's records authority as its source,
-                                        which is what made it look researched. Both answers
-                                        below come from the town. */}
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2" htmlFor="retention-days">
-                                                Keep closed requests for (days)
-                                            </label>
-                                            <input
-                                                id="retention-days"
-                                                type="number"
-                                                value={retentionDays}
-                                                onChange={(e) => setRetentionDays(e.target.value)}
-                                                placeholder="e.g. 2555"
-                                                min="1"
-                                                max="36500"
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-white/40"
-                                            />
-                                            {/* Shown in years as it is typed. A schedule states
-                                                "7 years" and this field takes days, so 7 typed
-                                                here is a week — and a week is a policy that
-                                                destroys almost everything on its first run. */}
-                                            <p className="text-white/50 text-xs mt-1">
-                                                {retentionDays && parseInt(retentionDays) > 0
-                                                    ? `${formatYears(parseInt(retentionDays))} — records are cleared once they have been closed this long.`
-                                                    : 'Not set, so nothing is cleared. Enter days: 5 years is 1825, 7 years is 2555.'}
-                                            </p>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2">Archival Mode</label>
-                                            <select
-                                                value={selectedMode}
-                                                onChange={(e) => setSelectedMode(e.target.value as 'redact' | 'purge')}
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                                                aria-label="Select archival mode"
-                                            >
-                                                {/* Not "anonymise". Anonymising means removing what
-                                                    ties data to a person; this also clears the
-                                                    description and the staff notes, which is
-                                                    redaction. The two are not interchangeable when
-                                                    the difference is what a town tells a judge. */}
-                                                <option value="redact" className="bg-slate-800">Redact — clear the fields you choose, keep the record</option>
-                                                {/* Not deletion. It could never have worked --
-                                                    NOT NULL foreign keys from the audit log and the
-                                                    comments, with no cascade -- and making it work
-                                                    meant deleting audit rows that form the
-                                                    tamper-evident chain. Clearing every field
-                                                    removes the personal data and leaves a row that
-                                                    still counts. */}
-                                                <option value="purge" className="bg-slate-800">Purge — clear every field, keep the row for counting</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    {/* What a run actually clears.
-                                        This was fixed in code -- names, email, phone, description,
-                                        staff notes and photos, always -- and when it became a
-                                        catalog those same seven arrived pre-ticked. Inherited that
-                                        way they were never anybody's decision, and the decision
-                                        they stood in for is which of a resident's details this
-                                        town destroys permanently. Nothing is ticked now. */}
-                                    {selectedMode !== 'purge' && scrubFields && (
-                                        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-                                            <h4 className="font-semibold text-white">What gets cleared</h4>
-                                            <p className="text-white/55 text-xs mt-1 mb-4">
-                                                The record stays and still counts in your statistics. Only the
-                                                fields you check are permanently cleared.
-                                            </p>
-                                            {/* auto-rows-fr plus h-full: every card in a row is
-                                                the height of the tallest, so a two-line
-                                                description does not leave the card beside it
-                                                floating in a short box. */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 auto-rows-fr">
-                                                {scrubFields.map(field => (
-                                                    <label
-                                                        key={field.id}
-                                                        className={`group flex h-full items-start gap-3 rounded-xl border p-3.5 cursor-pointer transition-colors ${field.selected
-                                                            ? 'bg-amber-500/10 border-amber-400/30'
-                                                            : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}
-                                                    >
-                                                        {/* Pinned to the title's cap height rather
-                                                            than centred on the text block. Centring
-                                                            put the box beside the title on a
-                                                            one-line card and beside the description
-                                                            on a two-line one, so no two rows lined
-                                                            up and the grid read as ragged. */}
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={field.selected}
-                                                            onChange={(e) => setScrubFields(prev => (prev || []).map(f =>
-                                                                f.id === field.id ? { ...f, selected: e.target.checked } : f))}
-                                                            className="mt-[3px] w-4 h-4 shrink-0 self-start accent-amber-400"
-                                                        />
-                                                        <span className="min-w-0 flex-1">
-                                                            <span className="block text-sm font-medium text-white/90 leading-5">{field.label}</span>
-                                                            <span className="block text-xs text-white/60 mt-1 leading-relaxed">{field.detail}</span>
-                                                        </span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                            {!scrubFields.some(f => f.selected) && (
-                                                <p className="text-amber-300 text-xs mt-3">
-                                                    Check at least one field. Retention does not run until you do.
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* What the two answers add up to, in a sentence, before
-                                        anything is saved. */}
-                                    {(() => {
-                                        const days = parseInt(retentionDays) || 0;
-                                        const chosen = (scrubFields || []).filter(f => f.selected);
-                                        const willRun = days > 0 && (selectedMode === 'purge' || chosen.length > 0);
-                                        return (
-                                            <div className={`mt-4 p-4 rounded-lg border ${willRun
-                                                ? 'bg-amber-500/10 border-amber-500/30'
-                                                : 'bg-white/[0.03] border-white/15'}`}>
-                                                <div className="flex items-start gap-3">
-                                                    <Clock className={`w-5 h-5 mt-0.5 ${willRun ? 'text-amber-400' : 'text-white/40'}`} aria-hidden="true" />
-                                                    <div>
-                                                        {willRun ? (
-                                                            <>
-                                                                <p className="text-amber-400 font-medium">
-                                                                    Closed requests are kept {formatYears(days)}, then{' '}
-                                                                    {selectedMode === 'purge'
-                                                                        ? 'every field on them is cleared'
-                                                                        : `${chosen.length} ${chosen.length === 1 ? 'field is' : 'fields are'} cleared`}.
-                                                                </p>
-                                                                {selectedMode !== 'purge' && (
-                                                                    <p className="text-white/70 text-sm mt-1">
-                                                                        Cleared: {chosen.map(f => f.label).join(', ')}.
-                                                                    </p>
-                                                                )}
-                                                                <p className="text-white/45 text-xs mt-1">
-                                                                    This period applies to every request. To keep a request
-                                                                    longer, place a legal hold on it.
-                                                                </p>
-                                                            </>
-                                                        ) : (
-                                                            <p className="text-white/70 text-sm">
-                                                                {days > 0
-                                                                    ? 'A period is set but no fields are checked, so retention will not run.'
-                                                                    : 'No period is set, so retention will not run and closed requests are kept indefinitely.'}
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-
-                                    <div className="flex gap-4 mt-6">
-                                        <Button
-                                            onClick={async () => {
-                                                setIsSavingRetention(true);
+                                    <RetentionPolicyEditor
+                                        days={retentionDays}
+                                        onDaysChange={setRetentionDays}
+                                        mode={selectedMode}
+                                        onModeChange={setSelectedMode}
+                                        fields={scrubFields}
+                                        onFieldsChange={setScrubFields}
+                                        saved={retentionPolicy ? {
+                                            days: retentionPolicy.retention_days || 0,
+                                            mode: retentionPolicy.mode === 'purge' ? 'purge' : 'redact',
+                                            fieldIds: (retentionPolicy.scrub_fields || []).filter(f => f.selected).map(f => f.id),
+                                        } : null}
+                                        onApplied={async (message) => {
+                                            await loadTabData();
+                                            setSaveMessage(message);
+                                            setTimeout(() => setSaveMessage(null), 8000);
+                                        }}
+                                        onRunStarted={(message) => {
+                                            setSaveMessage(message);
+                                            setTimeout(() => {
+                                                setSaveMessage(null);
+                                                loadTabData();
+                                            }, 3000);
+                                        }}
+                                        onError={reportError}
+                                        reviewing={previewLoading}
+                                        onReview={async () => {
+                                            setPreviewLoading(true);
+                                            setPreviewError(null);
+                                            try {
+                                                setRetentionPreview(await api.previewRetentionRun(50));
+                                            } catch (err) {
+                                                setRetentionPreview(null);
+                                                setPreviewError(err instanceof Error ? err.message : 'Could not load the preview');
+                                            } finally {
+                                                setPreviewLoading(false);
+                                            }
+                                        }}
+                                        exportOpen={exportOpen}
+                                        onExport={async () => {
+                                            setExportOpen(o => !o);
+                                            if (!exportFields.length) {
                                                 try {
-                                                    const saved = await api.updateRetentionPolicy({
-                                                        mode: selectedMode,
-                                                        scrub_fields: (scrubFields || [])
-                                                            .filter(f => f.selected).map(f => f.id),
-                                                        // 0 explicitly clears the period, which stops
-                                                        // retention running. Omitting it would leave a
-                                                        // previously-set period stuck with no way to remove it.
-                                                        retention_days: retentionDays ? parseInt(retentionDays) : 0
-                                                    });
-                                                    await loadTabData();
-                                                    /* The server decides whether this is a policy, and says
-                                                       so. "Updated successfully" over a save that left
-                                                       retention switched off is the quiet the warning above
-                                                       exists to break. */
-                                                    setSaveMessage(saved.configured
-                                                        ? 'Retention policy saved and now in force'
-                                                        : `Saved, but retention still will not run. ${saved.detail || ''}`);
-                                                    setTimeout(() => setSaveMessage(null), 8000);
+                                                    const { fields } = await api.getPublicRecordsFields();
+                                                    setExportFields(fields);
+                                                    setExportChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
                                                 } catch (err) {
-                                                    reportError('Could not apply the retention policy', err);
-                                                } finally {
-                                                    setIsSavingRetention(false);
+                                                    reportError('Could not load the export options', err);
                                                 }
-                                            }}
-                                            variant="secondary"
-                                            disabled={isSavingRetention}
-                                            className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-semibold border-amber-400/40 shadow-lg shadow-orange-900/30"
-                                        >
-                                            {isSavingRetention ? 'Saving...' : 'Apply Policy'}
-                                        </Button>
-
-                                        <Button
-                                            variant="secondary"
-                                            onClick={async () => {
-                                                /* Show the numbers, then ask.
-                                                 *
-                                                 * This button used to run
-                                                 * immediately. In delete mode
-                                                 * that permanently destroys
-                                                 * resident records, and the
-                                                 * response came back before
-                                                 * the task had touched
-                                                 * anything, so nothing on
-                                                 * screen could say what had
-                                                 * happened. */
-                                                setIsRunningRetention(true);
-                                                let plan;
-                                                try {
-                                                    plan = await api.previewRetentionRun();
-                                                } catch (err) {
-                                                    setIsRunningRetention(false);
-                                                    reportError('Could not work out what this would affect', err);
-                                                    return;
-                                                }
-                                                setIsRunningRetention(false);
-
-                                                if (plan.blocked === 'legal_hold') {
-                                                    await dialog.alert({
-                                                        title: 'Legal hold is on',
-                                                        message: 'Nothing is archived or deleted while the instance-wide legal hold is on. Lift the hold to run retention.',
-                                                        variant: 'info',
-                                                    });
-                                                    return;
-                                                }
-                                                /* Before the "nothing is due" branch below, which would
-                                                   otherwise report an empty run as a quiet success —
-                                                   "no records have passed the null-day retention
-                                                   period" is not the reason nothing would happen. */
-                                                if (plan.blocked === 'unconfigured') {
-                                                    await dialog.alert({
-                                                        title: 'No retention schedule is set',
-                                                        message: plan.detail
-                                                            || 'Set a retention period and the fields to clear before running retention.',
-                                                        variant: 'warning',
-                                                    });
-                                                    return;
-                                                }
-                                                if (!plan.eligible) {
-                                                    await dialog.alert({
-                                                        title: 'Nothing is due yet',
-                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period.`,
-                                                        variant: 'info',
-                                                    });
-                                                    return;
-                                                }
-
-                                                const purging = plan.mode === 'purge';
-                                                const ok = await dialog.confirm({
-                                                    title: purging ? 'Clear every field on these records' : 'Redact these records',
-                                                    variant: purging ? 'danger' : 'warning',
-                                                    confirmText: purging ? 'Clear them' : 'Redact them',
-                                                    requireTyped: plan.confirmation_required || undefined,
-                                                    message: (
-                                                        <div className="space-y-3">
-                                                            <p>
-                                                                <strong className="text-white">{plan.will_act_on ?? plan.eligible}</strong>{' '}
-                                                                closed {(plan.will_act_on ?? plan.eligible) === 1 ? 'record has' : 'records have'} passed
-                                                                the {plan.retention_days}-day retention period this town set.
-                                                            </p>
-                                                            <p>
-                                                                {purging
-                                                                    ? 'Every field is cleared, including names, contact details, descriptions, photos, comments and the map pin. The rows stay so your totals don\u2019t change. This can\u2019t be undone.'
-                                                                    : 'Only the fields you checked are cleared. The rows and all other fields stay.'}
-                                                            </p>
-                                                            {/* Named, from the server's own list. A
-                                                                clerk approving this should not have
-                                                                to remember which boxes are ticked on
-                                                                a screen they cannot see right now. */}
-                                                            {!!plan.scrub_fields?.length && (
-                                                                <p className="text-white/70 text-sm">
-                                                                    Cleared: {plan.scrub_fields.join(', ')}.
-                                                                </p>
-                                                            )}
-                                                            {!!plan.on_legal_hold && (
-                                                                <p className="text-amber-300">
-                                                                    {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under
-                                                                    legal hold and will be skipped.
-                                                                </p>
-                                                            )}
-                                                            <p className="text-slate-400 text-sm">
-                                                                The run covers every eligible record.
-                                                            </p>
-                                                        </div>
-                                                    ),
-                                                });
-                                                if (!ok) return;
-
-                                                setIsRunningRetention(true);
-                                                try {
-                                                    const result = await api.runRetentionNow(plan.confirmation_required || undefined);
-                                                    setSaveMessage(`Retention task started: ${result.message}`);
-                                                    setTimeout(() => {
-                                                        setSaveMessage(null);
-                                                        loadTabData();
-                                                    }, 3000);
-                                                } catch (err) {
-                                                    reportError('Could not start the retention task', err);
-                                                } finally {
-                                                    setIsRunningRetention(false);
-                                                }
-                                            }}
-                                            disabled={isRunningRetention}
-                                        >
-                                            {isRunningRetention ? 'Running...' : 'Run Retention Now'}
-                                        </Button>
-
-                                        {/* Read before you press. A count cannot
-                                            show that the oldest eligible record is
-                                            four years past its date because the
-                                            policy has never actually run, nor that
-                                            something assumed exempt is in the list
-                                            because nobody set the hold. */}
-                                        <Button
-                                            variant="secondary"
-                                            disabled={previewLoading}
-                                            onClick={async () => {
-                                                setPreviewLoading(true);
-                                                setPreviewError(null);
-                                                try {
-                                                    setRetentionPreview(await api.previewRetentionRun(50));
-                                                } catch (err) {
-                                                    setRetentionPreview(null);
-                                                    setPreviewError(err instanceof Error ? err.message : 'Could not load the preview');
-                                                } finally {
-                                                    setPreviewLoading(false);
-                                                }
-                                            }}
-                                        >
-                                            {previewLoading ? 'Checking…' : 'Review what would be archived'}
-                                        </Button>
-
-                                        <Button
-                                            variant="secondary"
-                                            onClick={async () => {
-                                                setExportOpen(o => !o);
-                                                if (!exportFields.length) {
-                                                    try {
-                                                        const { fields } = await api.getPublicRecordsFields();
-                                                        setExportFields(fields);
-                                                        setExportChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
-                                                    } catch (err) {
-                                                        reportError('Could not load the export options', err);
-                                                    }
-                                                }
-                                            }}
-                                        >
-                                            {/* Named for the job, not for a statute. The label used
-                                                to read "Export for OPRA" everywhere, from the same
-                                                unverified table. */}
-                                            Export for a records request
-                                        </Button>
-                                    </div>
+                                            }
+                                        }}
+                                    />
 
                                     {/* Pick what is being released.
                                         A custodian is answering a specific
@@ -3356,13 +3053,12 @@ export default function AdminConsole() {
                                                 <div className="flex flex-wrap gap-3">
                                                     {['open', 'in_progress', 'closed'].map(v => (
                                                         <label key={v} className="flex items-center gap-2 text-sm text-white/80">
-                                                            <input type="checkbox" checked={exportStatuses.has(v)}
+                                                            <Checkbox checked={exportStatuses.has(v)}
                                                                 onChange={e => setExportStatuses(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(v) : next.delete(v);
                                                                     return next;
-                                                                })}
-                                                                className="w-4 h-4 rounded border-white/20 bg-transparent" />
+                                                                })} />
                                                             {v === 'in_progress' ? 'In progress' : v.charAt(0).toUpperCase() + v.slice(1)}
                                                         </label>
                                                     ))}
@@ -3381,14 +3077,13 @@ export default function AdminConsole() {
                                                 <span className="block text-white/60 text-sm mb-2">Fields to include</span>
                                                 <div className="grid gap-2 sm:grid-cols-2">
                                                     {exportFields.map(f => (
-                                                        <label key={f.id} className="flex items-start gap-2 text-sm">
-                                                            <input type="checkbox" checked={exportChosen.has(f.id)}
+                                                        <label key={f.id} className="flex !items-start gap-2 text-sm">
+                                                            <Checkbox checked={exportChosen.has(f.id)}
                                                                 onChange={e => setExportChosen(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(f.id) : next.delete(f.id);
                                                                     return next;
-                                                                })}
-                                                                className="w-4 h-4 mt-0.5 rounded border-white/20 bg-transparent" />
+                                                                })} />
                                                             <span>
                                                                 <span className={f.sensitive ? 'text-amber-200' : 'text-white/80'}>
                                                                     {f.label}
@@ -3819,14 +3514,11 @@ export default function AdminConsole() {
                         <div className="space-y-1.5 max-h-40 overflow-y-auto">
                             {departments.map((dept) => (
                                 <label key={dept.id} className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={editUser.department_ids.includes(dept.id)}
                                         onChange={(e) => setEditUser((p) => e.target.checked
                                             ? { ...p, department_ids: [...p.department_ids, dept.id] }
-                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })}
-                                        className="rounded"
-                                    />
+                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })} />
                                     {dept.name}
                                 </label>
                             ))}
@@ -3835,14 +3527,11 @@ export default function AdminConsole() {
                     {/* Deactivating rather than deleting is what a records system
                         wants: the person keeps their history and simply cannot
                         sign in. Deleting is still available on the row. */}
-                    <label className="flex items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
-                        <input
-                            type="checkbox"
+                    <label className="flex !items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
+                        <Checkbox
                             checked={editUser.is_active}
                             onChange={(e) => setEditUser((p) => ({ ...p, is_active: e.target.checked }))}
-                            className="rounded mt-0.5"
-                            disabled={editingUser?.id === user?.id}
-                        />
+                            disabled={editingUser?.id === user?.id} />
                         <span>
                             Active
                             <span className="block text-[11px] text-white/40">
@@ -3902,8 +3591,7 @@ export default function AdminConsole() {
                             <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 rounded-lg bg-white/5 border border-white/10">
                                 {departments.map((dept) => (
                                     <label key={dept.id} className="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1 rounded">
-                                        <input
-                                            type="checkbox"
+                                        <Checkbox
                                             checked={newUser.department_ids.includes(dept.id)}
                                             onChange={(e) => {
                                                 if (e.target.checked) {
@@ -3911,9 +3599,7 @@ export default function AdminConsole() {
                                                 } else {
                                                     setNewUser((p) => ({ ...p, department_ids: p.department_ids.filter(id => id !== dept.id) }));
                                                 }
-                                            }}
-                                            className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 focus:ring-primary-500"
-                                        />
+                                            }} />
                                         <span className="text-sm text-white/80">{dept.name}</span>
                                     </label>
                                 ))}
@@ -4392,8 +4078,7 @@ export default function AdminConsole() {
                                                     .filter(u => u.role === 'staff' || u.role === 'admin')
                                                     .map(u => (
                                                         <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
+                                                            <Checkbox
                                                                 checked={(serviceRouting.routing_config.staff_ids || []).includes(u.id)}
                                                                 onChange={(e) => {
                                                                     const currentIds = serviceRouting.routing_config.staff_ids || [];
@@ -4404,9 +4089,7 @@ export default function AdminConsole() {
                                                                         ...p,
                                                                         routing_config: { ...p.routing_config, staff_ids: newIds }
                                                                     }));
-                                                                }}
-                                                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500"
-                                                            />
+                                                                }} />
                                                             <span className="text-sm text-white/80">{u.full_name || u.username}</span>
                                                             <span className="text-xs text-white/40">@{u.username}</span>
                                                         </label>
@@ -4606,8 +4289,7 @@ export default function AdminConsole() {
                                                     .filter(u => u.role === 'staff' || u.role === 'admin')
                                                     .map(u => (
                                                         <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
+                                                            <Checkbox
                                                                 checked={(serviceRouting.routing_config.staff_ids || []).includes(u.id)}
                                                                 onChange={(e) => {
                                                                     const currentIds = serviceRouting.routing_config.staff_ids || [];
@@ -4618,9 +4300,7 @@ export default function AdminConsole() {
                                                                         ...p,
                                                                         routing_config: { ...p.routing_config, staff_ids: newIds }
                                                                     }));
-                                                                }}
-                                                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500"
-                                                            />
+                                                                }} />
                                                             <span className="text-sm text-white/80">{u.full_name || u.username}</span>
                                                             <span className="text-xs text-white/40">@{u.username}</span>
                                                         </label>
@@ -4967,16 +4647,13 @@ export default function AdminConsole() {
                                                     <option value="checkbox">Checkboxes</option>
                                                 </select>
                                                 <label className="flex items-center gap-2 text-sm text-white/70">
-                                                    <input
-                                                        type="checkbox"
+                                                    <Checkbox
                                                         checked={q.required}
                                                         onChange={(e) => {
                                                             const newQs = [...serviceRouting.routing_config.custom_questions];
                                                             newQs[idx] = { ...newQs[idx], required: e.target.checked };
                                                             setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, custom_questions: newQs } }));
-                                                        }}
-                                                        className="rounded"
-                                                    />
+                                                        }} />
                                                     Required
                                                 </label>
                                             </div>

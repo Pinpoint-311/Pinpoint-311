@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, ExternalLink, Check, X } from 'lucide-react';
 
-import { Button, Input, Select } from './ui';
+import { Button, Input, Select, Checkbox } from './ui';
 import { api } from '../services/api';
 import { buildContactFormUrl, type PrefillValues } from './contactForm';
 import { useOptionalAnnounce } from './liveAnnounce';
@@ -198,25 +198,15 @@ function Field({ label, hint, optional, children }: {
 function Consent({ checked, onChange, children }: {
     checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode;
 }) {
-    /* The real checkbox is sr-only and this square is its only visible form, so
-     * it has to show focus as well as checked state -- without the ring,
-     * tabbing onto the consent box moved nothing on screen (WCAG 2.4.7).
-     * peer-* needs the input to precede its surrogate in the DOM, so the input
-     * is first and the square is ordered back with `order-first`. */
+    /* The shared Checkbox is the real input, restyled, so its focus ring and
+     * checked state are the control's own (WCAG 2.4.7) rather than a drawn
+     * square standing in for a hidden one. */
     return (
-        <label className="flex items-start gap-3 cursor-pointer group">
-            <input
-                type="checkbox"
+        <label className="flex !items-start gap-3 cursor-pointer group">
+            <Checkbox
                 checked={checked}
                 onChange={(e) => onChange(e.target.checked)}
-                className="sr-only peer"
             />
-            <span className={`order-first mt-0.5 w-5 h-5 rounded-lg shrink-0 flex items-center justify-center border transition-all duration-200 peer-focus-visible:ring-2 peer-focus-visible:ring-white peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-slate-900 ${checked
-                ? 'bg-gradient-to-br from-primary-400 to-indigo-500 border-transparent shadow-lg shadow-primary-500/25'
-                : 'bg-white/[0.06] border-white/20 group-hover:border-white/35'
-                }`}>
-                {checked && <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />}
-            </span>
             <span className="text-sm text-white/65 leading-snug">{children}</span>
         </label>
     );

@@ -8,7 +8,7 @@ import {
     ListChecks, Bell, ChevronRight, Check,
 } from 'lucide-react';
 
-import { Card, Button, Badge, CollapsibleSection } from './ui';
+import { Card, Button, Badge, Checkbox, CollapsibleSection } from './ui';
 import { humanize, humanizeTitle } from '../utils/humanize';
 import { SystemSecret } from '../types';
 import { api } from '../services/api';
@@ -1268,13 +1268,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                         Copy
                     </Button>
                 </div>
-                <label className="flex items-start gap-2 text-xs text-white/70 cursor-pointer">
-                    <input
-                        type="checkbox"
+                <label className="flex !items-start gap-2 text-xs text-white/70 cursor-pointer">
+                    <Checkbox
                         checked={backupKeyAcknowledged}
                         onChange={(e) => setBackupKeyAcknowledged(e.target.checked)}
-                        className="mt-0.5 accent-amber-400"
-                    />
+                        size="sm" />
                     I have saved a copy of this passphrase somewhere off this server.
                 </label>
             </div>

@@ -7,7 +7,7 @@ import {
     Copy, Check, ExternalLink, Plus, UserPlus, Settings2, History, AlertTriangle, Camera,
 } from 'lucide-react';
 
-import { Modal, Button, Input, Textarea, Select, StatusBadge } from './ui';
+import { Modal, Button, Input, Textarea, Select, StatusBadge, CheckboxCard } from './ui';
 import { api, MapLayer } from '../services/api';
 import LocationPicker from './LocationPicker';
 import PhotoUpload from './PhotoUpload';
@@ -1154,28 +1154,21 @@ export default function ManualIntake({
                         </section>
 
                         {redirect && (
-                            <label
-                                className={`flex items-start gap-3 cursor-pointer rounded-xl border px-3.5 py-3 ${errors.override ? 'border-red-400/50 bg-red-500/10' : 'border-white/10 bg-white/[0.03]'}`}
+                            <CheckboxCard
+                                id={FIELD.override}
+                                checked={overrideJurisdiction}
+                                onChange={e => { setOverrideJurisdiction(e.target.checked); if (e.target.checked) clearError('override'); }}
+                                aria-describedby={`${FIELD.override}-hint${errors.override ? ` ${FIELD.override}-error` : ''}`}
+                                aria-invalid={errors.override ? true : undefined}
+                                error={!!errors.override}
+                                title="Log it anyway"
+                                description="Records the report here. Your town still needs to forward it."
+                                descriptionId={`${FIELD.override}-hint`}
                             >
-                                <input
-                                    id={FIELD.override}
-                                    type="checkbox"
-                                    checked={overrideJurisdiction}
-                                    onChange={e => { setOverrideJurisdiction(e.target.checked); if (e.target.checked) clearError('override'); }}
-                                    aria-describedby={`${FIELD.override}-hint${errors.override ? ` ${FIELD.override}-error` : ''}`}
-                                    aria-invalid={errors.override ? true : undefined}
-                                    className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
-                                />
-                                <span className="min-w-0">
-                                    <span className="block text-sm font-medium text-white">Log it anyway</span>
-                                    <span id={`${FIELD.override}-hint`} className="block text-xs text-white/55 mt-0.5 leading-relaxed">
-                                        Records the report here. Your town still needs to forward it.
-                                    </span>
-                                    {errors.override && (
-                                        <span id={`${FIELD.override}-error`} className="block text-sm text-red-400 mt-1">{errors.override}</span>
-                                    )}
-                                </span>
-                            </label>
+                                {errors.override && (
+                                    <span id={`${FIELD.override}-error`} className="block text-sm text-red-400 mt-1">{errors.override}</span>
+                                )}
+                            </CheckboxCard>
                         )}
 
                         {/* Callback number stays in view: on the phone it is the
@@ -1275,23 +1268,16 @@ export default function ManualIntake({
                         </Disclosure>
 
                         {unlistedModule && !selected?.hidden_from_public && (
-                            <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3">
-                                <input
-                                    type="checkbox"
-                                    checked={hideFromPublic}
-                                    onChange={e => setHideFromPublic(e.target.checked)}
-                                    className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
-                                />
-                                <span className="min-w-0">
-                                    <span className="flex items-center gap-1.5 text-sm font-medium text-white">
-                                        <EyeOff className="w-3.5 h-3.5 text-white/50" aria-hidden="true" /> Hide from the public map and feed
-                                    </span>
-                                    <span className="block text-xs text-white/55 mt-1 leading-relaxed">
-                                        Check only if the {copy.who} asked to keep it unlisted. Staff still see and work it,
-                                        the tracking link still works, and it still counts in anonymized statistics.
-                                    </span>
-                                </span>
-                            </label>
+                            <CheckboxCard
+                                checked={hideFromPublic}
+                                onChange={e => setHideFromPublic(e.target.checked)}
+                                icon={<EyeOff className="w-4 h-4" />}
+                                title="Hide from the public map and feed"
+                                description={<>
+                                    Check only if the {copy.who} asked to keep it unlisted. Staff still see and work it,
+                                    the tracking link still works, and it still counts in anonymized statistics.
+                                </>}
+                            />
                         )}
 
                         <Disclosure
@@ -1348,23 +1334,16 @@ export default function ManualIntake({
                                 helperText="Staff only. Never shown to the resident."
                                 className="min-h-[72px] resize-y"
                             />
-                            <label className={`flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-3 ${emailIsValid ? 'cursor-pointer' : 'opacity-60'}`}>
-                                <input
-                                    id="intake-send-confirmation"
-                                    type="checkbox"
-                                    checked={sendConfirmation && emailIsValid}
-                                    disabled={!emailIsValid}
-                                    onChange={e => setSendConfirmation(e.target.checked)}
-                                    aria-describedby="intake-send-confirmation-hint"
-                                    className="mt-0.5 w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 shrink-0"
-                                />
-                                <span className="min-w-0">
-                                    <span className="block text-sm font-medium text-white">Send the {copy.who} a confirmation</span>
-                                    <span id="intake-send-confirmation-hint" className="block text-xs text-white/55 mt-0.5">
-                                        {emailIsValid ? `Emailed to ${email.trim()}.` : `Add the ${copy.who}’s email to send one.`}
-                                    </span>
-                                </span>
-                            </label>
+                            <CheckboxCard
+                                id="intake-send-confirmation"
+                                checked={sendConfirmation && emailIsValid}
+                                disabled={!emailIsValid}
+                                onChange={e => setSendConfirmation(e.target.checked)}
+                                aria-describedby="intake-send-confirmation-hint"
+                                title={`Send the ${copy.who} a confirmation`}
+                                description={emailIsValid ? `Emailed to ${email.trim()}.` : `Add the ${copy.who}’s email to send one.`}
+                                descriptionId="intake-send-confirmation-hint"
+                            />
                         </Disclosure>
 
                         {/* What went wrong, in one place, with focus on it --
