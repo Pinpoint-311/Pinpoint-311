@@ -254,8 +254,20 @@ class Auth0Service:
             return payload
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token has expired")
-        except jwt.JWTClaimsError:
-            raise HTTPException(status_code=401, detail="Invalid token claims")
+        # PyJWT's own claim errors. `jwt.JWTClaimsError` used to be named here
+        # and does not exist in PyJWT -- it is python-jose's. Python evaluates an
+        # `except` expression only when an exception reaches it, so this went
+        # unnoticed until something failed: every non-expiry Auth0 rejection
+        # (bad audience, bad issuer, bad signature) raised AttributeError out of
+        # the try, skipping the handler below that was meant to catch it. It
+        # still failed closed -- the caller turns anything into a 401 -- so the
+        # cost was a misleading error and a useless log line, not a hole.
+        except jwt.InvalidAudienceError:
+            raise HTTPException(status_code=401, detail="Invalid token audience")
+        except jwt.InvalidIssuerError:
+            raise HTTPException(status_code=401, detail="Invalid token issuer")
+        except jwt.InvalidTokenError as e:
+            raise HTTPException(status_code=401, detail=f"Invalid token claims: {e}")
         except Exception as e:
             raise HTTPException(status_code=401, detail=f"Token validation failed: {str(e)}")
     

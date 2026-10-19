@@ -80,7 +80,24 @@ export default function ResidentPortal() {
 
     // Initialize state based on URL hash (not pathname)
     const initialHash = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
-    const [showTrackingView, setShowTrackingView] = useState(urlRequestId || initialHash === 'track');
+    /* `#track/<id>` has to work on a COLD load, not just on a hash change.
+     *
+     * Every "track your request" email links to `{portal}/#track/REQ-...`, and
+     * this was `initialHash === 'track'` -- an exact match, which `track/REQ-1`
+     * fails. The resident clicked the link in their email and landed on the
+     * category list, with no sign of the report they came to see. The
+     * startsWith branch existed, but only inside handleHashChange, which fires
+     * on a hashchange event and not on first render.
+     *
+     * `urlRequestId` could not cover it either: it comes from useParams, and
+     * there is no `/track/:requestId` route -- the portal is mounted at `/`
+     * alone -- so it is always undefined. The hash is the only carrier. */
+    const hashRequestId = initialHash.startsWith('track/')
+        ? decodeURIComponent(initialHash.slice('track/'.length)) || undefined
+        : undefined;
+    const [showTrackingView, setShowTrackingView] = useState(
+        Boolean(urlRequestId) || initialHash === 'track' || Boolean(hashRequestId),
+    );
     const [step, setStep] = useState<Step>('categories');
     const [services, setServices] = useState<ServiceDefinition[]>([]);
     const [selectedService, setSelectedService] = useState<ServiceDefinition | null>(null);
@@ -1012,11 +1029,11 @@ export default function ResidentPortal() {
                             <span>Back to Home</span>
                         </button>
                         <TrackRequests
-                            initialRequestId={urlRequestId}
+                            initialRequestId={urlRequestId || hashRequestId}
                             selectedRequestId={
                                 currentHash === 'track' ? null :
                                     currentHash.startsWith('track/') ? currentHash.split('/')[1] :
-                                        urlRequestId || null
+                                        urlRequestId || hashRequestId || null
                             }
                             onRequestSelect={(requestId) => {
                                 if (requestId) {
