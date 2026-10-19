@@ -684,6 +684,34 @@ async def _critical_facilities_check(db) -> Dict[str, Any]:
                       "Could not read the critical-facility store.")
 
 
+async def _arcgis_sync_check(db) -> Dict[str, Any]:
+    """Has an automatic ArcGIS sync been held back for review?
+
+    Warning: the layer still shows its previous features, so nothing is
+    broken, but the town's data has moved on and an admin has to decide.
+    """
+    try:
+        from app.services import arcgis_import
+
+        async with db.begin_nested():
+            held = await arcgis_import.held_layers(db)
+        if not held:
+            return _check("arcgis_sync", "ArcGIS layer sync", "ok", 0,
+                          "No automatic ArcGIS layer sync is waiting for review.")
+        named = "; ".join(f"{name}: {reason}" for name, reason in held[:5])
+        more = f" (and {len(held) - 5} more)" if len(held) > 5 else ""
+        return _check(
+            "arcgis_sync", "ArcGIS layer sync", "warning", len(held),
+            f"Automatic sync held back the update for {len(held)} map layer"
+            f"{'s' if len(held) != 1 else ''}, which keep their previous features. {named}{more}",
+            "Open Admin Console > Map Layers, check the layer's source, then choose Apply anyway "
+            "or turn auto-sync off.")
+    except Exception:
+        logger.debug("ArcGIS sync health probe failed", exc_info=True)
+        return _check("arcgis_sync", "ArcGIS layer sync", "unknown", None,
+                      "Could not read the map layers' sync state.")
+
+
 # Every key `collect_checks` can emit. Named here so the mute route can refuse
 # a key that is not a real check -- muting is a write, and without an allowlist
 # any admin request could insert arbitrary rows into the health table.
@@ -700,6 +728,7 @@ CHECK_KEYS = (
     "retention",
     "translation_budget",
     "critical_facilities",
+    "arcgis_sync",
 )
 
 
@@ -718,6 +747,7 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _retention_check(db),
         await _translation_budget_check(),
         await _critical_facilities_check(db),
+        await _arcgis_sync_check(db),
     ]
     return checks
 

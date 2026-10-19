@@ -4,11 +4,12 @@ import {
     type LucideIcon,
 } from 'lucide-react';
 import { Button, Checkbox, Chip, Input, Modal, Select } from './ui';
-import { api, MapLayer } from '../services/api';
+import { api, MapLayer, type LayerLimits } from '../services/api';
 import type { ServiceDefinition } from '../types';
 import { useDialog } from './DialogProvider';
 import { Switch } from './capabilityUI';
 import { CategoryScopePicker } from './CategoryScopePicker';
+import { ArcGisSourcePanel, arcgisSourceLabel } from './ArcGisImport';
 
 /**
  * Polygon layers for the admin console: tax parcels, zoning, districts.
@@ -30,14 +31,24 @@ import { CategoryScopePicker } from './CategoryScopePicker';
  *     (resident_service_codes). Empty is every category on both.
  */
 
-export const MAX_LAYER_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** "The file is 612 MB; the limit is 500 MB." with the limit the server gave. */
+export function tooLargeMessage(size: number, maxBytes: number): string {
+    return `The file is ${Math.round(size / 1048576)} MB; the limit is ${Math.round(maxBytes / 1048576)} MB. Split the layer, or drop columns you do not need before exporting.`;
+}
 
-/** Send a file to the server in parts. Returns the upload id to import from. */
+/**
+ * Send a file to the server in parts. Returns the upload id to import from.
+ *
+ * The limit is the server's: it refuses an oversized start with its own
+ * message, and the max_bytes it answers with is checked here too. Nothing in
+ * the console hard-codes it.
+ */
 export async function uploadInChunks(file: Blob, onProgress?: (sent: number, total: number) => void): Promise<string> {
-    if (file.size > MAX_LAYER_UPLOAD_BYTES) {
-        throw new Error(`The file is ${Math.round(file.size / 1048576)} MB; the limit is 100 MB. Split the layer, or drop columns you do not need before exporting.`);
+    const { upload_id, chunk_bytes, max_bytes } = await api.startLayerUpload(file.size);
+    if (max_bytes && file.size > max_bytes) {
+        api.discardLayerUpload(upload_id).catch(() => { /* expires on its own */ });
+        throw new Error(tooLargeMessage(file.size, max_bytes));
     }
-    const { upload_id, chunk_bytes } = await api.startLayerUpload(file.size);
     try {
         let index = 0;
         for (let offset = 0; offset < file.size; offset += chunk_bytes, index++) {
@@ -52,6 +63,28 @@ export async function uploadInChunks(file: Blob, onProgress?: (sent: number, tot
 }
 
 const mb = (n: number) => `${(n / 1048576).toFixed(n < 10485760 ? 1 : 0)} MB`;
+
+/** The server's layer limits, for help text. Null until loaded (or if it cannot be read). */
+export function useLayerLimits(): LayerLimits | null {
+    const [limits, setLimits] = useState<LayerLimits | null>(null);
+    useEffect(() => {
+        let cancelled = false;
+        Promise.resolve()
+            .then(() => api.getLayerLimits())
+            .then(l => { if (!cancelled && l) setLimits(l); })
+            .catch(() => { /* the help text just leaves the numbers out */ });
+        return () => { cancelled = true; };
+    }, []);
+    return limits;
+}
+
+/** "up to 500 MB and 500,000 features", or nothing before the limits load. */
+export function limitText(limits: LayerLimits | null, kind: 'polygons' | 'points'): string {
+    if (!limits) return '';
+    return kind === 'polygons'
+        ? `up to ${mb(limits.max_upload_bytes)} and ${limits.max_features.toLocaleString()} features`
+        : `up to ${limits.max_inline_features.toLocaleString()} points (${mb(limits.max_inline_bytes)})`;
+}
 
 function useUpload() {
     const [progress, setProgress] = useState<string | null>(null);
@@ -90,6 +123,7 @@ export function PolygonLayerUploadForm({ onCancel, onCreated, onBusyChange }: Up
     const [description, setDescription] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const { progress, error, setError, run } = useUpload();
+    const limits = useLayerLimits();
 
     useEffect(() => { onBusyChange?.(!!progress); }, [progress, onBusyChange]);
 
@@ -125,8 +159,9 @@ export function PolygonLayerUploadForm({ onCancel, onCreated, onBusyChange }: Up
                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                 />
                 <p className="text-xs text-white/40 mt-1">
-                    A FeatureCollection of Polygon / MultiPolygon features in WGS 84 (EPSG:4326),
-                    up to 100 MB and 200,000 features. Next you choose which field identifies a
+                    A FeatureCollection of Polygon / MultiPolygon features in WGS 84 (EPSG:4326)
+                    {limits ? `, ${limitText(limits, 'polygons')}` : ''}. Only
+                    features inside the township are kept. Next you choose which field identifies a
                     polygon and what staff may see; nothing is shown until then.
                 </p>
             </div>
@@ -206,6 +241,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
     const { progress, error, setError, run } = useUpload();
     const dialog = useDialog();
     const uid = useId();
+    const limits = useLayerLimits();
 
     useEffect(() => {
         if (!layer || !isOpen) return;
@@ -293,7 +329,8 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
         if (!reuploadFile) return;
         const saved = await run(reuploadFile, uploadId => api.reuploadLayerFeatures(layer.id, uploadId));
         if (saved) {
-            setMessage(`Replaced with ${saved.feature_count?.toLocaleString()} features. Reports keep the context they were recorded with.`);
+            const clipped = saved.import_summary?.clip_message ? ` ${saved.import_summary.clip_message}` : '';
+            setMessage(`Replaced with ${saved.feature_count?.toLocaleString()} features.${clipped} Reports keep the context they were recorded with.`);
             setReuploadFile(null);
             onSaved(saved);
         }
@@ -333,6 +370,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                 <p id={id('meta')} className="-mt-2 text-sm text-white/70">
                     Polygon layer settings · {(layer.feature_count ?? 0).toLocaleString()} polygons
                     {imported && <> · imported {imported}</>}
+                    {arcgisSourceLabel(layer) && <> · {arcgisSourceLabel(layer)}</>}
                 </p>
 
                 <Section id={id('purpose')} icon={Target} title="Purpose">
@@ -476,6 +514,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                 </Section>
 
                 <Section id={id('data')} icon={Database} title="Data">
+                    {layer.source_url && <ArcGisSourcePanel layer={layer} onUpdated={onSaved} />}
                     <div className="space-y-3">
                         <label
                             onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -499,7 +538,7 @@ export function ContextLayerSettingsModal({ layer, isOpen, onClose, onSaved }: S
                                 <span id={id('file-help')} className="block text-xs text-white/70">
                                     {reuploadFile
                                         ? `${mb(reuploadFile.size)} · ready to upload`
-                                        : 'Drop a GeoJSON file here or choose one. Up to 100 MB.'}
+                                        : `Drop a GeoJSON file here or choose one${limits ? `, ${mb(limits.max_upload_bytes)} at most` : ''}.`}
                                 </span>
                             </span>
                             <span className="btn-outline btn-outline-md self-start sm:self-center" aria-hidden="true">Choose file</span>

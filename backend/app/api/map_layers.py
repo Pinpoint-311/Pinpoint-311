@@ -6,16 +6,19 @@ from sqlalchemy import select, text
 from typing import Any, Dict, List, Optional
 import json
 import logging
+from datetime import datetime, timezone
 
 from app.db.session import get_db
 from app.models import MapLayer, ServiceRequest, User
 from app.schemas import (
-    MapLayerAdminResponse, MapLayerCreate, MapLayerFeatureReupload, MapLayerPolygonCreate,
-    MapLayerResponse, MapLayerUpdate,
+    ArcGisImportRequest, ArcGisInspectRequest, ArcGisRefreshRequest, ArcGisSyncSettings,
+    MapLayerAdminResponse, MapLayerCreate, MapLayerFeatureReupload, MapLayerPointCreate,
+    MapLayerPolygonCreate, MapLayerResponse, MapLayerUpdate,
 )
 from app.core.auth import get_current_admin, get_current_staff
-from app.services import gis_layers
-from app.services.gis_layers import LayerUploadError
+from app.services import arcgis_import, gis_layers
+from app.services.arcgis_import import ArcGisError
+from app.services.gis_layers import LayerUploadError, UploadNoSpace
 from app.core.client_ip import rate_limit_key
 from slowapi import Limiter
 
@@ -176,14 +179,28 @@ async def list_context_layers(
 # built from the finished file. Staging is local to the API container: a
 # multi-replica deployment needs sticky routing for these routes.
 
+@router.get("/limits")
+async def layer_limits(_: User = Depends(get_current_admin)):
+    """The layer size limits, so the console shows the real ones (admin only)"""
+    return {
+        "max_upload_bytes": gis_layers.MAX_UPLOAD_BYTES,
+        "max_features": gis_layers.MAX_FEATURES,
+        "max_inline_features": gis_layers.MAX_INLINE_FEATURES,
+        "max_inline_bytes": gis_layers.MAX_INLINE_BYTES,
+        "chunk_bytes": gis_layers.UPLOAD_CHUNK_BYTES,
+    }
+
+
 @router.post("/uploads", status_code=status.HTTP_201_CREATED)
 async def start_layer_upload(
     payload: Dict[str, Any],
     admin: User = Depends(get_current_admin),
 ):
-    """Start a chunked GeoJSON upload for a polygon layer (admin only)"""
+    """Start a chunked GeoJSON upload for a point or polygon layer (admin only)"""
     try:
         return gis_layers.start_upload(payload.get("size_bytes"), admin.id)
+    except UploadNoSpace as exc:
+        raise HTTPException(status_code=507, detail=str(exc))
     except LayerUploadError as exc:
         raise HTTPException(status_code=413 if "limit" in str(exc) else 400, detail=str(exc))
 
@@ -214,15 +231,29 @@ async def discard_layer_upload(
     return None
 
 
-async def _import_from_upload(db: AsyncSession, layer: MapLayer, upload_id: str, user_id) -> Dict[str, Any]:
-    """Parse the staged file into the layer's features. Raises HTTPException(400)."""
+async def _import_from_upload(db: AsyncSession, layer: MapLayer, upload_id: str, user_id, *,
+                              points: bool = False) -> Dict[str, Any]:
+    """Parse the staged file into the layer's features, clipped to the township.
+
+    Polygons go into the feature table; points become the layer's inline
+    FeatureCollection. Raises HTTPException(400).
+    """
     try:
         path = gis_layers.completed_upload(upload_id, user_id)
     except LayerUploadError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     try:
+        clip = await gis_layers.load_clip(db)
         with path.open("r", encoding="utf-8-sig") as fh:
-            return await gis_layers.import_features(db, layer, gis_layers.iter_feature_collection(fh))
+            features = gis_layers.iter_feature_collection(fh)
+            if not points:
+                return await gis_layers.import_features(db, layer, features, clip=clip)
+            geojson, summary = await gis_layers.build_inline_points(db, features, clip=clip)
+            layer.geojson = geojson
+            layer.feature_count = summary["feature_count"]
+            layer.available_properties = summary["properties"]
+            layer.features_imported_at = datetime.now(timezone.utc)
+            return summary
     except LayerUploadError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
@@ -285,21 +316,63 @@ async def reupload_layer_features(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(get_current_admin),
 ):
-    """Replace a polygon layer's features from a finished upload (admin only).
+    """Replace a point or polygon layer's features from a finished upload (admin only).
 
     Reports keep their gis_context snapshots: that is the GIS history.
     """
-    if not gis_layers.is_postgres(db):
-        raise HTTPException(status_code=503, detail="Polygon layers need the PostGIS database.")
     layer = await _layer_or_404(db, layer_id)
-    if (layer.layer_type or "polygon") != "polygon":
-        raise HTTPException(status_code=400, detail="Only polygon layers take a feature upload.")
-    summary = await _import_from_upload(db, layer, data.upload_id, admin.id)
+    is_table = (layer.feature_storage or gis_layers.INLINE) == gis_layers.TABLE
+    points = not is_table and (layer.layer_type or "") == "point"
+    if not is_table and not points:
+        raise HTTPException(status_code=400, detail="Only point and uploaded polygon layers take a feature upload.")
+    if is_table and not gis_layers.is_postgres(db):
+        raise HTTPException(status_code=503, detail="Polygon layers need the PostGIS database.")
+    summary = await _import_from_upload(db, layer, data.upload_id, admin.id, points=points)
     await db.commit()
     await db.refresh(layer)
     await _audit(db, admin, "map_layer_imported", {
         "layer_id": layer.id, "layer_name": layer.name, "features": summary["feature_count"],
         "skipped": summary["skipped"], "created": False,
+    })
+    return admin_layer(layer, import_summary=summary)
+
+
+@router.post("/points", response_model=MapLayerAdminResponse, status_code=status.HTTP_201_CREATED)
+async def create_point_layer(
+    data: MapLayerPointCreate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Create an inline point layer from a finished chunked upload (admin only).
+
+    A point file used to travel as one JSON request and so stopped at the
+    13 MB body ceiling; it now goes up in parts like a polygon file and is
+    stored inline as before, under the inline cap (gis_layers.MAX_INLINE_*).
+    """
+    layer = MapLayer(
+        name=data.name,
+        description=data.description,
+        layer_type="point",
+        fill_color=data.fill_color,
+        stroke_color=data.stroke_color,
+        fill_opacity=data.fill_opacity,
+        stroke_width=data.stroke_width,
+        geojson=dict(gis_layers.EMPTY_FEATURE_COLLECTION),
+        is_active=True,
+        show_on_resident_portal=data.show_on_resident_portal,
+        visible_on_map=data.visible_on_map,
+        routing_mode=data.routing_mode or "log",
+        service_codes=data.service_codes or [],
+        routing_config=data.routing_config,
+        feature_storage=gis_layers.INLINE,
+    )
+    db.add(layer)
+    summary = await _import_from_upload(db, layer, data.upload_id, admin.id, points=True)
+    await db.commit()
+    await db.refresh(layer)
+    await _audit(db, admin, "map_layer_imported", {
+        "layer_id": layer.id, "layer_name": layer.name, "features": summary["feature_count"],
+        "skipped": summary["skipped"], "created": True,
     })
     return admin_layer(layer, import_summary=summary)
 
@@ -337,6 +410,11 @@ async def create_layer(
     is_context = layer_data.routing_mode == gis_layers.CONTEXT_MODE
     if is_context and layer_type != "polygon":
         raise HTTPException(status_code=400, detail="Only polygon layers can record location context.")
+    if not is_context:
+        try:
+            gis_layers.check_inline_size(layer_data.geojson)
+        except LayerUploadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     layer = MapLayer(
         name=layer_data.name,
@@ -376,6 +454,265 @@ async def _import_inline(db: AsyncSession, layer: MapLayer, geojson: Any) -> Dic
     except LayerUploadError as exc:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Import from ArcGIS (admin)
+# ---------------------------------------------------------------------------
+#
+# The admin pastes an ArcGIS link instead of exporting a file. Every outbound
+# request is guarded in app/services/arcgis_import.py (https only, public
+# addresses only on every hop, timeouts, size caps). Tokens are used for the
+# one request they came with and are never stored, logged or audited.
+
+def _arcgis_http(exc: Exception) -> HTTPException:
+    status_code = getattr(exc, "status", 400) if isinstance(exc, ArcGisError) else 400
+    # A 401 from here would read to the console as "your session ended".
+    if status_code == 401:
+        status_code = 400
+    return HTTPException(status_code=status_code, detail=str(exc))
+
+
+async def _session():
+    from app.db.session import SessionLocal
+    return SessionLocal()
+
+
+def _job_layer_result(layer: MapLayer, summary: Dict[str, Any], **extra: Any) -> Dict[str, Any]:
+    return {"layer": jsonable_encoder(admin_layer(layer, import_summary=summary)), **extra}
+
+
+@router.post("/arcgis/inspect")
+@limiter.limit("20/minute")
+async def inspect_arcgis_link(
+    request: Request,
+    data: ArcGisInspectRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """What an ArcGIS link holds: one layer, or the layers of a service (admin only)"""
+    clip = await gis_layers.load_clip(db)
+    try:
+        async with arcgis_import.client_factory(data.token) as client:
+            return await arcgis_import.inspect(client, data.url, clip)
+    except ArcGisError as exc:
+        raise _arcgis_http(exc)
+
+
+async def _run_arcgis_import(job, data: ArcGisImportRequest, admin_id: Optional[int],
+                             session_factory=None) -> Dict[str, Any]:
+    """The import itself, in its own session (it outlives the request)."""
+    as_kind = data.as_
+    make = session_factory or _session
+    async with (await make()) as db:
+        if as_kind == "polygons" and not gis_layers.is_postgres(db):
+            raise ArcGisError("Polygon layers need the PostGIS database.")
+        clip = await gis_layers.load_clip(db)
+        async with arcgis_import.client_factory(data.token) as client:
+            info = await arcgis_import.describe_import_target(client, data.url, clip)
+            arcgis_import.check_kind(info, as_kind)
+            job.expected = info.in_area_count if clip.applied else info.feature_count
+            polygons = as_kind == "polygons"
+            layer = MapLayer(
+                name=data.name,
+                description=data.description,
+                layer_type="polygon" if polygons else "point",
+                fill_color=data.fill_color or ("#f59e0b" if polygons else "#3b82f6"),
+                stroke_color=data.stroke_color or ("#b45309" if polygons else "#1d4ed8"),
+                fill_opacity=data.fill_opacity if data.fill_opacity is not None else (0.1 if polygons else 0.3),
+                stroke_width=data.stroke_width or (1 if polygons else 2),
+                geojson=dict(gis_layers.EMPTY_FEATURE_COLLECTION),
+                is_active=True,
+                # A polygon layer starts staff-only with no fields shown, like an upload.
+                show_on_resident_portal=False if polygons else data.show_on_resident_portal,
+                visible_on_map=data.visible_on_map,
+                routing_mode=(data.routing_mode or "context") if polygons else (
+                    data.routing_mode if data.routing_mode in ("none", "log", "block") else "log"),
+                service_codes=data.service_codes or [],
+                resident_service_codes=data.resident_service_codes or [],
+                routing_config=None if polygons else data.routing_config,
+                feature_storage=gis_layers.TABLE if polygons else gis_layers.INLINE,
+                feature_id_property=data.feature_id_property if polygons else None,
+                staff_properties=[] if polygons else None,
+                source_sync=None if (data.source_sync in (None, "off") or data.token) else data.source_sync,
+            )
+            db.add(layer)
+            await db.flush()
+
+            def progress(read: int) -> None:
+                job.read = read
+
+            summary = await arcgis_import.load_into(db, layer, client, info, clip=clip, as_kind=as_kind,
+                                                    progress=progress)
+            layer.source_last_edit = (await arcgis_import.source_marker(client, info))[:100]
+        layer.source_checked_at = layer.source_synced_at
+        layer.source_sync_status = "ok"
+        await db.commit()
+        await db.refresh(layer)
+        admin = await db.get(User, admin_id) if admin_id is not None else None
+        await _audit(db, admin, "map_layer_imported", {
+            "layer_id": layer.id, "layer_name": layer.name, "features": summary["feature_count"],
+            "skipped": summary["skipped"], "created": True, "source": "arcgis",
+            # The host only: enough to know where it came from, nothing a token could ride on.
+            "source_host": (info.url.split("/")[2] if "://" in info.url else None),
+        })
+        return _job_layer_result(layer, summary)
+
+
+@router.post("/arcgis/import", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("10/minute")
+async def import_arcgis_layer(
+    request: Request,
+    data: ArcGisImportRequest,
+    admin: User = Depends(get_current_admin),
+):
+    """Start importing an ArcGIS layer as a new map layer (admin only).
+
+    Returns a job to poll at /arcgis/jobs/{job_id}; when done, its result
+    holds the layer, built through the same code as a file upload.
+    """
+    try:
+        arcgis_import.parse_url(data.url)
+        job = arcgis_import.start_job(
+            admin.id, "import", lambda job: _run_arcgis_import(job, data, admin.id))
+    except ArcGisError as exc:
+        raise _arcgis_http(exc)
+    return job.public()
+
+
+@router.get("/arcgis/jobs/{job_id}")
+async def arcgis_job_status(
+    job_id: str,
+    admin: User = Depends(get_current_admin),
+):
+    """Progress of an ArcGIS import or refresh you started (admin only)"""
+    job = arcgis_import.get_job(job_id, admin.id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="That import is no longer running here. Reload the layers.")
+    return job.public()
+
+
+async def _run_arcgis_refresh(job, layer_id: int, token: Optional[str], admin_id: Optional[int], *,
+                              guard: bool, apply_anyway: bool = False, session_factory=None) -> Dict[str, Any]:
+    make = session_factory or _session
+    async with (await make()) as db:
+        layer = (await db.execute(select(MapLayer).where(MapLayer.id == layer_id))).scalar_one_or_none()
+        if layer is None:
+            raise ArcGisError("That layer no longer exists.")
+        if guard:
+            # "Check now": exactly what the automatic run does.
+            result = await arcgis_import.sync_layer(db, layer)
+            await db.refresh(layer)
+            return {**_job_layer_result(layer, layer_summary_for(layer)), "sync": result}
+        job.expected = arcgis_import._current_count(layer)
+
+        def progress(read: int) -> None:
+            job.read = read
+
+        async with arcgis_import.client_factory(token) as client:
+            outcome = await arcgis_import.refresh_layer(db, layer, client, guard=False, progress=progress)
+        layer.source_checked_at = layer.source_synced_at
+        layer.source_sync_status = "updated"
+        layer.source_sync_error = None
+        await db.commit()
+        await db.refresh(layer)
+        admin = await db.get(User, admin_id) if admin_id is not None else None
+        await _audit(db, admin, "map_layer_refreshed", {
+            "layer_id": layer.id, "layer_name": layer.name, "before": outcome.before,
+            "after": outcome.after, "source": "arcgis", "apply_anyway": bool(apply_anyway),
+        })
+        return _job_layer_result(layer, outcome.summary or {}, before=outcome.before, after=outcome.after)
+
+
+def layer_summary_for(layer: MapLayer) -> Dict[str, Any]:
+    return {"feature_count": layer.feature_count}
+
+
+async def _arcgis_layer_or_400(db: AsyncSession, layer_id: int) -> MapLayer:
+    layer = await _layer_or_404(db, layer_id)
+    if not layer.source_url:
+        raise HTTPException(status_code=400, detail="This layer wasn't imported from ArcGIS.")
+    return layer
+
+
+@router.post("/{layer_id}/arcgis/refresh", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("10/minute")
+async def refresh_arcgis_layer(
+    request: Request,
+    layer_id: int,
+    data: Optional[ArcGisRefreshRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Re-import a layer from its ArcGIS source, replacing its features (admin only).
+
+    The replacement is atomic, like a re-upload, and feature keys stay stable
+    (ID field, else geometry), so parcel history survives. A manual refresh
+    (and "Apply anyway" after a held auto-sync) skips the auto-sync guardrails.
+    """
+    data = data or ArcGisRefreshRequest()
+    layer = await _arcgis_layer_or_400(db, layer_id)
+    if arcgis_import.kind_of_layer(layer) == "polygons" and not gis_layers.is_postgres(db):
+        raise HTTPException(status_code=503, detail="Polygon layers need the PostGIS database.")
+    token = data.token
+    try:
+        job = arcgis_import.start_job(admin.id, "refresh", lambda job: _run_arcgis_refresh(
+            job, layer_id, token, admin.id, guard=False, apply_anyway=data.apply_anyway))
+    except ArcGisError as exc:
+        raise _arcgis_http(exc)
+    return job.public()
+
+
+@router.post("/{layer_id}/arcgis/check", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("10/minute")
+async def check_arcgis_layer_now(
+    request: Request,
+    layer_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Run the automatic sync for this layer now, guardrails included (admin only)"""
+    await _arcgis_layer_or_400(db, layer_id)
+    try:
+        job = arcgis_import.start_job(admin.id, "check", lambda job: _run_arcgis_refresh(
+            job, layer_id, None, admin.id, guard=True))
+    except ArcGisError as exc:
+        raise _arcgis_http(exc)
+    return job.public()
+
+
+@router.put("/{layer_id}/arcgis/sync", response_model=MapLayerAdminResponse)
+@limiter.limit("20/minute")
+async def set_arcgis_sync(
+    request: Request,
+    layer_id: int,
+    data: ArcGisSyncSettings,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(get_current_admin),
+):
+    """Turn automatic sync off, daily or weekly (admin only). Public services only."""
+    layer = await _arcgis_layer_or_400(db, layer_id)
+    if data.source_sync != "off":
+        # Tokens are never stored, so a secured service cannot be synced
+        # unattended. Asked without one, it says so now rather than at 3 a.m.
+        try:
+            async with arcgis_import.client_factory(None) as client:
+                await client.get_json(layer.source_url, {"f": "json"})
+        except ArcGisError as exc:
+            if exc.status == 401 or exc.code in (403, 498, 499):
+                raise HTTPException(status_code=400, detail=arcgis_import.SYNC_NEEDS_PUBLIC)
+            raise _arcgis_http(exc)
+        layer.source_sync = data.source_sync
+    else:
+        layer.source_sync = None
+        if layer.source_sync_status == "held":
+            layer.source_sync_status = None
+            layer.source_sync_error = None
+    await db.commit()
+    await db.refresh(layer)
+    await _audit(db, admin, "map_layer_sync_settings", {
+        "layer_id": layer.id, "layer_name": layer.name, "source_sync": data.source_sync})
+    return admin_layer(layer)
 
 
 # ---------------------------------------------------------------------------
@@ -603,6 +940,10 @@ async def update_layer(
 
     is_table = (layer.feature_storage or gis_layers.INLINE) == gis_layers.TABLE
     if layer_data.geojson is not None and not is_table:
+        try:
+            gis_layers.check_inline_size(layer_data.geojson)
+        except LayerUploadError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         layer.geojson = layer_data.geojson
     # A table-backed layer's features change only through a feature upload;
     # the admin console round-trips the (empty) geojson it was given, which

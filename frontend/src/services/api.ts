@@ -1530,6 +1530,69 @@ class ApiClient {
         });
     }
 
+    /** The server's layer limits, so the console never hard-codes them. */
+    async getLayerLimits(): Promise<LayerLimits> {
+        return this.request('/map-layers/limits');
+    }
+
+    /** An inline point layer from a finished chunked upload. */
+    async createPointLayer(data: {
+        name: string;
+        description?: string;
+        upload_id: string;
+        fill_color?: string;
+        stroke_color?: string;
+        fill_opacity?: number;
+        stroke_width?: number;
+        service_codes?: string[];
+        routing_mode?: string;
+        routing_config?: object | null;
+        visible_on_map?: boolean;
+    }): Promise<MapLayer> {
+        return this.request('/map-layers/points', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    // Import from ArcGIS. The token is sent for the one request and never stored.
+    async inspectArcGis(url: string, token?: string): Promise<ArcGisInspection> {
+        return this.request('/map-layers/arcgis/inspect', {
+            method: 'POST',
+            body: JSON.stringify({ url, token: token || undefined }),
+        });
+    }
+
+    async importArcGis(data: {
+        url: string;
+        token?: string;
+        name: string;
+        description?: string;
+        as: 'points' | 'polygons';
+        source_sync?: ArcGisSync;
+    }): Promise<ArcGisJob> {
+        return this.request('/map-layers/arcgis/import', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    async getArcGisJob(jobId: string): Promise<ArcGisJob> {
+        return this.request(`/map-layers/arcgis/jobs/${encodeURIComponent(jobId)}`);
+    }
+
+    async refreshArcGisLayer(layerId: number, opts: { token?: string; apply_anyway?: boolean } = {}): Promise<ArcGisJob> {
+        return this.request(`/map-layers/${layerId}/arcgis/refresh`, {
+            method: 'POST',
+            body: JSON.stringify({ token: opts.token || undefined, apply_anyway: !!opts.apply_anyway }),
+        });
+    }
+
+    async checkArcGisLayer(layerId: number): Promise<ArcGisJob> {
+        return this.request(`/map-layers/${layerId}/arcgis/check`, { method: 'POST' });
+    }
+
+    async setArcGisSync(layerId: number, sourceSync: ArcGisSync): Promise<MapLayer> {
+        return this.request(`/map-layers/${layerId}/arcgis/sync`, {
+            method: 'PUT',
+            body: JSON.stringify({ source_sync: sourceSync }),
+        });
+    }
+
     async backfillLayerContext(layerId: number): Promise<{ scanned: number; updated: number }> {
         return this.request(`/map-layers/${layerId}/backfill`, { method: 'POST' });
     }
@@ -2268,6 +2331,54 @@ export interface Open311Settings {
 export const api = new ApiClient();
 export default api;
 
+export interface LayerLimits {
+    max_upload_bytes: number;
+    max_features: number;
+    max_inline_features: number;
+    max_inline_bytes: number;
+    chunk_bytes: number;
+}
+
+export type ArcGisSync = 'off' | 'daily' | 'weekly';
+
+export interface ArcGisLayerChoice {
+    id: number | null;
+    name: string;
+    url: string;
+    geometry: 'point' | 'polygon' | 'line' | null;
+    feature_count: number | null;
+    /** Features inside the township's envelope, when a boundary is set. */
+    in_area_count: number | null;
+    fields: string[];
+    limit: number;
+    importable: boolean;
+    problem: string | null;
+    warning: string | null;
+}
+
+export interface ArcGisInspection {
+    kind: 'layer' | 'service' | 'item' | 'hub';
+    resolved_url: string;
+    layers: ArcGisLayerChoice[];
+    area: string | null;
+    clipped: boolean;
+}
+
+export interface ArcGisJob {
+    job_id: string;
+    kind: 'import' | 'refresh' | 'check';
+    state: 'running' | 'done' | 'failed';
+    read: number;
+    expected: number | null;
+    error: string | null;
+    result: {
+        layer: MapLayer;
+        before?: number | null;
+        after?: number | null;
+        sync?: { state: 'unchanged' | 'updated' | 'held' | 'error'; reason?: string; before?: number; after?: number };
+    } | null;
+}
+
 // Type for MapLayer
 export interface MapLayer {
     id: number;
@@ -2303,7 +2414,18 @@ export interface MapLayer {
     /** Fields that look personal: "owner" (confident) or "maybe". */
     field_flags?: Record<string, 'owner' | 'maybe'>;
     warnings?: string[];
-    import_summary?: { feature_count: number; skipped: number; properties: string[]; feature_id_property: string | null } | null;
+    import_summary?: {
+        feature_count: number; skipped: number; properties: string[]; feature_id_property: string | null;
+        /** "Kept N of M features inside <town>", or why nothing was clipped. */
+        clip_message?: string; total?: number; outside?: number;
+    } | null;
+    /** Imported from ArcGIS: the layer's REST address (never a token) and sync state. */
+    source_url?: string | null;
+    source_synced_at?: string | null;
+    source_sync?: 'daily' | 'weekly' | null;
+    source_checked_at?: string | null;
+    source_sync_status?: 'ok' | 'updated' | 'held' | 'error' | null;
+    source_sync_error?: string | null;
     created_at?: string;
     updated_at?: string;
 }

@@ -995,6 +995,22 @@ class MapLayer(Base):
     feature_count = Column(Integer, nullable=True)
     features_imported_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Layers imported from ArcGIS (app/services/arcgis_import.py). The layer's
+    # REST address, never a token: secured services are refreshed by hand
+    # with a token given for that one request.
+    source_url = Column(String(2048), nullable=True)
+    source_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # Automatic sync: NULL/"off" (default), "daily" or "weekly". Public
+    # services only. The change marker is the source's lastEditDate, or
+    # count+max objectid where it publishes none. Status: "ok" (up to date),
+    # "updated", "held" (a guardrail kept the old features; see the error),
+    # or "error".
+    source_sync = Column(String(10), nullable=True)
+    source_last_edit = Column(String(100), nullable=True)
+    source_checked_at = Column(DateTime(timezone=True), nullable=True)
+    source_sync_status = Column(String(20), nullable=True)
+    source_sync_error = Column(String(500), nullable=True)
+
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

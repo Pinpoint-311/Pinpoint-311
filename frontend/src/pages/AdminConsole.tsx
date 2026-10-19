@@ -73,7 +73,8 @@ import { combinedRoadList } from '../utils/agencyLibrary';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import Open311ApiKeys from '../components/Open311ApiKeys';
-import { ContextLayerSettingsModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import { ContextLayerSettingsModal, layerPurposeLabel, limitText, uploadInChunks, useLayerLimits } from '../components/PolygonLayerManager';
+import { ArcGisRefreshButton, ArcGisSourcePanel, arcgisSourceLabel } from '../components/ArcGisImport';
 import { CategoryScopePicker } from '../components/CategoryScopePicker';
 import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
@@ -935,6 +936,11 @@ export default function AdminConsole() {
     // An upload in progress in the Add Layer dialog; closing then would orphan it.
     const [layerUploadBusy, setLayerUploadBusy] = useState(false);
     const [polygonSettingsLayer, setPolygonSettingsLayer] = useState<MapLayer | null>(null);
+    // A point layer's file goes up in parts (it can be larger than one request
+    // may be), so it is kept as a File until Create / Update.
+    const [pointFile, setPointFile] = useState<File | null>(null);
+    const [pointProgress, setPointProgress] = useState<string | null>(null);
+    const layerLimits = useLayerLimits();
     const [newLayer, setNewLayer] = useState({
         name: '',
         description: '',
@@ -2695,6 +2701,7 @@ export default function AdminConsole() {
                                                             routing_config: null,
                                                             visible_on_map: true,
                                                         });
+                                                        setPointFile(null);
                                                         api.getServices().then(setServices).catch(console.error);
                                                         setShowLayerModal(true);
                                                     }}
@@ -2750,8 +2757,17 @@ export default function AdminConsole() {
                                                                     {layer.description && (
                                                                         <p className="text-xs text-white/35 mt-0.5 truncate">{layer.description}</p>
                                                                     )}
+                                                                    {arcgisSourceLabel(layer) && (
+                                                                        <p className="text-xs text-white/50 mt-0.5">
+                                                                            {arcgisSourceLabel(layer)}
+                                                                            {layer.source_sync_status === 'held' && <span className="text-amber-200"> · needs review</span>}
+                                                                        </p>
+                                                                    )}
                                                                 </div>
                                                                 <div className="flex items-center gap-1 shrink-0">
+                                                                    {layer.source_url && (
+                                                                        <ArcGisRefreshButton layer={layer} onUpdated={() => loadTabData()} />
+                                                                    )}
                                                                     <button
                                                                         onClick={async () => {
                                                                             try {
@@ -2794,6 +2810,7 @@ export default function AdminConsole() {
                                                                                 routing_config: (layer as any).routing_config || null,
                                                                                 visible_on_map: (layer as any).visible_on_map ?? true,
                                                                             });
+                                                                            setPointFile(null);
                                                                             api.getServices().then(setServices).catch(console.error);
                                                                             setShowLayerModal(true);
                                                                         }}
@@ -4784,14 +4801,93 @@ export default function AdminConsole() {
                         // Straight on to choosing what staff see: nothing is shown until then.
                         setPolygonSettingsLayer(layer);
                     }}
+                    onArcGisCreated={(layer, kind) => {
+                        setLayerUploadBusy(false);
+                        loadTabData();
+                        if (kind === 'polygons') {
+                            setShowLayerModal(false);
+                            setPolygonSettingsLayer(layer);
+                            return;
+                        }
+                        // Points continue into the point form, as the layer it now is:
+                        // colours, categories, and its ArcGIS source.
+                        setEditingLayer(layer);
+                        setPointFile(null);
+                        setNewLayer({
+                            name: layer.name,
+                            description: layer.description || '',
+                            layer_type: 'point',
+                            fill_color: layer.fill_color,
+                            stroke_color: layer.stroke_color,
+                            fill_opacity: layer.fill_opacity,
+                            stroke_width: layer.stroke_width,
+                            service_codes: layer.service_codes || [],
+                            geojson: layer.geojson,
+                            routing_mode: layer.routing_mode === 'block' ? 'block' : 'log',
+                            routing_config: layer.routing_config || null,
+                            visible_on_map: layer.visible_on_map ?? true,
+                        });
+                        setSaveMessage(layer.import_summary?.clip_message || 'Layer imported');
+                        setTimeout(() => setSaveMessage(null), 6000);
+                    }}
                 >
                 <form
                     onSubmit={async (e) => {
                         e.preventDefault();
-                        if (!newLayer.name || !newLayer.geojson) {
+                        const isPoint = newLayer.layer_type === 'point';
+                        if (!newLayer.name || (isPoint ? !(pointFile || editingLayer) : !newLayer.geojson)) {
                             alert("Enter a name and upload a GeoJSON file.");
                             return;
                         }
+                        if (isPoint) {
+                            // Points: the file goes up in parts and the server builds the
+                            // layer (clipped to the township, under the point-layer cap).
+                            // Editing without a new file leaves the features alone rather
+                            // than sending them all back.
+                            const settings = {
+                                name: newLayer.name,
+                                description: newLayer.description,
+                                fill_color: newLayer.fill_color,
+                                stroke_color: newLayer.stroke_color,
+                                fill_opacity: newLayer.fill_opacity,
+                                stroke_width: newLayer.stroke_width,
+                                service_codes: newLayer.service_codes,
+                                routing_mode: newLayer.routing_mode,
+                                routing_config: newLayer.routing_config,
+                                visible_on_map: newLayer.visible_on_map,
+                            };
+                            setLayerUploadBusy(true);
+                            try {
+                                let uploadId: string | null = null;
+                                if (pointFile) {
+                                    setPointProgress('Uploading…');
+                                    uploadId = await uploadInChunks(pointFile, (sent, total) =>
+                                        setPointProgress(`Uploading ${Math.round(sent / 1048576)} of ${Math.max(1, Math.round(total / 1048576))} MB…`));
+                                    setPointProgress('Importing points…');
+                                }
+                                let saved: MapLayer;
+                                if (editingLayer) {
+                                    if (uploadId) await api.reuploadLayerFeatures(editingLayer.id, uploadId);
+                                    saved = await api.updateMapLayer(editingLayer.id, { ...settings, layer_type: 'point' });
+                                    setSaveMessage('Layer updated');
+                                } else {
+                                    saved = await api.createPointLayer({ ...settings, upload_id: uploadId as string });
+                                    setSaveMessage(saved.import_summary?.clip_message ? `Layer created. ${saved.import_summary.clip_message}` : 'Layer created');
+                                }
+                                setPointFile(null);
+                                setShowLayerModal(false);
+                                loadTabData();
+                                setTimeout(() => setSaveMessage(null), 6000);
+                            } catch (err: any) {
+                                console.error('Failed to save layer:', err);
+                                alert(err.message || 'Failed to save layer');
+                            } finally {
+                                setPointProgress(null);
+                                setLayerUploadBusy(false);
+                            }
+                            return;
+                        }
+                        if (!newLayer.geojson) return;
                         try {
                             if (editingLayer) {
                                 await api.updateMapLayer(editingLayer.id, {
@@ -5035,9 +5131,15 @@ export default function AdminConsole() {
                                 <input
                                     type="file"
                                     accept=".geojson,.json"
+                                    aria-label={newLayer.layer_type === 'polygon' ? 'Or upload a GeoJSON file' : 'GeoJSON file'}
                                     onChange={async (e) => {
                                         const file = e.target.files?.[0];
                                         if (!file) return;
+                                        if (newLayer.layer_type === 'point') {
+                                            setPointFile(file);
+                                            e.target.value = '';
+                                            return;
+                                        }
                                         try {
                                             const text = await file.text();
                                             const geojson = JSON.parse(text);
@@ -5052,10 +5154,25 @@ export default function AdminConsole() {
                                     }}
                                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                 />
-                                {newLayer.geojson && (
+                                {newLayer.layer_type === 'point' ? (
+                                    <>
+                                        {pointFile && (
+                                            <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />{pointFile.name} ready to upload</p>
+                                        )}
+                                        <p className="text-xs text-white/40 mt-1">
+                                            {editingLayer ? 'Choose a file only to replace the points. ' : ''}
+                                            Point features in WGS 84{layerLimits ? `, ${limitText(layerLimits, 'points')}` : ''}. Only points inside the township are kept.
+                                        </p>
+                                        {pointProgress && <p role="status" className="text-sm text-sky-300 mt-1">{pointProgress}</p>}
+                                    </>
+                                ) : newLayer.geojson && (
                                     <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />GeoJSON loaded</p>
                                 )}
                             </div>
+
+                            {editingLayer?.source_url && (
+                                <ArcGisSourcePanel layer={editingLayer} onUpdated={(layer) => { setEditingLayer(layer); loadTabData(); }} />
+                            )}
 
                             {/* Category selector. Empty = every category, which is
                                 how the resident form and call intake read it. */}
@@ -5070,7 +5187,7 @@ export default function AdminConsole() {
 
                             <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
                                 <Button variant="ghost" onClick={() => setShowLayerModal(false)}>Cancel</Button>
-                                <Button type="submit" disabled={!newLayer.layer_type}>{editingLayer ? 'Update Layer' : 'Create Layer'}</Button>
+                                <Button type="submit" disabled={!newLayer.layer_type || !!pointProgress} isLoading={!!pointProgress}>{editingLayer ? 'Update Layer' : 'Create Layer'}</Button>
                             </div>
                         </>
                     )}
