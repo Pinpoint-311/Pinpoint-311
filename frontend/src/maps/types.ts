@@ -275,6 +275,19 @@ export interface FitBoundsOptions {
 
 export interface MapInitOptions extends CameraOptions {
     baseMapType?: BaseMapType;
+    /**
+     * Light or dark cartography for the base map. A real field rather than a
+     * vendorOptions escape hatch because all four providers have one -- Google
+     * a style array, Esri a dark basemap, Azure `grayscale_dark`, MapKit
+     * ColorSchemes.Dark -- and the panels that need it (the bias heatmap) are
+     * dark-chrome dashboards where a bright street map is not a cosmetic
+     * difference: the heat gradients are mixed against a dark base and wash out
+     * over a light one.
+     *
+     * Ignored when `styleId` is set, since the town's own basemap wins.
+     * Defaults to 'light'.
+     */
+    colorScheme?: 'light' | 'dark';
     controls?: MapControlsOptions;
     /**
      * Opaque vendor style/map identifier: a Google Map ID, a MapLibre style URL,

@@ -174,7 +174,13 @@ def clear_discovery_cache():
     _discovery_cache.clear()
 
 
-def _with_email(claims: Dict[str, Any]) -> Dict[str, Any]:
+
+def _env_flag(name: str) -> bool:
+    import os
+    return (os.environ.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _with_email(claims: Dict[str, Any], provider: str = "") -> Dict[str, Any]:
     """Fill in `email` from the provider's equivalent claim when it is absent.
 
     The caller matches the signed-in person to a staff account by email and
@@ -191,6 +197,33 @@ def _with_email(claims: Dict[str, Any]) -> Dict[str, Any]:
     """
     if claims.get("email"):
         return claims
+
+    # Who attests to the identifier decides whether it can stand in for an
+    # email address, and that differs by provider.
+    #
+    # On Entra and Okta the UPN is set by the directory. A person cannot choose
+    # their own, so matching a staff account by it is as good as matching by a
+    # verified address -- and those are the providers this fallback was written
+    # for, because Entra omits `email` unless the directory has a mail
+    # attribute or an admin adds the optional claim.
+    #
+    # Generic OIDC is the one that cannot be assumed. The issuer is whatever
+    # URL an administrator typed, and if it happens to be a self-signup
+    # provider that lets a user pick their own `preferred_username`, then
+    # registering there as somebody else's work address would sign the
+    # registrant in as that member of staff. Nothing in the token says which
+    # kind of issuer it is -- `email_verified` says nothing about
+    # `preferred_username` -- so it has to be a deployment's decision, and the
+    # default is the careful one. A town whose generic OIDC issuer is its own
+    # directory sets OIDC_USERNAME_IS_VERIFIED=1.
+    if provider == "oidc" and not _env_flag("OIDC_USERNAME_IS_VERIFIED"):
+        logger.info(
+            "[identity] generic OIDC token carried no email claim and the "
+            "username fallback is off; set OIDC_USERNAME_IS_VERIFIED=1 only if "
+            "this issuer controls its usernames"
+        )
+        return claims
+
     for fallback in ("preferred_username", "upn", "unique_name"):
         value = claims.get(fallback)
         if isinstance(value, str) and "@" in value.strip("@"):
@@ -241,4 +274,4 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
 
     # Outside the try: a normalisation bug here must not be reported as a
     # failed signature check.
-    return _with_email(claims)
+    return _with_email(claims, config.get("provider", ""))

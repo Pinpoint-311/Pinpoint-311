@@ -585,6 +585,31 @@ WITHHOLD_REASONS = frozenset({
 MAX_DECODE_PIXELS = 50_000_000
 
 
+def _hold_overflow(out: "BatchResult", media, examined: int) -> "BatchResult":
+    """Park the photos past MAX_IMAGES instead of publishing them.
+
+    These used to be appended straight into `out.media` with a `kept` index,
+    under a comment saying it was so this function "cannot silently drop a
+    photo". Not dropping them was right; putting them in `media` was not.
+    `media` is the list the caller publishes, and a photo past the cap has been
+    through nothing at all -- not decoded, not SafeSearch'd, not blurred, not
+    even EXIF-stripped. Mixing it in with the photos that *were* examined
+    leaves the caller no way to tell the two apart, and `create_request` keeps
+    the first three of whatever it is handed: withhold one of the first three
+    (any byte sequence this build cannot decode will do, and the submitter
+    picks it) and a photo nothing ever looked at is promoted into a published
+    slot on the town's public map.
+
+    `withheld` is the list that already means "we could not clear this": the
+    caller parks it in `media_pending_review` for a human, so the photo is
+    still not lost and the submitter is still told the count.
+    """
+    for extra in (media or [])[examined:]:
+        if isinstance(extra, str):
+            out.withheld.append({"media": extra, "reason": "over-photo-limit"})
+    return out
+
+
 @dataclass
 class BatchResult:
     media: List[str] = field(default_factory=list)
@@ -1694,14 +1719,23 @@ async def redact_media(media: Optional[List[str]]) -> BatchResult:
     """
     items = [m for m in (media or []) if isinstance(m, str)][:MAX_IMAGES]
     if not items:
-        return BatchResult(media=list(media or []))
+        # Nothing here was examined, so nothing here is publishable. (It used
+        # to return `media` verbatim, which on a list of non-strings put
+        # whatever they were into the publishable list.)
+        return _hold_overflow(BatchResult(), media, 0)
 
     provider, faces, plates = await settings()
     if not provider or not (faces or plates):
         # No detection, but the metadata block still goes -- see exif_only. The
         # off switch is about blurring, not about publishing GPS coordinates.
-        return BatchResult(media=[exif_only(m) for m in items]
-                           + list((media or [])[len(items):]))
+        # `kept` is filled in rather than left empty: create_request maps its
+        # photos back onto the resident's slots through `kept`, so an empty one
+        # here silently dropped every inline photo on a town that had redaction
+        # switched off.
+        return _hold_overflow(
+            BatchResult(media=[exif_only(m) for m in items],
+                        kept=list(range(len(items)))),
+            media, len(items))
 
     results = await asyncio.gather(
         *(redact_image(m, provider, faces, plates) for m in items),
@@ -1731,12 +1765,9 @@ async def redact_media(media: Optional[List[str]]) -> BatchResult:
             logger.warning("[Redaction] photo %d redacted by %s, not the selected "
                            "provider", index, result.detector)
 
-    # Anything past MAX_IMAGES was never a candidate; carry it through unchanged
-    # so this function cannot silently drop a photo.
-    for offset, extra in enumerate((media or [])[len(items):]):
-        out.kept.append(len(items) + offset)
-        out.media.append(extra)
-    return out
+    # Anything past MAX_IMAGES was never a candidate, so it is held rather than
+    # published -- see _hold_overflow.
+    return _hold_overflow(out, media, len(items))
 
 
 async def _google_screen_and_redact_one(media: str, faces: bool, plates: bool):
@@ -1866,8 +1897,10 @@ async def screen_and_redact(media: Optional[List[str]]) -> Tuple[ModerationResul
     # half: it needs no detector, so the off switch must not carry it away --
     # see exif_only.
     if not items or not provider or not (faces or plates):
-        stripped = BatchResult(media=[exif_only(m) for m in items]
-                               + list((media or [])[len(items):]))
+        stripped = _hold_overflow(
+            BatchResult(media=[exif_only(m) for m in items],
+                        kept=list(range(len(items)))),
+            media, len(items))
         return await screen_images(media or []), stripped
 
     if provider != "google":
@@ -1904,7 +1937,4 @@ async def screen_and_redact(media: Optional[List[str]]) -> Tuple[ModerationResul
         if not redaction.changed and redaction.skipped_reason not in ("", "no-detections", "blocked"):
             out.skipped.append(redaction.skipped_reason)
 
-    for offset, extra in enumerate((media or [])[len(items):]):
-        out.kept.append(len(items) + offset)
-        out.media.append(extra)
-    return strongest, out
+    return strongest, _hold_overflow(out, media, len(items))

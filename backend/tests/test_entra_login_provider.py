@@ -252,3 +252,42 @@ class TestEmailClaimFallback:
         original = {"preferred_username": "clerk@town.gov"}
         self._fn()(original)
         assert "email" not in original
+
+
+class TestTheUsernameFallbackIsProviderAware:
+    """Who attests to an identifier decides whether it can stand in for an
+    email, and that differs by provider.
+
+    Entra and Okta UPNs are directory-controlled, which is the case this
+    fallback exists for. A generic OIDC issuer is whatever URL an administrator
+    typed; if it is a self-signup provider that lets a user choose their own
+    `preferred_username`, registering as somebody else's work address would
+    sign the registrant in as that member of staff. `email_verified` cannot
+    cover it -- it says nothing about `preferred_username`.
+    """
+
+    def _fn(self):
+        pytest.importorskip("jwt.api_jwt")
+        pytest.importorskip("fastapi.routing")
+        from app.services.identity import _with_email
+        return _with_email
+
+    @pytest.mark.parametrize("provider", ["entra", "okta"])
+    def test_a_directory_controlled_upn_still_fills_in(self, provider):
+        claims = self._fn()({"preferred_username": "clerk@town.gov"}, provider)
+        assert claims["email"] == "clerk@town.gov"
+
+    def test_generic_oidc_does_not_promote_a_username_by_default(self, monkeypatch):
+        monkeypatch.delenv("OIDC_USERNAME_IS_VERIFIED", raising=False)
+        claims = self._fn()({"preferred_username": "clerk@town.gov"}, "oidc")
+        assert "email" not in claims
+
+    def test_generic_oidc_can_opt_in_when_the_issuer_owns_its_usernames(self, monkeypatch):
+        monkeypatch.setenv("OIDC_USERNAME_IS_VERIFIED", "1")
+        claims = self._fn()({"preferred_username": "clerk@town.gov"}, "oidc")
+        assert claims["email"] == "clerk@town.gov"
+
+    def test_a_real_email_claim_is_never_second_guessed(self, monkeypatch):
+        monkeypatch.delenv("OIDC_USERNAME_IS_VERIFIED", raising=False)
+        claims = self._fn()({"email": "real@town.gov", "preferred_username": "other@town.gov"}, "oidc")
+        assert claims["email"] == "real@town.gov"
