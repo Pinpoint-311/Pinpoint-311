@@ -80,6 +80,26 @@ variables:
   # one, which is why the configuration page lists it on its own line while
   # there is nothing to include for it.
   GITLAB_ADVANCED_SAST_ENABLED: "true"
+
+  # Where secret detection should not look.
+  #
+  # Every secret finding on this project so far has been one of three things,
+  # and none of them is a credential:
+  #
+  #   * test fixtures -- a made-up PKCS8 block, a fake GCP key, a postgres URL
+  #     with a password in it. Tests that exercise credential validation need
+  #     credential-shaped strings, and a test that cannot hold one cannot test
+  #     the thing.
+  #   * the scanner's own output. gl-secret-detection-report.json quotes the
+  #     strings it found, so the next run finds them again -- the report is
+  #     flagged as a leak of itself.
+  #   * documentation and validation help text, including the redaction regex
+  #     in the updater whose whole job is stripping passwords out of URLs.
+  #
+  # Narrow on purpose: test directories and the scanners' own artefacts, not
+  # whole languages or the application tree. A real key committed to
+  # backend/app still fails the pipeline.
+  SECRET_DETECTION_EXCLUDED_PATHS: "backend/tests,frontend/src/**/*.test.ts,frontend/src/**/*.test.tsx,updater/tests,gl-secret-detection-report.json,gl-sast-report.json,gl-dependency-scanning-report.json"
   PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
   NODE_IMAGE: node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
   TRIVY_IMAGE: aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
