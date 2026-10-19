@@ -1204,7 +1204,7 @@ export default function ResidentPortal() {
                                                     {"Community Requests Map"}
                                                 </h2>
                                                 <p className="text-sm text-white/60 mt-0.5">
-                                                    {"See what neighbors have reported and where each request stands. Select a pin for details."}
+                                                    {"See what neighbors have reported and the status of each request. Select a pin for details."}
                                                 </p>
                                             </div>
                                         </div>
