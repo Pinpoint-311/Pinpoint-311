@@ -232,3 +232,92 @@ def test_the_default_trusted_set_contains_no_public_range():
     for chunk in DEFAULT_TRUSTED_PROXY_CIDRS.split(","):
         network = ipaddress.ip_network(chunk.strip())
         assert network.is_private or network.is_loopback or network.is_link_local, chunk
+
+
+# ---------------------------------------------------------------------------
+# Naming the edge instead of trusting the bridge it sits on
+# ---------------------------------------------------------------------------
+#
+# Every town on this platform runs its containers on one shared Docker bridge,
+# and the default trusted set is 10/8 + 172.16/12 + 192.168/16 -- which covers
+# that whole bridge. A container belonging to town A could therefore reach town
+# B's backend directly, hand it an X-Forwarded-For of its choosing, and be
+# believed: a fresh lockout and rate-limit bucket per invented address against
+# the first-run admin password, audit rows naming whoever the caller picked,
+# and the host proxy's WAF skipped by never passing through it.
+#
+# Narrowing to the proxy alone is the fix, and it has to survive Docker
+# renumbering the proxy on restart -- otherwise the address goes stale and the
+# usual repair is to widen the range straight back out. So an entry may be a
+# hostname, resolved on a short TTL.
+
+class _FakeAddrInfo:
+    def __init__(self, mapping):
+        self.mapping = mapping
+        self.calls = 0
+
+    def __call__(self, host, port, **kwargs):
+        self.calls += 1
+        if host not in self.mapping:
+            raise OSError(f"Name or service not known: {host}")
+        return [(2, 1, 6, "", (addr, 0)) for addr in self.mapping[host]]
+
+
+def _clear_cache():
+    from app.core import client_ip
+    client_ip._HOST_CACHE.clear()
+
+
+def test_a_named_edge_trusts_only_that_container(monkeypatch):
+    import socket
+    from app.core import client_ip
+
+    _clear_cache()
+    monkeypatch.setattr(socket, "getaddrinfo", _FakeAddrInfo({"edge-proxy": ["172.21.0.13"]}))
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "edge-proxy")
+
+    assert client_ip.is_trusted_proxy("172.21.0.13") is True
+    # The peer town on the same bridge, which the old default trusted.
+    assert client_ip.is_trusted_proxy("172.21.0.99") is False
+    assert client_ip.is_trusted_proxy("10.1.2.3") is False
+
+
+def test_an_unresolvable_name_trusts_nothing_rather_than_everything(monkeypatch):
+    """The safe direction. An entry that cannot be resolved must narrow what is
+    trusted, never fall back to a default range."""
+    import socket
+    from app.core import client_ip
+
+    _clear_cache()
+    monkeypatch.setattr(socket, "getaddrinfo", _FakeAddrInfo({}))
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "edge-proxy")
+
+    assert client_ip.trusted_proxy_networks() == []
+    assert client_ip.is_trusted_proxy("172.21.0.13") is False
+
+
+def test_the_name_is_not_resolved_on_every_request(monkeypatch):
+    """Per-request DNS on the hot path is a cost with no benefit; the TTL keeps
+    it to roughly one lookup a minute while still following a restart."""
+    import socket
+    from app.core import client_ip
+
+    _clear_cache()
+    fake = _FakeAddrInfo({"edge-proxy": ["172.21.0.13"]})
+    monkeypatch.setattr(socket, "getaddrinfo", fake)
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "edge-proxy")
+
+    for _ in range(25):
+        client_ip.is_trusted_proxy("172.21.0.13")
+
+    assert fake.calls == 1, fake.calls
+
+
+def test_addresses_and_cidrs_still_work_unchanged(monkeypatch):
+    from app.core import client_ip
+
+    _clear_cache()
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", "127.0.0.1,172.21.0.0/24")
+    assert client_ip.is_trusted_proxy("127.0.0.1") is True
+    assert client_ip.is_trusted_proxy("172.21.0.99") is True
+    assert client_ip.is_trusted_proxy("172.22.0.1") is False
