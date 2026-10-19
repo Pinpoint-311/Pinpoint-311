@@ -161,7 +161,11 @@ release-images:
   extends: .docker
   stage: release
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    # Opt-in: with GitHub as the primary repo (mirror-to-gitlab.yml), tags
+    # reach GitLab too, and publishing here as well would sign a second,
+    # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
+    # Settings > CI/CD > Variables to make GitLab the release source instead.
+    - if: $CI_COMMIT_TAG =~ /^v/ && $PINPOINT_RELEASE_FROM_GITLAB == "true"
   # needs: the whole gate, by name, so a failure in any of them stops here.
   needs: [backend-tests, frontend-checks, trivy-fs, trivy-image]
   id_tokens:
@@ -248,7 +252,11 @@ release-notes:
   stage: release
   image: $PYTHON_IMAGE
   rules:
-    - if: $CI_COMMIT_TAG =~ /^v/
+    # Opt-in: with GitHub as the primary repo (mirror-to-gitlab.yml), tags
+    # reach GitLab too, and publishing here as well would sign a second,
+    # competing release. Set PINPOINT_RELEASE_FROM_GITLAB=true in
+    # Settings > CI/CD > Variables to make GitLab the release source instead.
+    - if: $CI_COMMIT_TAG =~ /^v/ && $PINPOINT_RELEASE_FROM_GITLAB == "true"
   needs:
     - job: release-images
       artifacts: true

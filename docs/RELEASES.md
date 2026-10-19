@@ -363,3 +363,20 @@ on the updater's next call (`401`, reported in `poll`'s output).
 **Without the updater** the console shows *No updater connected* and the
 command-line steps instead of request buttons; `pinpoint-updater upgrade`
 from the host works exactly as before.
+
+## GitHub and GitLab
+
+GitHub is the primary repository. `.github/workflows/mirror-to-gitlab.yml`
+pushes every branch, tag and deletion to GitLab within seconds, on any plan.
+GitLab.com's own pull mirroring is a paid feature, and a pull mirror left
+configured on the GitLab side should be removed so the two don't fight. Setup is
+in the workflow's header: a GitLab project access token (Maintainer,
+`write_repository`) as the GitHub secret `GITLAB_MIRROR_TOKEN`, and the project
+URL as the GitHub variable `GITLAB_MIRROR_URL`. The mirror never force-pushes.
+
+Releases are published once, from GitHub (`ghcr.io`, signed by GitHub Actions'
+OIDC identity). GitLab still runs its tests and scans on every push and tag, but
+its release jobs only publish when the CI/CD variable
+`PINPOINT_RELEASE_FROM_GITLAB=true` is set, which is how a town that wants
+GitLab as its release source switches over. Point the updater's
+`release_source` and `trust` at whichever one publishes.
