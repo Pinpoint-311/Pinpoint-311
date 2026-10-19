@@ -46,6 +46,10 @@ Polygon context layers (app/services/gis_layers.py):
   map_layers.feature_id_property / label_property / staff_properties /
      available_properties / feature_count / features_imported_at /
      resident_service_codes (nullable).
+  map_layers.source_url / source_synced_at / source_sync / source_last_edit /
+     source_checked_at / source_sync_status / source_sync_error (nullable):
+     layers imported from ArcGIS, and their optional automatic sync. No token
+     is ever stored.
   service_requests.gis_context JSONB (nullable) with a GIN jsonb_path_ops
      index: the containing features snapshotted at intake.
 
@@ -137,6 +141,13 @@ def upgrade() -> None:
     op.add_column("map_layers", sa.Column("feature_count", sa.Integer(), nullable=True))
     op.add_column("map_layers", sa.Column("features_imported_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("map_layers", sa.Column("resident_service_codes", sa.JSON(), nullable=True))
+    op.add_column("map_layers", sa.Column("source_url", sa.String(length=2048), nullable=True))
+    op.add_column("map_layers", sa.Column("source_synced_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync", sa.String(length=10), nullable=True))
+    op.add_column("map_layers", sa.Column("source_last_edit", sa.String(length=100), nullable=True))
+    op.add_column("map_layers", sa.Column("source_checked_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync_status", sa.String(length=20), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync_error", sa.String(length=500), nullable=True))
     op.create_table(
         "map_layer_features",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -278,6 +289,13 @@ def downgrade() -> None:
     op.drop_index("ix_map_layer_features_geom", table_name="map_layer_features")
     op.drop_index("ix_map_layer_features_layer_key", table_name="map_layer_features")
     op.drop_table("map_layer_features")
+    op.drop_column("map_layers", "source_sync_error")
+    op.drop_column("map_layers", "source_sync_status")
+    op.drop_column("map_layers", "source_checked_at")
+    op.drop_column("map_layers", "source_last_edit")
+    op.drop_column("map_layers", "source_sync")
+    op.drop_column("map_layers", "source_synced_at")
+    op.drop_column("map_layers", "source_url")
     op.drop_column("map_layers", "resident_service_codes")
     op.drop_column("map_layers", "features_imported_at")
     op.drop_column("map_layers", "feature_count")

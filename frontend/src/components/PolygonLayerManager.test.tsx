@@ -15,7 +15,9 @@ vi.mock('../services/api', () => ({ api, default: api }));
 const dialog = vi.hoisted(() => ({ confirm: vi.fn(), alert: vi.fn() }));
 vi.mock('./DialogProvider', () => ({ useDialog: () => dialog }));
 
-import { ContextLayerSettingsModal, MAX_LAYER_UPLOAD_BYTES, uploadInChunks } from './PolygonLayerManager';
+import { ContextLayerSettingsModal, uploadInChunks } from './PolygonLayerManager';
+
+const SERVER_MAX = 500 * 1024 * 1024;
 
 const layer = {
     id: 7, name: 'Tax Parcels', fill_color: '#f59e0b', stroke_color: '#b45309', fill_opacity: 0.1,
@@ -30,7 +32,7 @@ describe('uploadInChunks', () => {
     afterEach(() => vi.clearAllMocks());
 
     it('sends the file in parts no larger than the server asked for', async () => {
-        api.startLayerUpload.mockResolvedValue({ upload_id: 'u1', chunk_bytes: 4, max_bytes: MAX_LAYER_UPLOAD_BYTES });
+        api.startLayerUpload.mockResolvedValue({ upload_id: 'u1', chunk_bytes: 4, max_bytes: SERVER_MAX });
         api.uploadLayerChunk.mockResolvedValue({});
         const id = await uploadInChunks(new Blob(['0123456789']));
         expect(id).toBe('u1');
@@ -39,17 +41,32 @@ describe('uploadInChunks', () => {
     });
 
     it('discards a half-finished upload', async () => {
-        api.startLayerUpload.mockResolvedValue({ upload_id: 'u2', chunk_bytes: 4, max_bytes: 1 });
+        api.startLayerUpload.mockResolvedValue({ upload_id: 'u2', chunk_bytes: 4, max_bytes: SERVER_MAX });
         api.uploadLayerChunk.mockRejectedValueOnce(new Error('network'));
         api.discardLayerUpload.mockResolvedValue(undefined);
         await expect(uploadInChunks(new Blob(['0123456789']))).rejects.toThrow('network');
         expect(api.discardLayerUpload).toHaveBeenCalledWith('u2');
     });
 
-    it('refuses a file over the limit before sending anything', async () => {
-        const big = { size: MAX_LAYER_UPLOAD_BYTES + 1, slice: () => new Blob() } as unknown as Blob;
-        await expect(uploadInChunks(big)).rejects.toThrow(/100 MB/);
-        expect(api.startLayerUpload).not.toHaveBeenCalled();
+    it('takes the limit from the server, not from the console', async () => {
+        // The server refuses an oversized start with its own limit in the message.
+        api.startLayerUpload.mockRejectedValueOnce(new Error('The file is 600 MB; the limit is 500 MB. Split the layer.'));
+        const big = { size: 600 * 1048576, slice: () => new Blob() } as unknown as Blob;
+        await expect(uploadInChunks(big)).rejects.toThrow(/the limit is 500 MB/);
+        expect(api.uploadLayerChunk).not.toHaveBeenCalled();
+
+        // And the max_bytes it answers with is the one the console checks against.
+        api.startLayerUpload.mockResolvedValueOnce({ upload_id: 'u3', chunk_bytes: 4, max_bytes: 8 });
+        api.discardLayerUpload.mockResolvedValue(undefined);
+        await expect(uploadInChunks(new Blob(['0123456789']))).rejects.toThrow(/the limit is 0 MB/);
+        expect(api.uploadLayerChunk).not.toHaveBeenCalled();
+        expect(api.discardLayerUpload).toHaveBeenCalledWith('u3');
+
+        // A file at or under a larger server limit goes up: nothing is fixed at 100 MB any more.
+        api.startLayerUpload.mockResolvedValueOnce({ upload_id: 'u4', chunk_bytes: 1 << 30, max_bytes: SERVER_MAX });
+        api.uploadLayerChunk.mockResolvedValue({});
+        const mid = { size: 300 * 1048576, slice: () => new Blob(['x']) } as unknown as Blob;
+        await expect(uploadInChunks(mid)).resolves.toBe('u4');
     });
 });
 

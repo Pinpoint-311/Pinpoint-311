@@ -85,7 +85,7 @@ celery_app = Celery(
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
              "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades",
-             "app.tasks.critical_facilities", "app.tasks.staff_invites"]
+             "app.tasks.critical_facilities", "app.tasks.staff_invites", "app.tasks.arcgis_sync"]
 )
 
 celery_app.conf.update(
@@ -145,6 +145,13 @@ celery_app.conf.update(
         "daily-critical-facilities-check": {
             "task": "app.tasks.critical_facilities.refresh_critical_facilities",
             "schedule": crontab(hour=4, minute=45),
+        },
+        # Map layers an admin set to sync from ArcGIS daily or weekly. Hourly
+        # sweep; each layer is due on its own interval, and an unchanged
+        # source costs a request or two (app/tasks/arcgis_sync.py).
+        "hourly-arcgis-layer-sync": {
+            "task": "app.tasks.arcgis_sync.sync_arcgis_layers",
+            "schedule": crontab(minute=23),
         },
         # Test every configured connector once a day.
         #

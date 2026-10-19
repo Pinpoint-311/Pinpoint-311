@@ -131,7 +131,7 @@ def staging(monkeypatch, tmp_path):
 def test_upload_size_limit_is_enforced_up_front(staging):
     with pytest.raises(LayerUploadError) as exc:
         gis_layers.start_upload(gis_layers.MAX_UPLOAD_BYTES + 1, 1)
-    assert "100 MB" in str(exc.value)
+    assert "500 MB" in str(exc.value)
     with pytest.raises(LayerUploadError):
         gis_layers.start_upload(0, 1)
 

@@ -51,7 +51,7 @@ describe('Add Layer: one entry, two kinds of layer', () => {
 
     it('Polygons continues into the chunked upload and hands back the new layer', async () => {
         const created = { id: 9, name: 'Tax Parcels' };
-        api.startLayerUpload.mockResolvedValue({ upload_id: 'u1', chunk_bytes: 1024, max_bytes: 1 });
+        api.startLayerUpload.mockResolvedValue({ upload_id: 'u1', chunk_bytes: 1024, max_bytes: 500 * 1048576 });
         api.uploadLayerChunk.mockResolvedValue({});
         api.createPolygonLayer.mockResolvedValue(created);
         const onCreated = vi.fn();
