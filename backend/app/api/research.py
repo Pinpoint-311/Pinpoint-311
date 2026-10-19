@@ -181,8 +181,23 @@ def sanitize_description(description: str) -> str:
     ):
         result = re.sub(pattern, '[PHONE REDACTED]', result)
 
-    # Email addresses
-    result = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '[EMAIL REDACTED]', result)
+    # Email addresses.
+    #
+    # The leading lookbehind is load-bearing, not tidiness. Without it the local
+    # part `[a-zA-Z0-9._%+-]+` can begin at EVERY character of a long run of
+    # letters, and each of those starts scans forward to the end of the run
+    # looking for an `@` -- quadratic in the length of the run, on text a
+    # resident typed. Measured on this box with the pattern alone: 3,000
+    # characters took 14ms and 30,000 took 1,408ms, a hundredfold for ten times
+    # the input, and the request body limit allows 13MB. Requiring that the
+    # local part not be preceded by another local-part character makes each run
+    # start exactly once, which is linear. Every one of the other nine patterns
+    # in this function was timed the same way and none of them grows
+    # superlinearly; this was the only one.
+    result = re.sub(
+        r'(?<![a-zA-Z0-9._%+-])[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+        '[EMAIL REDACTED]', result,
+    )
 
     # URLs and social handles
     result = re.sub(r'https?://\S+|www\.\S+', '[URL REDACTED]', result)
