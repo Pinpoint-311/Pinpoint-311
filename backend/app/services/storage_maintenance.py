@@ -174,8 +174,6 @@ async def _stale_segments(db, column, current: str) -> List[str]:
     """
     from sqlalchemy import func, select
 
-    from app.services.storage_status import WRAP_TAGS
-
     segment = func.split_part(column, ":", 2)
     rows = (await db.execute(
         select(segment).where(column.isnot(None)).group_by(segment)
@@ -185,11 +183,8 @@ async def _stale_segments(db, column, current: str) -> List[str]:
     for (wrapped_b64,) in rows:
         if not wrapped_b64:
             continue  # Not a pii2 value; handled by the legacy clause below.
-        try:
-            tag = WRAP_TAGS.get(base64.b64decode(wrapped_b64 + "==")[:1])
-        except Exception:
-            tag = None
-        if tag != current:
+        from app.core.pii_crypto import wrapped_is_current
+        if not wrapped_is_current(wrapped_b64, current):
             stale.append(wrapped_b64)
     return stale
 

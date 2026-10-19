@@ -347,6 +347,8 @@ async def _kms_check() -> Dict[str, Any]:
         # matters. Wrapping a throwaway key costs one KMS call every fifteen
         # minutes and answers the question as of now.
         actual = pii_crypto.probe_backend()
+        if actual == selected and selected == "azure":
+            return _azure_key_posture_check()
         if actual == selected:
             return _check("kms", "Resident data encryption", "ok", actual,
                           f"Resident data is being encrypted with your {actual} key.")
@@ -366,6 +368,51 @@ async def _kms_check() -> Dict[str, Any]:
         logger.debug("KMS health probe failed", exc_info=True)
         return _check("kms", "Resident data encryption", "unknown", None,
                       "Could not determine which key is encrypting resident data.")
+
+
+def _azure_key_posture_check() -> Dict[str, Any]:
+    """The Azure key works; can it still be lost?
+
+    Losing the key is losing every resident's contact details, in every backup
+    too. Two settings decide whether a mistake is recoverable, and both are on
+    the key itself, where the app can read them:
+
+      * purge protection: without it ("...+Purgeable"), a deleted key can be
+        purged at once, and nothing brings it back;
+      * an expiry date (Azure Policy recommends one): past it, every unwrap is
+        refused -- recoverable by extending the date, if someone notices first.
+    """
+    import time
+    from app.core import azure_keyvault
+    try:
+        posture = azure_keyvault.key_posture()
+    except Exception:
+        return _check("kms", "Resident data encryption", "ok", "azure",
+                      "Resident data is being encrypted with your azure key. "
+                      "(Its deletion protection could not be read.)")
+    level = posture.get("recovery_level") or ""
+    if "Purgeable" in level or not level.startswith("Recoverable"):
+        return _check(
+            "kms", "Resident data encryption", "warning", "azure",
+            "Your Azure key is in use, but purge protection is off: a deleted key "
+            "could be purged immediately, and every resident's contact details "
+            "with it, backups included.",
+            action=("Turn on purge protection for the Key Vault (it cannot be turned "
+                    "off again), and add a CanNotDelete lock on the vault. See "
+                    "docs/DISASTER_RECOVERY.md, 'Losing the encryption key'."),
+        )
+    expires = posture.get("expires")
+    if expires and expires - time.time() < 30 * 86400:
+        days = max(0, int((expires - time.time()) // 86400))
+        return _check(
+            "kms", "Resident data encryption", "critical" if days < 7 else "warning", "azure",
+            f"Your Azure key expires in {days} day(s). After that resident data "
+            "cannot be decrypted until the date is extended.",
+            action="Extend the key's expiration date in the Key Vault, or rotate the key.",
+        )
+    return _check("kms", "Resident data encryption", "ok", "azure",
+                  f"Resident data is being encrypted with your azure key "
+                  f"(purge protection on, {posture.get('recoverable_days') or '?'}-day recovery window).")
 
 
 async def _redaction_check() -> Dict[str, Any]:

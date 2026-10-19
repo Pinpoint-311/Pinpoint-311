@@ -383,7 +383,50 @@ failure is recoverable but only if somebody knows it is happening.
    lapses, decryption stops and nothing about the failure points at a date.
 4. **Do not confuse rotation with deletion.** Rotating is safe — old versions
    are retained and keep decrypting old rows — and worth doing. Destroying is
-   final. They sit next to each other in every console.
+   final. They sit next to each other in every console. On Azure, keep an old
+   version *enabled* until the setup page shows no records on it (see "Key
+   custody and rotation" below); disabling it early makes those rows
+   unreadable until it is re-enabled.
+
+### Key custody and rotation
+
+**Who holds the key.** The key belongs to whoever owns the cloud account it
+lives in. Pinpoint's templates create the vault or key in the *town's* (or
+county's) own subscription, and the application is given only the right to
+wrap and unwrap data keys with it — it cannot read, export, delete or rotate
+the key. The town can therefore revoke the application's access at any time,
+and nobody outside the town's account holds the key. A pilot whose vault sits
+in someone else's account (a vendor's or a contractor's) has handed that
+party the key: move it to the town's subscription before real residents' data
+is stored, or set the expectation in writing.
+
+**Rotation.** Rotate on whatever schedule the town's policy sets; nothing in
+Pinpoint breaks.
+
+- Google Cloud KMS and AWS KMS record the key version inside their own
+  ciphertext and decrypt across versions automatically.
+- Azure Key Vault does not, so Pinpoint records the version that wrapped each
+  data key and unwraps with that version. New data keys move to the new
+  version within ten minutes. The nightly re-wrap (`rewrap_pii`) moves
+  existing records across, and the setup page counts what is still on an older
+  version. When that count is zero, the old version can be disabled.
+- Data is never re-encrypted in bulk for a rotation: only the small wrapped
+  data keys change.
+
+**Protection against losing it** (cryptographic shredding). Every encrypted
+value, and every backup of it, is unreadable without the key, so the key's
+survival is the data's survival:
+
+- Azure: soft delete with **purge protection** (recovery level `Recoverable`,
+  not `Recoverable+Purgeable`), a `CanNotDelete` lock on the vault, and no
+  expiry date set on the key. The proactive health scan reads the first and
+  last of these from the key itself every fifteen minutes and alerts if
+  purge protection is off or an expiry is near.
+- Key Vault keeps keys zone-redundant and replicated to the paired region;
+  AWS KMS and Google Cloud KMS are regional and multi-zone. Multi-region
+  redundancy is the provider's job, which is why the key lives there.
+- The account that holds the key is the single point of failure no setting
+  covers (previous section): town-owned, town-billed, more than one admin.
 
 ### If it has already happened
 

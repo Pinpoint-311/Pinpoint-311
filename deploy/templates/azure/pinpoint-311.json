@@ -275,7 +275,7 @@
       }
     },
     {
-      "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it. NO rotationPolicy, on purpose: Azure will only auto-rotate a key that carries an expiry time, an expired version refuses unwrap, and every resident record already wrapped under an earlier version would become permanently unreadable the day that version expired - Pinpoint has no background job that re-wraps stored data. Rotate this key deliberately instead; the README says what has to happen alongside it.",
+      "comments": "The RSA key. Created through Azure Resource Manager, which is why this route does not need the deployer to hold Key Vault Crypto Officer first - the requirement that stops the portal's Generate/Import screen working on a brand-new vault. keyOps is limited to wrapping and unwrapping, which is all Pinpoint ever asks of it. NO rotationPolicy by default: Azure will only auto-rotate a key that carries an expiry time, and an expired version refuses unwrap. Pinpoint records the version that wrapped each data key and re-wraps stored data nightly, so rotating is safe; an auto-rotation policy needs its expiry set far longer than its interval. See the README, 'Key rotation'.",
       "condition": "[parameters('deployKeyVault')]",
       "type": "Microsoft.KeyVault/vaults/keys",
       "apiVersion": "2023-07-01",

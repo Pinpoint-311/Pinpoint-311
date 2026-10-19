@@ -14,7 +14,7 @@ import base64
 import logging
 import os
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import httpx
 
@@ -178,33 +178,143 @@ def _api_version() -> str:
 # deployment's key more capable than it needs to be.
 
 
-def _key_op(operation: str, value: str) -> str:
+def _key_op(operation: str, value: str, version: Optional[str] = None) -> dict:
     token = _get_token()
     key_name = _cfg("AZURE_KEYVAULT_KEY")
     if not token or not key_name:
         raise RuntimeError("Azure Key Vault key crypto not configured")
+    path = f"{key_name}/{version}" if version else key_name
     resp = httpx.post(
-        f"{_vault_url()}/keys/{key_name}/{operation}?api-version={_api_version()}",
+        f"{_vault_url()}/keys/{path}/{operation}?api-version={_api_version()}",
         headers={"Authorization": f"Bearer {token}",
                  "Content-Type": "application/json"},
         json={"alg": "RSA-OAEP-256", "value": value},
         timeout=15.0,
     )
     resp.raise_for_status()
-    return resp.json()["value"]
+    return resp.json()
 
+
+def _version_of(kid: str) -> str:
+    """The version segment of a key id: .../keys/<name>/<version>."""
+    return (kid or "").rstrip("/").rsplit("/", 1)[-1]
+
+
+# Key rotation.
+#
+# A call to /keys/<name>/unwrapkey with no version uses the key's *current*
+# version. That is right for wrapping and wrong for unwrapping: after the
+# town rotates the key (a 90-day policy is ordinary), every data key wrapped
+# under the previous version would be sent to the new one and refused, and
+# every resident record would stop decrypting while the version that could
+# open them sat enabled in the same vault. So a wrap records the version Key
+# Vault used (the `kid` in its answer), and an unwrap names it.
 
 def encrypt(plaintext: str) -> str:
     """Wrap a small value with the configured Key Vault key (RSA-OAEP-256).
 
     Named `encrypt` for its callers; the request it makes is `wrapkey`. Returns
-    the base64url ciphertext.
+    the base64url ciphertext. Prefer `wrap_versioned`, which also says which
+    key version did the wrapping.
     """
-    return _key_op("wrapkey", _b64url_nopad(plaintext.encode("utf-8")))
+    return wrap_versioned(plaintext)[1]
 
 
-def decrypt(ciphertext_b64url: str) -> str:
-    return _b64url_decode(_key_op("unwrapkey", ciphertext_b64url)).decode("utf-8")
+def wrap_versioned(plaintext: str) -> Tuple[str, str]:
+    """(key version, base64url ciphertext) for a value wrapped with the key's current version."""
+    body = _key_op("wrapkey", _b64url_nopad(plaintext.encode("utf-8")))
+    return _version_of(body.get("kid", "")), body["value"]
+
+
+def decrypt(ciphertext_b64url: str, version: Optional[str] = None) -> str:
+    """Unwrap with the named key version, or the current one when none is given."""
+    return _b64url_decode(_key_op("unwrapkey", ciphertext_b64url, version)["value"]).decode("utf-8")
+
+
+def decrypt_any_version(ciphertext_b64url: str) -> str:
+    """Unwrap a value whose wrapping version was not recorded.
+
+    Values written before versions were recorded. Tries the current version
+    first -- right for every such value until the key is first rotated -- then
+    each other enabled version, newest first.
+    """
+    try:
+        return decrypt(ciphertext_b64url)
+    except httpx.HTTPStatusError as first:
+        if first.response.status_code in (401, 403):
+            raise  # authorisation, not the wrong version: another version will not help
+        for version in key_versions()[1:]:
+            try:
+                return decrypt(ciphertext_b64url, version)
+            except httpx.HTTPStatusError:
+                continue
+        raise first
+
+
+def _get_json(path: str) -> dict:
+    token = _get_token()
+    if not token:
+        raise RuntimeError("no Key Vault access token")
+    resp = httpx.get(path if path.startswith("http") else
+                     f"{_vault_url()}{path}?api-version={_api_version()}",
+                     headers={"Authorization": f"Bearer {token}"}, timeout=15.0)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def key_versions() -> List[str]:
+    """The key's enabled versions, newest first."""
+    key_name = _cfg("AZURE_KEYVAULT_KEY")
+    if not key_name:
+        return []
+    items, page = [], _get_json(f"/keys/{key_name}/versions")
+    while True:
+        items.extend(page.get("value", []))
+        nxt = page.get("nextLink")
+        if not nxt:
+            break
+        page = _get_json(nxt)
+    enabled = [i for i in items if (i.get("attributes") or {}).get("enabled", True)]
+    enabled.sort(key=lambda i: (i.get("attributes") or {}).get("created", 0), reverse=True)
+    return [_version_of(i.get("kid", "")) for i in enabled]
+
+
+_current_version_cache: dict = {}
+_CURRENT_VERSION_TTL = 600.0
+
+
+def current_key_version() -> Optional[str]:
+    """The version a wrap would use now. Cached ten minutes; None if it cannot be read."""
+    key_name = _cfg("AZURE_KEYVAULT_KEY")
+    if not key_name:
+        return None
+    hit = _current_version_cache.get(key_name)
+    if hit and hit[1] > time.time():
+        return hit[0]
+    try:
+        version = _version_of((_get_json(f"/keys/{key_name}").get("key") or {}).get("kid", ""))
+    except Exception as exc:
+        logger.debug("Key Vault: could not read the current key version: %s", exc)
+        return hit[0] if hit else None
+    _current_version_cache[key_name] = (version, time.time() + _CURRENT_VERSION_TTL)
+    return version
+
+
+def key_posture() -> dict:
+    """Attributes that decide whether the key can be lost: recovery level, expiry, enabled.
+
+    Read-only, and attributes only -- never key material (the key is not
+    exportable anyway).
+    """
+    key_name = _cfg("AZURE_KEYVAULT_KEY")
+    attrs = (_get_json(f"/keys/{key_name}").get("attributes") or {}) if key_name else {}
+    return {
+        "enabled": attrs.get("enabled"),
+        "recovery_level": attrs.get("recoveryLevel"),
+        "recoverable_days": attrs.get("recoverableDays"),
+        "expires": attrs.get("exp"),
+        "exportable": attrs.get("exportable"),
+    }
 
 
 # ---- Secret store ----

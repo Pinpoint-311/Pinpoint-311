@@ -116,23 +116,26 @@ az keyvault network-rule add --name <vault> --ip-address <cidr>
 az keyvault update --name <vault> --default-action Deny
 ```
 
-## Key rotation: not automatic, and that is the safe answer
+## Key rotation
 
-No `rotationPolicy` is set, and adding one would be dangerous here rather than
-merely unnecessary. Azure only auto-rotates a key that carries an **expiry time**,
-and an expired key version refuses `unwrapKey`. Every resident record already
-wrapped under an earlier version would become permanently unreadable on the day
-that version expired, because Pinpoint has no background job that re-wraps stored
-data.
+Rotate on whatever schedule your policy sets. Pinpoint records which key
+version wrapped each data key and unwraps with that version, moves new data
+keys to a new version within ten minutes, and re-wraps existing ones nightly.
+**Setup & Integration** shows how many records are still on an older version.
 
-Rotate deliberately instead: create a new key version, then re-wrap what is
-stored under it, then retire the old version. Azure retains old versions
-indefinitely, so there is no deadline forcing the issue.
+- **By hand** (`az keyvault key rotate --vault-name <vault> --name <key>`, or
+  *New version* in the portal): nothing else to do. Disable the old version
+  only once the setup page shows no records on it.
+- **With a rotation policy**: Azure only auto-rotates a key whose versions
+  carry an expiry time, and an expired version refuses `unwrapKey`. So set the
+  expiry far longer than the rotation interval (for example rotate every 90
+  days, expire after two years). The nightly re-wrap has then long since
+  moved every record off a version before it expires. Keep an eye on the
+  setup page's count; a version that expires with records still on it makes
+  them unreadable until its expiry is extended.
 
-(Pinpoint's Google Cloud walkthrough recommends a 90-day rotation because Cloud
-KMS decrypts against *any* enabled version automatically, with no expiry
-involved. The two are not the same mechanism and the recommendation does not
-carry across.)
+No `rotationPolicy` is set by this template, so nothing expires unless you
+choose it.
 
 ## The model version floats
 

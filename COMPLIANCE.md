@@ -99,6 +99,8 @@ When an external secret store is configured, integration and provider credential
 | Protected fields | Email, phone, first and last name. The service address and coordinates are stored in plain text, because they are mapped, routed by jurisdiction and (unless a report is unlisted) shown on the public map. Categories set to "Not collected" store no location at all |
 | Local fallback | Fernet (AES-128-CBC + HMAC-SHA256) derived from `SECRET_KEY` |
 | Provider guarantees | HSM backing, rotation, and certifications are the cloud provider's, not Pinpoint's — verify them against your requirements |
+| Key custody | The key lives in the town's own cloud account; the application can only wrap and unwrap data keys with it (no export, delete or rotate) |
+| Key rotation | Supported on any schedule. Azure key versions are recorded per data key and a nightly job re-wraps older ones; see [DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md#key-custody-and-rotation) |
 
 ### Resident History (optional module, off by default)
 
