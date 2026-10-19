@@ -828,7 +828,7 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                                 </p>
                                 {effectiveMute && (
                                     <p className="text-xs text-amber-200/85 mt-1.5">
-                                        Nobody is being emailed about this until{' '}
+                                        Alert emails are paused until{' '}
                                         {new Date(effectiveMute).toLocaleDateString()}. It is still not working.
                                     </p>
                                 )}

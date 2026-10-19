@@ -211,7 +211,7 @@ async def _db_connection_check(db) -> Dict[str, Any]:
         return _check(
             "db_connections", "Database connections", status, pct,
             f"{used} of {max_conn} connections in use ({pct}%).",
-            "Check for connection leaks or raise the pool/limit before it's exhausted." if status != "ok" else "",
+            "Restart the app if this keeps climbing, or raise the database connection limit before it runs out." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] db connection check failed: {e}")
@@ -247,7 +247,7 @@ async def _backup_age_check() -> Dict[str, Any]:
         return _check(
             "backup", "Backup freshness", status, round(hours, 1),
             f"Last backup was {round(hours)}h ago.",
-            "Backups are stale — verify the backup task is running." if status != "ok" else "",
+            "Backups are overdue. Check that scheduled backups are running." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] backup age check failed: {e}")
@@ -297,17 +297,21 @@ async def _redis_check() -> Dict[str, Any]:
         used_mb = round(used / (1024 ** 2), 1)
         if not max_mem:
             # No cap configured — report healthy with the current footprint.
-            return _check("redis", "Cache (Redis)", "ok", used_mb, f"Redis using {used_mb} MB (no cap set).")
+            return _check("redis", "Cache (Redis)", "ok", used_mb, f"The cache is using {used_mb} MB (no limit set).")
         pct = round(used / max_mem * 100, 1)
         status = classify_metric(pct, warn=80, crit=92)
         return _check(
             "redis", "Cache (Redis)", status, pct,
-            f"Redis memory at {pct}% of its cap ({used_mb} MB).",
-            "Raise maxmemory or review the eviction policy before keys are evicted." if status != "ok" else "",
+            f"The cache is using {pct}% of its memory limit ({used_mb} MB).",
+            "Raise the cache's memory limit (the Redis maxmemory setting) before it fills up." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] redis check failed: {e}")
         return _check("redis", "Cache (Redis)", "unknown", None, "Could not reach Redis.")
+
+
+# Names an admin recognizes, for the provider ids stored in settings.
+_KMS_LABELS = {"google": "Google Cloud KMS", "azure": "Azure Key Vault", "aws": "AWS KMS"}
 
 
 async def _kms_check() -> Dict[str, Any]:
@@ -351,12 +355,12 @@ async def _kms_check() -> Dict[str, Any]:
             return _azure_key_posture_check()
         if actual == selected:
             return _check("kms", "Resident data encryption", "ok", actual,
-                          f"Resident data is being encrypted with your {actual} key.")
+                          f"Resident data is being encrypted with your {_KMS_LABELS.get(actual, actual)} key.")
 
         return _check(
             "kms", "Resident data encryption", "critical", actual,
-            f"Your {selected} key is not being used — new resident data is being "
-            f"encrypted with the application key instead.",
+            f"Your {_KMS_LABELS.get(selected, selected)} key is not being used. New resident "
+            f"data is being encrypted with this server's own key instead.",
             action=(
                 "Act today. Check that the key still exists and has not been scheduled "
                 "for deletion, and that its credentials have not expired. Records saved "
@@ -388,7 +392,7 @@ def _azure_key_posture_check() -> Dict[str, Any]:
         posture = azure_keyvault.key_posture()
     except Exception:
         return _check("kms", "Resident data encryption", "ok", "azure",
-                      "Resident data is being encrypted with your azure key. "
+                      "Resident data is being encrypted with your Azure Key Vault key. "
                       "(Its deletion protection could not be read.)")
     level = posture.get("recovery_level") or ""
     if "Purgeable" in level or not level.startswith("Recoverable"):
@@ -411,7 +415,7 @@ def _azure_key_posture_check() -> Dict[str, Any]:
             action="Extend the key's expiration date in the Key Vault, or rotate the key.",
         )
     return _check("kms", "Resident data encryption", "ok", "azure",
-                  f"Resident data is being encrypted with your azure key "
+                  f"Resident data is being encrypted with your Azure Key Vault key "
                   f"(purge protection on, {posture.get('recoverable_days') or '?'}-day recovery window).")
 
 
@@ -452,8 +456,8 @@ async def _redaction_check() -> Dict[str, Any]:
                 "without blurring faces or license plates.",
                 action=(
                     "Check the Photo Redaction card. On-server detection needs no "
-                    "account and works anywhere, so this usually means the image is "
-                    "missing OpenCV rather than that a credential is wrong."
+                    "account and works anywhere, so this usually means this server's "
+                    "install is missing OpenCV, not that a credential is wrong."
                 ),
             )
 
@@ -586,8 +590,8 @@ async def _retention_check(db) -> Dict[str, Any]:
             action=(
                 "Open Settings → Compliance → Document Retention and set how long closed "
                 "requests are kept, and what a run removes from them. Your clerk has the "
-                "town's approved records retention schedule; this product will not guess "
-                "at it. Until both are set, resident personal data is kept indefinitely."
+                "town's approved records retention schedule. Until both are set, resident "
+                "personal data is kept indefinitely."
             ),
         )
     except Exception:

@@ -123,14 +123,14 @@ async def check_running_code_is_current(db: AsyncSession) -> Dict[str, Any]:
 
     stale, drift = fresh.staleness()
     if not stale:
-        return {"status": "ok", "message": "Running the code that is on disk."}
+        return {"status": "ok", "message": "Running the installed version."}
     ago = str(timedelta(seconds=int(drift))).split(".")[0]
     return {
         "status": "warning",
         "message": (
-            f"The source on disk is {ago} newer than this process. Restart the "
-            f"API and worker to pick it up — until then they serve the code they "
-            f"loaded at boot."
+            f"A newer version was installed {ago} after the app last started. "
+            f"Restart the app (backend and worker) to use it. Until then, the "
+            f"previous version keeps running."
         ),
     }
 
@@ -158,6 +158,10 @@ async def check_credential_expiry(db: AsyncSession) -> Dict[str, Any]:
     return {"status": worst, "message": issues[0]["message"], "issues": issues}
 
 
+# Names an admin recognizes, for the provider ids stored in settings.
+_KMS_LABELS = {"google": "Google Cloud KMS", "azure": "Azure Key Vault", "aws": "AWS KMS"}
+
+
 async def check_kms(db: AsyncSession) -> Dict[str, Any]:
     """Round-trip PII encryption and report which key manager did the wrapping.
 
@@ -176,7 +180,7 @@ async def check_kms(db: AsyncSession) -> Dict[str, Any]:
         if decrypt_pii(encrypted) != test_data:
             return {
                 "status": "error",
-                "message": "PII encryption round-trip returned incorrect data",
+                "message": "The encryption check failed: test data did not decrypt back to the original.",
                 "selected_provider": selected,
             }
 
@@ -213,7 +217,7 @@ async def check_kms(db: AsyncSession) -> Dict[str, Any]:
 
         if label:
             return {"status": "healthy",
-                    "message": f"Envelope encryption working (data key wrapped by {label})",
+                    "message": f"Resident data encryption is working, protected by {label}.",
                     **details}
 
         # Local wrapping. Expected on a self-hosted install with no cloud
@@ -223,21 +227,22 @@ async def check_kms(db: AsyncSession) -> Dict[str, Any]:
             return {
                 "status": "fallback",
                 "message": (
-                    f"PII is encrypted, but with the application key — the selected "
-                    f"key manager ({selected}) is not reachable, so it is not being used."
+                    f"Resident data is encrypted, but with this server's own key. The "
+                    f"selected key service ({_KMS_LABELS.get(selected, selected)}) is not "
+                    f"reachable, so it is not being used."
                 ),
                 **details,
             }
         return {
             "status": "fallback",
-            "message": "PII encryption working with a local application-key-wrapped data key (no cloud KMS configured)",
+            "message": "Resident data is encrypted with this server's own key. No cloud key service is set up.",
             **details,
         }
 
     except Exception as e:
         import logging
         logging.getLogger(__name__).error(f"KMS health check failed: {e}")
-        return {"status": "error", "message": "KMS check failed"}
+        return {"status": "error", "message": "The encryption key check could not run. The server log has the details."}
 
 
 async def check_secret_manager(db: AsyncSession) -> Dict[str, Any]:

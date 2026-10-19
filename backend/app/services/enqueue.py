@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 # text and no FastAPI import: this module is reachable from the CI test suite,
 # which installs neither FastAPI nor Celery.
 QUEUE_UNAVAILABLE = (
-    "The background worker is not reachable, so this job did not start. "
-    "Nothing has been changed. Check that the worker and Redis are running, "
-    "then try again."
+    "The background job service is not reachable, so this job did not start. "
+    "Nothing has been changed. Check that the worker and Redis services are "
+    "running, then try again."
 )
 
 

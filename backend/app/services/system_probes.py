@@ -61,8 +61,8 @@ def classify_disk(percent_used: Optional[float], *, free_label: str = "") -> Dic
         ))
     if percent_used >= DISK_WARN_PERCENT:
         return _outcome(False, (
-            f"Disk is {percent_used:.0f}% full.{room} Not urgent yet, but it does not "
-            f"empty itself -- worth arranging more space now rather than at 99%."
+            f"Disk is {percent_used:.0f}% full.{room} Not urgent yet, but it will keep "
+            f"filling. Arrange more space soon."
         ))
     return _outcome(True, f"Disk is {percent_used:.0f}% full.{room}")
 
@@ -152,7 +152,7 @@ def classify_memory(reading: Dict[str, Any]) -> Dict[str, Any]:
     if percent >= MEMORY_WARN_PERCENT:
         return _outcome(False, (
             f"Memory is {percent:.0f}% used -- {used}. Not failing yet, but there is little "
-            f"headroom for a busy afternoon."
+            f"room left for busy periods."
         ))
     return _outcome(True, f"Memory is {percent:.0f}% used -- {used}.")
 
