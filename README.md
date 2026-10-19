@@ -104,6 +104,7 @@ before going live.
 | Resident | Report without an account, follow a private status link, browse the public map | [Features](docs/FEATURES.md#resident-portal) |
 | Staff | One queue, triage panel, notes, assignment, printable work orders | [Features](docs/FEATURES.md#staff-dashboard) |
 | Administrator | Branding, users, departments, categories, routing, retention, and providers in the browser | [Features](docs/FEATURES.md#admin-console), [Configuration](docs/CONFIGURATION.md) |
+| Researcher | An optional Research Suite the town can switch on: request volume, response times and geographic patterns, with CSV and GeoJSON exports that leave out free text and direct identifiers | [Features](docs/FEATURES.md#research-lab) |
 | Town IT | A Docker Compose stack, one public listener, encrypted backups, signed upgrades only when you approve them | [Quick start](#quick-start), [Security model](#security-model), [Operations](docs/OPERATIONS.md) |
 | Developer | FastAPI and React code, an Open311 API, pytest and Vitest suites | [How it works](#how-it-works), [API](docs/API.md), [Development](docs/DEVELOPMENT.md) |
 
@@ -269,7 +270,7 @@ for HTTPS, a DNS name pointing at it with ports 80 and 443 open.
 2. **Edit the `Caddyfile`**: delete every site block after `{$DOMAIN:localhost}` except the `import /etc/caddy/tenants/*.caddy` line, and remove `import noindex` if the portal should be indexed by search engines.
 3. **Start the stack** with `scripts/build-release.sh --latest && docker compose up -d`, or the published images (`-f docker-compose.yml -f docker-compose.prod.yml pull`, then `up -d`). In production, pin a signed release in `release.lock` ([docs/RELEASES.md](docs/RELEASES.md)).
 4. **Sign in** with **Enter Admin Console** and `INITIAL_ADMIN_PASSWORD`. This bootstrap login stops working once an identity provider is saved.
-5. **Finish setup** under **Admin Console > Setup & Integration**: secret store, staff sign-in, map provider and boundary, optional services, then users, departments and categories.
+5. **Finish setup** under **Admin Console > Setup & Integration**: secret store (encrypted database, Google Secret Manager, AWS Secrets Manager or Azure Key Vault), staff sign-in (Auth0, Microsoft Entra ID, Okta or generic OIDC), map provider and boundary, optional services, then users, departments and categories.
 
 > [!IMPORTANT]
 > `SECRET_KEY` signs staff sessions and derives the local encryption key. Keep a
@@ -336,6 +337,13 @@ We aim to acknowledge reports within 48 hours.
 | [API](docs/API.md), [INTEGRATIONS](docs/INTEGRATIONS.md), [DEVELOPMENT](docs/DEVELOPMENT.md) | For integrators and contributors |
 | [DISASTER_RECOVERY](docs/DISASTER_RECOVERY.md), [SENTRY_SETUP](docs/SENTRY_SETUP.md) | Restore, key loss, crash reporting |
 | [COST](COST.md), [deploy/templates](deploy/templates/README.md), [THIRD-PARTY-NOTICES](THIRD-PARTY-NOTICES.md) | Costs, cloud templates, licenses |
+
+## Sustainability and continuity
+
+A town keeps control of its deployment. The full source is MIT-licensed, so it
+can be run, modified or forked independently; the data stays in the town's own
+PostgreSQL database; updates are applied only when the operator chooses; and a
+standalone instance never needs the centralized-hosting control plane.
 
 ## License and fiscal sponsorship
 
