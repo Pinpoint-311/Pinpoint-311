@@ -58,3 +58,13 @@ async def test_the_task_uses_the_same_lookup_as_the_rest_of_the_app(monkeypatch)
         return None
     monkeypatch.setattr(system, "public_origin", nothing)
     assert await task._portal_url(None) == ""
+
+
+def test_the_worker_can_delete_the_photos_retention_clears():
+    """Scheduled retention runs in the worker. Without the uploads volume (and
+    UPLOAD_DIR) it cleared photo links and left every file on disk."""
+    yaml = pytest.importorskip("yaml")
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text())
+    backend, worker = compose["services"]["backend"], compose["services"]["worker"]
+    assert worker["environment"]["UPLOAD_DIR"] == backend["environment"]["UPLOAD_DIR"]
+    assert any(str(v).startswith("uploads_data:") for v in worker["volumes"])

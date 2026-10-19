@@ -188,9 +188,13 @@ services:
       # the advisory lock and performs the migration. It needs somewhere to put
       # the pre-migration dump, or it would refuse to start.
       - migration_backups:/backups
+      # Scheduled retention runs here and deletes cleared photos from disk;
+      # without the uploads volume it cleared the links and left the files.
+      - uploads_data:/data/uploads
       # Same models, so the health scan can see whether they are installed.
       - ${REDACTION_MODELS_DIR:-./models}:/models:ro
     environment:
+      UPLOAD_DIR: /data/uploads
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Set a strong unique SECRET_KEY in .env (e.g. openssl rand -hex 32) — it signs JWTs and derives the PII encryption key}
