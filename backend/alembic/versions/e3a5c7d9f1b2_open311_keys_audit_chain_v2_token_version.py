@@ -4,7 +4,7 @@ Revision ID: e3a5c7d9f1b2
 Revises: d2e4f6a8b0c1
 Create Date: 2026-10-18
 
-One revision for five changes that ship together. The orchestrator accepts a
+One revision for six changes that ship together. The orchestrator accepts a
 town only at exactly {min_db_revision, db_revision}; three chained revisions in
 one release would leave every town on d2e4f6a8b0c1 outside that window.
 
@@ -32,6 +32,9 @@ Session revocation (app/core/auth.py):
   users.token_version NOT NULL default 0. Session tokens carry `tv`; a token
      whose version no longer matches the row is refused. Tokens issued before
      this revision have no `tv`, read as 0, so the deploy signs nobody out.
+
+Staff invites (app/tasks/staff_invites.py):
+  users.invited_at (nullable): when the invite email was last sent.
 
 Polygon context layers (app/services/gis_layers.py):
   map_layer_features  one row per polygon of a table-backed layer (tax
@@ -110,6 +113,9 @@ def upgrade() -> None:
 
     # Session revocation
     op.add_column("users", sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"))
+
+    # Staff invites
+    op.add_column("users", sa.Column("invited_at", sa.DateTime(timezone=True), nullable=True))
 
     # Polygon context layers
     op.add_column("map_layers", sa.Column("feature_storage", sa.String(length=10), nullable=False, server_default="inline"))
@@ -242,6 +248,7 @@ def downgrade() -> None:
     op.drop_column("map_layers", "label_property")
     op.drop_column("map_layers", "feature_id_property")
     op.drop_column("map_layers", "feature_storage")
+    op.drop_column("users", "invited_at")
     op.drop_column("users", "token_version")
     op.drop_column("audit_anchors", "auth_legacy_count")
     op.drop_column("audit_anchors", "auth_entry_count")

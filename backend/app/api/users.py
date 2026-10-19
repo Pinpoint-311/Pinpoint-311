@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from slowapi import Limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -6,7 +7,14 @@ from typing import List
 
 from app.db.session import get_db
 from app.models import User, Department
-from app.schemas import UserCreate, UserResponse, UserUpdate
+from app.schemas import (
+    InviteResponse,
+    UserCreate,
+    UserCreateResponse,
+    UserResponse,
+    UserUpdate,
+)
+from app.core.client_ip import rate_limit_key
 from app.core.auth import (
     get_current_admin,
     get_current_staff,
@@ -14,8 +22,11 @@ from app.core.auth import (
     revoke_user_sessions,
 )
 from app.services.admin_audit import record_admin_action
+from app.services import staff_invite
 
 router = APIRouter()
+# Per-caller, not per-proxy -- see app/core/client_ip.py.
+limiter = Limiter(key_func=rate_limit_key)
 
 
 # Minimal response schema for staff assignment dropdown
@@ -87,7 +98,7 @@ async def list_users(
     return result.scalars().all()
 
 
-@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db),
@@ -95,10 +106,16 @@ async def create_user(
 ):
     """
     Create a new user (admin only).
-    
-    Users are created with email as their identifier. They will log in via 
-    Auth0 SSO using their email address. No password is required as 
-    authentication is handled by Auth0.
+
+    Users are created with email as their identifier and sign in through the
+    town's identity provider (Entra ID, Auth0, Okta or OIDC) with that address.
+    No password is set.
+
+    With `send_invite` (the default) an invite email is queued once the
+    account is saved. The response's `invite` says what happened to it:
+    "queued", "skipped_email_off", "not_requested", or "queue_failed" (the
+    account is saved; the worker could not be reached). Creation never waits
+    on mail and never fails because of it.
     """
     from app.models import Department
     
@@ -153,7 +170,51 @@ async def create_user(
         .where(User.id == user.id)
         .options(selectinload(User.departments))
     )
-    return result.scalar_one()
+    created = result.scalar_one()
+
+    # After the commit and the audit entry: the account exists whatever
+    # happens to the email. queue_invite never raises.
+    invite = staff_invite.NOT_REQUESTED
+    if user_data.send_invite:
+        invite = await staff_invite.queue_invite(db, created, _)
+
+    response = UserCreateResponse.model_validate(created)
+    response.invite = invite
+    return response
+
+
+@router.post("/{user_id}/invite", response_model=InviteResponse)
+# Below the route decorator, so the router registers the limited function (see
+# gis.py). Per target account as well as per caller: an admin pressing the
+# button repeatedly should not fill a colleague's inbox.
+@limiter.limit("5/hour", key_func=lambda request: f"users:invite:{request.path_params.get('user_id')}")
+@limiter.limit("30/hour")
+async def resend_invite(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    """Send the invite email again (admin only, 5 per account per hour).
+
+    The outcome of the send is recorded in the audit log by the worker as
+    `staff_invite_sent` or `staff_invite_failed`.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account is deactivated. Reactivate it before sending an invite.",
+        )
+    invite = await staff_invite.queue_invite(db, user, current_user)
+    # That an admin asked for it, separately from whether it was delivered.
+    await record_admin_action(
+        db, event_type="staff_invite_requested", actor=current_user,
+        details={**staff_invite.audit_details(user.id, user.email), "invite": invite},
+    )
+    return InviteResponse(invite=invite)
 
 
 @router.get("/{user_id}", response_model=UserResponse)

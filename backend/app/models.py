@@ -55,6 +55,9 @@ class User(Base):
     })
     phone = Column(String(50))  # Staff phone for SMS alerts
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # When an invite email was last sent to this account (app/tasks/staff_invites.py).
+    # Null for accounts never invited, including every account made before invites existed.
+    invited_at = Column(DateTime(timezone=True), nullable=True)
     
     # Staff can be assigned to multiple departments
     departments = relationship(

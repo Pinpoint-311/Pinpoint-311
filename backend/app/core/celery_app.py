@@ -65,7 +65,8 @@ celery_app = Celery(
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
-             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades"]
+             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades",
+             "app.tasks.staff_invites"]
 )
 
 celery_app.conf.update(

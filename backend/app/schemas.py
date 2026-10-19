@@ -70,6 +70,9 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     department_ids: Optional[List[int]] = []
+    # Email the new account an invitation to sign in. On by default: an account
+    # nobody is told about is an account nobody uses.
+    send_invite: bool = True
 
 
 class UserUpdate(BaseModel):
@@ -98,9 +101,24 @@ class UserResponse(UserBase):
     departments: List[DepartmentBrief] = []
     notification_preferences: Optional[Dict[str, bool]] = None
     phone: Optional[str] = None
+    invited_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+# What happened to the invite email when an account was created or an invite
+# resent. "queue_failed" means the account is saved but the message could not
+# be handed to the worker (broker down); the admin can resend.
+InviteOutcome = Literal["queued", "skipped_email_off", "not_requested", "queue_failed"]
+
+
+class UserCreateResponse(UserResponse):
+    invite: InviteOutcome = "not_requested"
+
+
+class InviteResponse(BaseModel):
+    invite: InviteOutcome
 
 
 class NotificationPreferencesUpdate(BaseModel):
