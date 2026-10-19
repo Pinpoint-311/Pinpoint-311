@@ -283,6 +283,16 @@ async def persist_boundary(db, geojson_data: dict, name: str = None,
             logger.warning("Inline road seeding failed: %s", inline_exc)
             seeding = "failed"
 
+    # The critical-facility store covers the boundary, so a new boundary is a
+    # new area to fetch. Queued only: it is one slow Overpass query, and the
+    # daily check fills it anyway if no worker is listening.
+    try:
+        from app.services.enqueue import enqueue
+        from app.tasks.critical_facilities import refresh_critical_facilities
+        enqueue(refresh_critical_facilities, force=True)
+    except Exception as exc:
+        logger.warning("Could not queue the critical-facilities refresh: %s", exc)
+
     return {"boundary": boundary_data, "seeding": seeding}
 
 
