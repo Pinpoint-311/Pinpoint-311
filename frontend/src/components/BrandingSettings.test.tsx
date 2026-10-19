@@ -11,6 +11,7 @@ vi.mock('../services/api', () => ({
     api: {
         uploadImage: vi.fn(async () => ({ url: '/uploads/logo.png', filename: 'logo.png' })),
         configureDomain: vi.fn(),
+        getDomainStatus: vi.fn(async () => ({ configured_domains: [], server_ip: '203.0.113.10' })),
     },
 }));
 
@@ -230,4 +231,11 @@ describe('admin console drawer and shared styles', () => {
         expect(opens.length).toBe(2);
     });
 
+});
+
+describe('DNS instructions', () => {
+    it("show this deployment's address, never a hardcoded one", async () => {
+        render(<Harness />);
+        expect((await screen.findAllByText('203.0.113.10')).length).toBeGreaterThan(0);
+    });
 });
