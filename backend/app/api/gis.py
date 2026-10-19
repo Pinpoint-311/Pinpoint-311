@@ -526,6 +526,19 @@ STATE_FIPS = {
 }
 
 
+def census_name_where(town_name: str, state_fips: str) -> str:
+    """TIGERweb `where` clause matching a place name within one state.
+
+    ArcGIS evaluates this as SQL, so the typed name is a string literal and its
+    quotes are doubled. Interpolated raw, "Coeur d'Alene" was a syntax error and
+    any quote in the box let the typed text rewrite the query, state filter
+    included. (Admin-only and a public Census service, so a correctness bug
+    more than a security one -- but it is SQL built from input all the same.)
+    """
+    name = (town_name or "").upper().replace("'", "''")
+    return f"UPPER(BASENAME) LIKE '%{name}%' AND STATE = '{state_fips}'"
+
+
 @router.get("/census-boundary-search")
 async def search_census_boundary(
     town_name: str,
@@ -553,7 +566,7 @@ async def search_census_boundary(
     
     # Build query
     base_url = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer"
-    where_clause = f"UPPER(BASENAME) LIKE '%{town_name.upper()}%' AND STATE = '{state_fips}'"
+    where_clause = census_name_where(town_name, state_fips)
     
     params = {
         "f": "geojson",

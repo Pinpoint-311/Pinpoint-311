@@ -154,6 +154,12 @@ async def get_oidc_metadata(config: Dict[str, Any]) -> Dict[str, Any]:
             resp.raise_for_status()
             meta = resp.json()
     except Exception as e:
+        from app.integrations.base import UnsafeURLRefused
+        if isinstance(e, UnsafeURLRefused):
+            # The guard refused the host itself. The fallback below builds its
+            # URLs from that same host, so falling back would hand the refused
+            # address straight to the token exchange.
+            raise
         if config["provider"] == "auth0":
             # Backward-compatible fallback: Auth0's fixed endpoint scheme
             domain = config["domain"]
@@ -239,6 +245,13 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
     from fastapi import HTTPException
 
     meta = await get_oidc_metadata(config)
+    # PyJWT treats issuer=None as "do not check the issuer", so a discovery
+    # document without one would have quietly turned the check off. Entra signs
+    # every tenant's tokens with the same keys; the issuer is what says the
+    # token came from THIS town's tenant. No issuer, no sign-in.
+    issuer = meta.get("issuer")
+    if not issuer:
+        raise HTTPException(status_code=401, detail="Identity provider names no issuer; refusing the token")
     # SSRF guard: jwks_uri comes from the discovery doc of an admin-supplied
     # issuer — refuse internal/loopback/metadata targets before fetching keys.
     from app.integrations.base import _assert_public_url
@@ -261,7 +274,11 @@ async def verify_oidc_token(token: str, config: Dict[str, Any]) -> Dict[str, Any
         claims = jwt.decode(
             token, key, algorithms=["RS256"],
             audience=config["client_id"],
-            issuer=meta.get("issuer"),
+            issuer=issuer,
+            # PyJWT checks exp/iss/aud only when the claim is present; an ID
+            # token with no exp would otherwise be good forever. OIDC Core
+            # makes all three mandatory, so requiring them refuses nothing real.
+            options={"require": ["exp", "iss", "aud"]},
         )
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token has expired")

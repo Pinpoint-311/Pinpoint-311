@@ -9,16 +9,26 @@
 # Model files are NOT in the image. They are mounted read-only at /models; see
 # README.md. Both targets build on linux/amd64 and linux/arm64.
 
-FROM python:3.11.13-slim-bookworm AS base
+# 3.11.15 on Debian 12.15. 3.11.13 sat on 12.12, and its OS packages (gnutls,
+# krb5, pam, libcap) carried fixed CRITICAL/HIGH advisories that only a newer
+# base picks up. setuptools/wheel: the base's copies (and setuptools' vendored
+# jaraco.context/wheel) have HIGH advisories. setuptools 80.10.2 is the first
+# fixed release; wheel 0.46.3 is what the new base already ships (0.46.2 fixed it).
+FROM python:3.11.15-slim-bookworm AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     REDACTOR_MODELS_DIR=/models
+# The point release still trails Debian's security fixes (perl-base, pcre2 at
+# the time of writing); upgrading at build time picks them up.
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd --system --uid 10001 --no-create-home redactor
 WORKDIR /srv
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN pip install setuptools==80.10.2 wheel==0.46.3 \
+ && pip install -r requirements.txt
 EXPOSE 8000
 # No curl in slim; the stdlib is enough for a liveness probe.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \

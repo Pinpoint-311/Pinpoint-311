@@ -27,6 +27,26 @@ import type {
 
 const API_BASE = '/api';
 
+/**
+ * True when an endpoint path would climb out of where its caller put it.
+ *
+ * Most paths interpolate ids unencoded, and some of those ids come from the
+ * URL: the portal's `#track/<id>` is decodeURIComponent'd and handed to
+ * getPublicRequestDetail, so a link to `/#track/..%2F..%2F..%2Fusers` made
+ * `/open311/v2/public/requests/../../../users`, which fetch() normalises to
+ * `/api/users` -- sent with the Authorization header of whoever is signed in
+ * (client-side path traversal). Checking here covers every call site at once.
+ * The WHATWG URL parser treats `\` like `/`, `%2e` like `.`, and drops tabs and
+ * newlines, so the check does the same before looking for `.`/`..` segments.
+ */
+export function hasDotSegment(endpoint: string): boolean {
+    const path = endpoint.replace(/[\t\n\r]/g, '').split(/[?#]/, 1)[0];
+    return path.split(/[\/\\]/).some(seg => {
+        const s = seg.replace(/%2e/gi, '.');
+        return s === '.' || s === '..';
+    });
+}
+
 /** A road limited to a stretch ("Oak Rd (Elm St to Route 10)"), as resolved on the map. */
 export interface RoadLimit {
     agency: string;
@@ -388,6 +408,9 @@ class ApiClient {
         endpoint: string,
         options: RequestInit = {}
     ): Promise<T> {
+        if (hasDotSegment(endpoint)) {
+            throw new Error('Invalid request path');
+        }
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
             ...(options.headers as Record<string, string> || {}),

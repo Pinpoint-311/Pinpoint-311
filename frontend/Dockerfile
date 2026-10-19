@@ -21,6 +21,11 @@ LABEL org.opencontainers.image.title="Pinpoint 311 Frontend" \
       org.opencontainers.image.source="https://github.com/Pinpoint-311/Pinpoint-311" \
       org.opencontainers.image.licenses="MIT"
 
+# nginx:alpine is rebuilt upstream only every few weeks; Alpine's security
+# fixes land in between (libexpat, libx11 at the time of writing). Upgrading
+# here means a rebuild picks them up without waiting for the next base image.
+RUN apk upgrade --no-cache
+
 # Copy built assets from builder (includes third-party-licenses.txt, which
 # nginx then serves at /third-party-licenses.txt)
 COPY --from=builder /app/dist /usr/share/nginx/html

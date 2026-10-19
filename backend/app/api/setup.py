@@ -604,6 +604,24 @@ async def configure_auth0(
         )
 
 
+async def _auth0_discovery_reachable(domain: str) -> bool:
+    """Whether the stored Auth0 domain answers its OIDC discovery URL.
+
+    AUTH0_DOMAIN is only shape-checked when it is saved through the generic
+    secrets form (credential_checks never blocks), so it can hold anything,
+    including "127.0.0.1" or "evil@internal-host". This probe then reported
+    reachable/unreachable and the connection error for any address the server
+    can see -- a port scanner. Same guard the OIDC discovery fetch already uses.
+    """
+    from app.integrations.base import _assert_public_url
+
+    url = f"https://{domain}/.well-known/openid-configuration"
+    _assert_public_url(url)
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.get(url)
+    return response.status_code == 200
+
+
 @router.post("/verify")
 async def verify_setup(
     current_user: User = Depends(get_current_user),
@@ -667,12 +685,7 @@ async def verify_setup(
             domain = decrypt_safe(auth0_secret.key_value)
             results["auth0"]["domain"] = domain
             
-            # Test OIDC discovery endpoint
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                response = await client.get(
-                    f"https://{domain}/.well-known/openid-configuration"
-                )
-                results["auth0"]["reachable"] = response.status_code == 200
+            results["auth0"]["reachable"] = await _auth0_discovery_reachable(domain)
     except Exception as e:
         results["auth0"]["error"] = str(e)
     

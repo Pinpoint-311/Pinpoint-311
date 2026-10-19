@@ -134,15 +134,15 @@ def _assert_public_url(url: str) -> None:
     metadata addresses. Resolves the hostname so DNS-based bypasses are caught."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
-        raise ConnectorError(f"Refusing non-HTTP(S) URL: {parsed.scheme or url}")
+        raise UnsafeURLRefused(f"Refusing non-HTTP(S) URL: {parsed.scheme or url}")
     host = parsed.hostname
     if not host:
-        raise ConnectorError("Refusing request to a URL with no host")
+        raise UnsafeURLRefused("Refusing request to a URL with no host")
     # Literal IP?
     try:
         ipaddress.ip_address(host)
         if _is_disallowed_ip(host):
-            raise ConnectorError(f"Refusing request to internal address {host}")
+            raise UnsafeURLRefused(f"Refusing request to internal address {host}")
         return
     except ValueError:
         pass
@@ -155,7 +155,7 @@ def _assert_public_url(url: str) -> None:
     for info in infos:
         ip_str = info[4][0]
         if _is_disallowed_ip(ip_str):
-            raise ConnectorError(
+            raise UnsafeURLRefused(
                 f"Refusing request to {host}: resolves to internal address {ip_str}"
             )
 
@@ -179,6 +179,12 @@ def _redact_secrets(text: str) -> str:
 
 class ConnectorError(Exception):
     """Raised when a vendor API call fails in a way the caller should surface."""
+
+
+class UnsafeURLRefused(ConnectorError):
+    """_assert_public_url refused the address itself (internal, loopback,
+    metadata, non-HTTP). Distinct from a lookup that merely failed, so a
+    caller with a fallback can fall back on the one and never on the other."""
 
 
 @dataclass

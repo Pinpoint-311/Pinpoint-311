@@ -177,6 +177,24 @@ Disallow: /
 	import pinpoint_site backend:8000 frontend:80
 }
 
+# Plain HTTP, for every host on this server: redirect to HTTPS, and nothing
+# else. Caddy would add this redirect on its own, but its built-in one answers
+# with `Server: Caddy` because it never passes through a site's `header`
+# block. That made it the one response here naming the server software, and a
+# DAST scan reports it. This is that same redirect with the header removed.
+#
+# No Strict-Transport-Security here on purpose. Browsers ignore HSTS received
+# over plain HTTP (RFC 6797 section 8.1), so it would only satisfy a scanner;
+# the HTTPS responses this redirects to are where it is sent and honoured.
+#
+# ACME HTTP-01 challenges are still answered: Caddy serves them before any
+# site's routes run. A hostname-specific http:// block elsewhere takes
+# precedence over this catch-all.
+http:// {
+	header -Server
+	redir https://{host}{uri} 308
+}
+
 
 # Centralized Hosting Orchestrator Control Panel
 centraldemo.pinpoint311.org {
