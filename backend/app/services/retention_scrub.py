@@ -77,12 +77,14 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "name",
         "label": "Reporter's name",
-        "detail": "First and last name are replaced with [ARCHIVED].",
+        "detail": "Replaced with [ARCHIVED]. The request no longer shows up "
+                  "when staff search a resident's name.",
     },
     {
         "id": "email",
         "label": "Reporter's email address",
-        "detail": "Replaced with a placeholder that cannot receive mail.",
+        "detail": "Replaced with a placeholder that cannot receive mail. The "
+                  "request no longer shows up in that resident's history.",
     },
     {
         "id": "phone",
@@ -98,11 +100,8 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "custom_fields",
         "label": "Answers to the town's own questions",
-        "detail": "Whatever residents typed into the follow-up questions this "
-                  "town added. Free text, so it holds the same names, phone "
-                  "numbers and neighbors' details the description does -- and "
-                  "it was invisible to retention entirely until recently, so on "
-                  "older records it outlived every other field.",
+        "detail": "What residents typed into this town's follow-up questions. "
+                  "Free text, so it can hold names and phone numbers too.",
     },
     {
         "id": "staff_notes",
@@ -130,9 +129,8 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
         # Both are fixed: apply_scrub clears both columns, and the caller (which
         # has the filesystem, and which this module deliberately does not)
         # deletes the files named by upload_filenames().
-        "detail": "The resident's photos and the staff completion photo. The "
-                  "links are cleared and the uploaded files are deleted from "
-                  "disk, so the images stop being reachable.",
+        "detail": "The resident's photos, any held back for review, and the "
+                  "staff completion photo. The files are deleted from disk.",
     },
     {
         "id": "ai_analysis",
@@ -146,6 +144,14 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
         "detail": "Both resident and staff comments.",
     },
     {
+        # Was in no field at all: what staff wrote to the resident when closing
+        # the request ("we patched the hole outside 12 Elm St, thanks Maria")
+        # outlived every other field, even a purge.
+        "id": "closing_message",
+        "label": "Closing message to the resident",
+        "detail": "What staff wrote to the resident when they closed the request.",
+    },
+    {
         "id": "address",
         "label": "Street address",
         "detail": "The address text. The map pin is a separate choice below.",
@@ -153,9 +159,9 @@ SCRUB_FIELDS: List[Dict[str, Any]] = [
     {
         "id": "coordinates",
         "label": "Map location",
-        "detail": "Removes the pin entirely, and the parcel or zone it was "
-                  "recorded in. The request disappears from maps and from "
-                  "anything counted by area.",
+        "detail": "Removes the pin, the parcel or zone it was in, and the "
+                  "nearby assets and facilities recorded with it. The request "
+                  "disappears from maps and from anything counted by area.",
     },
 ]
 
@@ -219,6 +225,10 @@ def upload_filenames(record: Any) -> List[str]:
     completion = getattr(record, "completion_photo_url", None)
     if isinstance(completion, str):
         candidates.append(completion)
+    pending = getattr(record, "media_pending_review", None)
+    if isinstance(pending, (list, tuple)):
+        candidates.extend(p.get("media") for p in pending
+                          if isinstance(p, dict) and isinstance(p.get("media"), str))
 
     names: List[str] = []
     for url in candidates:
@@ -235,6 +245,25 @@ def upload_filenames(record: Any) -> List[str]:
         if name not in names:
             names.append(name)
     return names
+
+
+# Parts of ai_analysis worked out from where the report is. Removed with the
+# map location even when the town keeps the AI analysis itself: "School: Elm
+# Street Elementary (40m)" puts the pin back on the map.
+LOCATION_CONTEXT_KEYS = ("critical_infrastructure", "is_school_zone", "nearby_outages",
+                         "similar_reports", "nearby_similar", "nearby_similar_ids")
+
+
+def scrub_location_context(record: Any) -> None:
+    analysis = getattr(record, "ai_analysis", None)
+    if not isinstance(analysis, dict):
+        return
+    analysis = dict(analysis)
+    analysis.pop("similar_reports", None)
+    context = analysis.get("context")
+    if isinstance(context, dict):
+        analysis["context"] = {k: v for k, v in context.items() if k not in LOCATION_CONTEXT_KEYS}
+    record.ai_analysis = analysis
 
 
 def scrub_ai_analysis(record: Any) -> None:
@@ -282,10 +311,21 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
     if "name" in chosen:
         record.first_name = "[ARCHIVED]"
         record.last_name = "[ARCHIVED]"
+        # The keyed fingerprint of the name (Resident history). Left in place,
+        # a staff search for the resident's name still found the "archived"
+        # request.
+        if hasattr(record, "resident_name_index"):
+            record.resident_name_index = None
         done.append("name")
     if "email" in chosen:
         record.email = f"archived-{getattr(record, 'id', 0)}@retention.local"
+        if hasattr(record, "resident_email_index"):
+            record.resident_email_index = None
         done.append("email")
+    if (hasattr(record, "pii_index_version")
+            and getattr(record, "resident_email_index", None) is None
+            and getattr(record, "resident_name_index", None) is None):
+        record.pii_index_version = None
     if "phone" in chosen:
         record.phone = None
         done.append("phone")
@@ -304,6 +344,10 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
         done.append("staff_notes")
     if "media" in chosen:
         record.media_urls = []
+        # Photos held back for staff review are the UNredacted originals --
+        # faces and plates intact -- and were not cleared at all.
+        if hasattr(record, "media_pending_review"):
+            record.media_pending_review = []
         # `completion_photo_url` was absent from this catalog entirely, so even
         # a PURGE -- which selects every field in SCRUB_FIELDS -- left the staff
         # completion photo in the column and the file on disk, reachable through
@@ -312,6 +356,10 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
         if hasattr(record, "completion_photo_url"):
             record.completion_photo_url = None
         done.append("media")
+    if "closing_message" in chosen:
+        if hasattr(record, "completion_message"):
+            record.completion_message = None
+        done.append("closing_message")
     if "ai_analysis" in chosen:
         scrub_ai_analysis(record)
         done.append("ai_analysis")
@@ -327,6 +375,11 @@ def apply_scrub(record: Any, fields: Optional[Iterable[str]] = None) -> List[str
         # The parcel a report fell in locates it as precisely as the pin did.
         if hasattr(record, "gis_context"):
             record.gis_context = None
+        # Also location, by another name: the asset beside the pin with its
+        # distance, and the facilities and similar reports "nearby".
+        if hasattr(record, "matched_asset"):
+            record.matched_asset = None
+        scrub_location_context(record)
         done.append("coordinates")
 
     # `comments` is deliberately absent: they live in another table and need a
