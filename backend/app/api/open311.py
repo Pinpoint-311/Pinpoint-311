@@ -1148,7 +1148,9 @@ async def _intake_resident_report(
     service = result.scalar_one_or_none()
     
     if not service:
-        logger.error(f"[CREATE REQUEST] Invalid service code: {sanitize_for_log(request_data.service_code)}")
+        # A submitter's mistake (the caller gets a 400), not a server fault:
+        # warning, so Sentry's error feed stays for things that are broken.
+        logger.warning(f"[CREATE REQUEST] Invalid service code: {sanitize_for_log(request_data.service_code)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid service code: {request_data.service_code}"
