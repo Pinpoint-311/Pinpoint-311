@@ -24,3 +24,21 @@ def test_init_passes_the_release(monkeypatch):
     crash_reporting.init("https://k@o0.ingest.sentry.io/1", "test")
     assert seen["release"] == "pinpoint-311@2.0.0"
     assert seen["send_default_pii"] is False
+
+
+def test_sentry_really_starts_with_the_installed_web_framework():
+    """Not mocked: the real sentry_sdk.init with its FastAPI/Starlette integrations.
+
+    Starlette 1.3 with sentry-sdk 2.54 raised ImportError("jinja2 must be
+    installed...") inside init, and the API refused to start on every instance
+    with crash reporting turned on -- which the rest of this suite, running
+    without a DSN, never exercised.
+    """
+    import sentry_sdk
+    try:
+        assert crash_reporting.init("https://public@o0.ingest.sentry.io/1", "test") is True
+    finally:
+        client = sentry_sdk.get_client()
+        if client.is_active():
+            client.close(timeout=0)
+        sentry_sdk.init(dsn=None)

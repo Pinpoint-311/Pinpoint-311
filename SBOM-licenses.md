@@ -122,7 +122,7 @@ Nothing in this project is AGPL, GPL, SSPL, BUSL, Elastic License, CC-BY-NC, com
 | `cffi` 2.1.0 | PyPI, prod | `MIT-0` | MIT with the attribution requirement removed. Strictly more permissive. |
 | `email-validator` 2.1.0 | PyPI, prod, direct | `CC0-1.0` (copyright waived) | Public-domain dedication. Fine, but CC0 grants no patent license, which a few federal-adjacent policies note. Later releases relabel this as Unlicense. |
 | `better-profanity` 0.7.0 | PyPI, prod, direct | PyPI `license` field is empty; installed dist declares `UNKNOWN` | The distribution's own `LICENSE` file was read and is **verbatim MIT text**. Resolved: MIT. |
-| `sentry-sdk` 2.54.0 | PyPI, prod, direct | `license` field says MIT, trove classifier says "BSD License" | Internally inconsistent metadata. Both are permissive, so the outcome is the same either way, but the two fields disagree. |
+| `sentry-sdk` 2.72.0 | PyPI, prod, direct | `license` field says MIT, trove classifier says "BSD License" | Internally inconsistent metadata. Both are permissive, so the outcome is the same either way, but the two fields disagree. |
 | `victory-vendor` 36.9.2 | npm, **prod** (via `recharts`) | `MIT AND ISC` | Conjunctive; the package re-publishes several `d3-*` modules (ISC) under an MIT wrapper. Both permissive. No `LICENSE` file ships in the package — attribution must be reconstructed from the vendored d3 sources. |
 | `tslib` 2.8.1 | npm, prod | `0BSD` | BSD Zero Clause — public-domain-equivalent, no attribution required. |
 | `amqp`, `billiard`, `passlib`, `prompt_toolkit`, `pyasn1-modules`, `starlette`, `uvicorn`, `vine` | PyPI, prod | bare `"BSD"` or a BSD trove classifier with no version | The metadata does not say 2-clause vs 3-clause. All are permissive BSD variants; the distinction does not change MIT compatibility, only the exact notice text to reproduce. Upstream `LICENSE` files should be read when assembling the attribution file. |
@@ -637,7 +637,7 @@ Nothing in this project is AGPL, GPL, SSPL, BUSL, Elastic License, CC-BY-NC, com
 - `PyJWT` 2.15.1 **[direct]**
 - `PyYAML` 6.0.3
 - `redis` 5.0.1 **[direct]**
-- `sentry-sdk` 2.54.0 **[direct]**
+- `sentry-sdk` 2.72.0 **[direct]**
 - `six` 1.17.0
 - `slowapi` 0.1.9 **[direct]**
 - `SQLAlchemy` 2.0.25 **[direct]**
