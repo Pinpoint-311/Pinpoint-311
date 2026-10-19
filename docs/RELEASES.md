@@ -359,13 +359,20 @@ from the host works exactly as before.
 
 ## GitHub and GitLab
 
-GitHub is the primary repository. `.github/workflows/mirror-to-gitlab.yml`
-pushes every branch, tag and deletion to GitLab within seconds, on any plan.
-GitLab.com's own pull mirroring is a paid feature, and a pull mirror left
-configured on the GitLab side should be removed so the two don't fight. Setup is
-in the workflow's header: a GitLab project access token (Maintainer,
-`write_repository`) as the GitHub secret `GITLAB_MIRROR_TOKEN`, and the project
-URL as the GitHub variable `GITLAB_MIRROR_URL`. The mirror never force-pushes.
+GitHub is the primary repository; GitLab follows it. Either:
+
+- **GitLab pull mirroring** (Settings → Repository → Mirroring repositories,
+  direction *Pull*). Turn on **Overwrite diverged branches**: a pull mirror
+  stops updating a branch once GitLab has a commit GitHub doesn't, and
+  GitLab should never be written to directly. Or:
+- **`.github/workflows/mirror-to-gitlab.yml`**, which pushes every branch, tag
+  and deletion to GitLab within seconds. Setup is in the workflow's header: a
+  GitLab project access token (Maintainer, `write_repository`) as the GitHub
+  secret `GITLAB_MIRROR_TOKEN`, and the project URL as the GitHub variable
+  `GITLAB_MIRROR_URL`. It never force-pushes. The workflow stays off while the
+  variable is unset.
+
+Use one, not both.
 
 Releases are published once, from GitHub (`ghcr.io`, signed by GitHub Actions'
 OIDC identity). GitLab still runs its tests and scans on every push and tag, but

@@ -2,10 +2,11 @@ name: Mirror to GitLab
 
 # GitHub is the primary repository; this keeps GitLab in step on every push.
 #
-# GitLab.com's own *pull* mirroring (GitLab fetching from GitHub) is a paid
-# feature, which is why a mirror configured from the GitLab side stops syncing
-# on the free tier. Pushing from here works on every plan, happens within
-# seconds of the push, and carries tags -- so a release tag reaches GitLab too.
+# Optional. GitLab's own *pull* mirroring (GitLab fetching from GitHub) works
+# too, on the plans that include it; it stops syncing when the two repositories
+# diverge unless "Overwrite diverged branches" is on. Use this workflow instead
+# when pull mirroring is unavailable: it pushes within seconds and carries tags.
+# Use one or the other, not both.
 #
 # Setup (once):
 #   1. GitLab: Settings -> Access tokens -> project access token, role
