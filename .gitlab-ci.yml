@@ -53,7 +53,14 @@ stages:
   - release
 
 include:
-  - template: Security/SAST.gitlab-ci.yml
+  # Every scanner on the project's Security configuration page, declared here
+  # rather than in GitLab's UI: this repository is pull-mirrored from GitHub, so
+  # a configuration commit made in GitLab would be overwritten by the next sync.
+  # (Scan profiles may run some of these too; the page reads its status from
+  # the default branch's pipeline, which is what these jobs populate.)
+  - template: Security/SAST.gitlab-ci.yml            # SAST + Advanced SAST (variable below)
+  - template: Jobs/Secret-Detection.gitlab-ci.yml    # pipeline secret detection
+  - template: Jobs/Dependency-Scanning.v2.gitlab-ci.yml
   - template: Jobs/SAST-IaC.gitlab-ci.yml
   - template: Jobs/Container-Scanning.gitlab-ci.yml
   - template: Security/DAST.gitlab-ci.yml
@@ -67,6 +74,9 @@ include:
       - if: $CI_PIPELINE_SOURCE == "schedule" || $CI_PIPELINE_SOURCE == "web"
 
 variables:
+  # GitLab Advanced SAST (cross-file taint analysis) alongside the open-source
+  # analyzers. Ultimate only; ignored elsewhere.
+  GITLAB_ADVANCED_SAST_ENABLED: "true"
   PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
   NODE_IMAGE: node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
   TRIVY_IMAGE: aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
