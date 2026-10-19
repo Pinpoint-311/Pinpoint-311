@@ -36,11 +36,11 @@ log_dir: /var/log/pinpoint-updater
 disk_path: /var/lib/docker             # filesystem whose free space preflight checks
 
 instances:
-  staffordnjpilot:
-    project: pinpoint-staffordnjpilot
-    dir: /home/ubuntu/pinpoint-staffordnjpilot
-    compose: [/opt/pinpoint/docker-compose.yml, docker-compose.staffordnjpilot.yml]
-    env_file: .env.staffordnjpilot
+  springfield:
+    project: pinpoint-springfield
+    dir: /srv/pinpoint/springfield
+    compose: [/opt/pinpoint/docker-compose.yml, docker-compose.springfield.yml]
+    env_file: .env.springfield
     lock_file: release.lock
     app_url: http://127.0.0.1:58003    # loopback only
     # Console channel (docs/RELEASES.md, "Connecting the host updater"):

@@ -51,8 +51,8 @@ sudo -e /etc/pinpoint-updater/instances.yml
 
 # 4. each managed instance directory must be writable by the updater
 #    (it writes release.lock and .pinpoint-updater.lock there, nothing else)
-sudo setfacl -m u:pinpoint-updater:rwx /home/ubuntu/pinpoint-staffordnjpilot
-sudo setfacl -m u:pinpoint-updater:rw  /home/ubuntu/pinpoint-staffordnjpilot/release.lock
+sudo setfacl -m u:pinpoint-updater:rwx /srv/pinpoint/springfield
+sudo setfacl -m u:pinpoint-updater:rw  /srv/pinpoint/springfield/release.lock
 
 # 5. systemd: edit ReadWritePaths= to list every instance dir, then
 sudo cp deploy/pinpoint-updater.service deploy/pinpoint-updater.timer /etc/systemd/system/
@@ -66,13 +66,13 @@ file exist. Phase 1's rollout writes the first lock (see the design doc).
 ## Usage
 
 ```bash
-pinpoint-updater releases --instance staffordnjpilot   # list + schema compatibility
-pinpoint-updater verify   staffordnjpilot v1.8.0       # signatures only
-pinpoint-updater plan     staffordnjpilot v1.8.0       # dry run: every check, every command; changes nothing
-pinpoint-updater upgrade  staffordnjpilot v1.8.0       # prompts after preflight; --yes to skip
-pinpoint-updater upgrade  staffordnjpilot v1.8.0 --yes --allow-destructive   # after a needs_approval
-pinpoint-updater rollback staffordnjpilot              # to PREVIOUS_* in release.lock
-pinpoint-updater status   staffordnjpilot              # lock, health, containers, drift, last run
+pinpoint-updater releases --instance springfield   # list + schema compatibility
+pinpoint-updater verify   springfield v1.8.0       # signatures only
+pinpoint-updater plan     springfield v1.8.0       # dry run: every check, every command; changes nothing
+pinpoint-updater upgrade  springfield v1.8.0       # prompts after preflight; --yes to skip
+pinpoint-updater upgrade  springfield v1.8.0 --yes --allow-destructive   # after a needs_approval
+pinpoint-updater rollback springfield              # to PREVIOUS_* in release.lock
+pinpoint-updater status   springfield              # lock, health, containers, drift, last run
 ```
 
 Global flags: `--config` (default `/etc/pinpoint-updater/instances.yml` or

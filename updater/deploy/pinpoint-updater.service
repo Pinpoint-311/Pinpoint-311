@@ -35,12 +35,12 @@ TimeoutStartSec=2h
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-# Instance dirs live under /home on this host: read-only by default, the
-# managed instance directories writable below.
+# Read-only by default, in case instance dirs live under /home; list every
+# managed instance directory below, one line each.
 ProtectHome=read-only
 ReadWritePaths=/var/log/pinpoint-updater /var/lib/pinpoint-updater
-ReadWritePaths=/home/ubuntu/pinpoint-staffordnjpilot
-# ReadWritePaths=/home/ubuntu/pinpoint-<other-instance>
+ReadWritePaths=/srv/pinpoint/springfield
+# ReadWritePaths=/srv/pinpoint/<other-instance>
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
