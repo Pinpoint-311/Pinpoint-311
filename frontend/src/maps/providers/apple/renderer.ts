@@ -590,6 +590,11 @@ export class AppleMapRenderer implements MapRenderer {
             showsCompass: visibility(controls.rotate?.enabled),
             isRotationEnabled: controls.rotate?.enabled ?? true,
             showsScale: mapkit.FeatureVisibility.Hidden,
+            // MapInitOptions.colorScheme — MapKit's own dark cartography. Only
+            // set when asked for, so the default stays whatever MapKit's is.
+            ...(options.colorScheme === 'dark' && mapkit.Map.ColorSchemes?.Dark
+                ? { colorScheme: mapkit.Map.ColorSchemes.Dark }
+                : {}),
             // No fullscreen control exists; controls.fullscreen is ignored, and
             // controls.streetView has no MapKit equivalent (Look Around is not
             // exposed to MapKit JS).

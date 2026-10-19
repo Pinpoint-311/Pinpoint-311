@@ -80,6 +80,10 @@ const BASEMAP_IDS: Record<BaseMapType, string> = {
     terrain: 'topo-vector',
 };
 
+/** MapInitOptions.colorScheme === 'dark'. Only the street basemap has a dark
+ *  twin; imagery has no light/dark distinction. */
+const DARK_BASEMAP_ID = 'dark-gray-vector';
+
 /**
  * ControlPosition has twelve values; view.ui has four corners plus 'manual'.
  * Collapse to the nearest corner rather than pretending to honour the rest.
@@ -526,7 +530,19 @@ interface SplitFeature {
     kind: GeoKind;
     raw: any;
     info: GeoFeature;
+    /** Position in the layer's own feature list; round-trips through the SDK. */
+    index: number;
 }
+
+/**
+ * Synthetic attributes added to the *copy* of each feature that is served to
+ * the SDK. Neither name may start with an underscore or a digit: GeoJSONLayer
+ * silently renames such a field (`__ppStyle` comes back as `F__ppStyle`), which
+ * is invisible to the renderer -- the SDK rewrites the renderer's field name the
+ * same way -- but not to anything reading `graphic.attributes` by name.
+ */
+const STYLE_FIELD = 'ppStyleKey';
+const INDEX_FIELD = 'ppFeatureIndex';
 
 /** GeoJSON of any shape (FeatureCollection / Feature / bare geometry) -> features. */
 function normaliseFeatures(data: any): SplitFeature[] {
@@ -548,6 +564,7 @@ function normaliseFeatures(data: any): SplitFeature[] {
         out.push({
             kind,
             raw: feature,
+            index: out.length,
             info: {
                 geometryType: type as GeometryType,
                 properties: (feature.properties || {}) as Record<string, unknown>,
@@ -583,11 +600,16 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
         this.build();
     }
 
-    private renderersFor(kind: GeoKind, members: SplitFeature[]): any {
+    /**
+     * The renderer for one geometry group, plus the style key each member needs
+     * stamped on the copy that is served to the SDK.
+     */
+    private renderersFor(kind: GeoKind, members: SplitFeature[]): { renderer: any; styleKeys: Map<number, string> } {
         const { mods } = this.ctx;
+        const styleKeys = new Map<number, string>();
 
         if (kind === 'point' && this.options.pointRendering === 'hidden') {
-            return new mods.SimpleRenderer({ symbol: invisiblePointSymbol(mods) });
+            return { renderer: new mods.SimpleRenderer({ symbol: invisiblePointSymbol(mods) }), styleKeys };
         }
 
         const symbolFor = (style: VectorStyle | undefined) =>
@@ -596,7 +618,7 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
                     : pointSymbolFromStyle(mods, style);
 
         if (typeof this.style !== 'function') {
-            return new mods.SimpleRenderer({ symbol: symbolFor(this.style) });
+            return { renderer: new mods.SimpleRenderer({ symbol: symbolFor(this.style) }), styleKeys };
         }
 
         // Per-feature styling is evaluated here and collapsed to unique values on
@@ -613,17 +635,17 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
                 seen.set(key, seen.size);
                 infos.push({ value: String(seen.size - 1), symbol: symbolFor(resolved) });
             }
-            member.raw.properties = {
-                ...(member.raw.properties || {}),
-                __ppStyle: String(seen.get(key)),
-            };
+            styleKeys.set(member.index, String(seen.get(key)));
         });
 
-        return new mods.UniqueValueRenderer({
-            field: '__ppStyle',
-            defaultSymbol: symbolFor(undefined),
-            uniqueValueInfos: infos,
-        });
+        return {
+            renderer: new mods.UniqueValueRenderer({
+                field: STYLE_FIELD,
+                defaultSymbol: symbolFor(undefined),
+                uniqueValueInfos: infos,
+            }),
+            styleKeys,
+        };
     }
 
     private build(): void {
@@ -637,12 +659,22 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
         }
 
         for (const [kind, members] of groups) {
-            // renderersFor may inject __ppStyle into properties, so it has to run
-            // before the collection is serialised into the object URL.
-            const renderer = this.renderersFor(kind, members);
+            const { renderer, styleKeys } = this.renderersFor(kind, members);
+            // The synthetic fields go on a *copy*. Writing them back onto the
+            // caller's GeoJSON corrupted it for everyone else holding the same
+            // object: RoadCorridorMap hands one FeatureCollection to two layers,
+            // and the second one then saw the first one's style key in its own
+            // feature properties and could never match a clicked graphic again.
             const collection = {
                 type: 'FeatureCollection',
-                features: members.map(m => m.raw),
+                features: members.map(m => ({
+                    ...m.raw,
+                    properties: {
+                        ...(m.raw.properties || {}),
+                        [INDEX_FIELD]: String(m.index),
+                        ...(styleKeys.has(m.index) ? { [STYLE_FIELD]: styleKeys.get(m.index) } : {}),
+                    },
+                })),
             };
             const url = URL.createObjectURL(
                 new Blob([JSON.stringify(collection)], { type: 'application/geo+json' }),
@@ -661,9 +693,8 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
             });
 
             if (this.options.onFeatureClick) {
-                const byStyleKey = members;
                 this.ctx.setLayerClick(layer, (graphic, position) => {
-                    const info = this.matchFeature(byStyleKey, graphic);
+                    const info = this.matchFeature(graphic);
                     if (info) this.options.onFeatureClick!(info, { position });
                 });
             }
@@ -675,17 +706,22 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
 
     /**
      * GeoJSONLayer assigns its own OBJECTIDs and hands back copies, so a clicked
-     * graphic is matched to the source feature by its properties rather than by
-     * identity. Exact-property equality is the only key guaranteed to survive.
+     * graphic is matched to the source feature through the index stamped on the
+     * served copy.
+     *
+     * Matching on whole-property equality (what this used to do) fails on two
+     * counts the road corridor editor hits every time: a property whose value is
+     * an object or array never compares equal, and any synthetic field the
+     * adapter itself added has to be excluded by hand.
      */
-    private matchFeature(members: SplitFeature[], graphic: any): GeoFeature | null {
+    private matchFeature(graphic: any): GeoFeature | null {
         const attrs = graphic?.attributes;
         if (!attrs) return null;
-        const match = members.find(member => {
-            const props = member.info.properties;
-            return Object.keys(props).every(key => (props as any)[key] === attrs[key]);
-        });
-        return match ? match.info : null;
+        const raw = attrs[INDEX_FIELD];
+        if (raw === undefined || raw === null) return null;
+        const index = Number(raw);
+        if (!Number.isInteger(index)) return null;
+        return this.features[index]?.info ?? null;
     }
 
     private teardown(): void {
@@ -719,7 +755,7 @@ class EsriGeoJsonLayer implements GeoJsonLayerHandle {
         }
         [...groups.keys()].forEach((kind, index) => {
             const layer = this.layers[index];
-            if (layer) layer.renderer = this.renderersFor(kind, groups.get(kind)!);
+            if (layer) layer.renderer = this.renderersFor(kind, groups.get(kind)!).renderer;
         });
 
         if (style.visible !== undefined) this.setVisible(style.visible);
@@ -978,6 +1014,7 @@ export class EsriMapRenderer implements MapRenderer {
     private readonly view: any;
     private readonly ctx: EsriContext;
     private readonly styleId: string | null;
+    private readonly dark: boolean;
 
     private baseMapType: BaseMapType;
     private ready = false;
@@ -1015,6 +1052,7 @@ export class EsriMapRenderer implements MapRenderer {
         const mods = esriModules();
         this.mods = mods;
         this.styleId = options.styleId ?? null;
+        this.dark = options.colorScheme === 'dark';
         this.baseMapType = options.baseMapType ?? 'roadmap';
 
         const map = new mods.Map({ basemap: this.basemapFor(this.baseMapType) });
@@ -1087,7 +1125,9 @@ export class EsriMapRenderer implements MapRenderer {
      */
     private basemapFor(type: BaseMapType): any {
         const { mods } = this;
-        if (type !== 'roadmap' || !this.styleId) return BASEMAP_IDS[type];
+        if (type !== 'roadmap' || !this.styleId) {
+            return type === 'roadmap' && this.dark ? DARK_BASEMAP_ID : BASEMAP_IDS[type];
+        }
 
         const id = this.styleId;
         if (/VectorTileServer\/?$/i.test(id)) {
