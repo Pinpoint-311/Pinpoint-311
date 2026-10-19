@@ -51,15 +51,21 @@ include:
   # the normal pipeline and are opted into per run; see the job overrides below.
   - template: Security/DAST.gitlab-ci.yml
   - template: Security/API-Fuzzing.gitlab-ci.yml
+  # Secret detection and dependency scanning. These were previously supplied by
+  # GitLab's profile-based scanner configuration instead -- the jobs with a
+  # `-profile-N` suffix. Both mechanisms work; running both runs every scanner
+  # twice. They are declared here so the whole security surface is one reviewed
+  # file that travels with the repository, which matters more than usual on this
+  # project: GitHub is the only writer and GitLab is a mirror, so a change made
+  # in the GitLab UI cannot be pushed back and a merge request raised there
+  # would break the mirror outright.
+  #
+  # TURN THE PROFILES OFF once this lands (Secure -> Policies), or each scan
+  # runs twice.
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
 
 # NOT included, deliberately:
-#
-#   Security/Secret-Detection, Security/Dependency-Scanning
-#     Both already run, through GitLab's profile-based scanner configuration --
-#     the jobs appear as `secret-detection-profile-0` and
-#     `dependency-scanning:...-profile-2`, alongside `gitlab-advanced-sast-profile-1`.
-#     Including the templates as well would run each scanner twice and raise
-#     every finding twice. If the profiles are ever turned off, add them here.
 #
 #   Coverage-Fuzzing
 #     Not a template you enable. Coverage-guided fuzzing needs fuzz targets
@@ -70,6 +76,10 @@ include:
 #     with no targets would report "enabled" while testing nothing.
 
 variables:
+  # GitLab Advanced SAST. Not a separate template -- it is a switch on the SAST
+  # one, which is why the configuration page lists it on its own line while
+  # there is nothing to include for it.
+  GITLAB_ADVANCED_SAST_ENABLED: "true"
   PYTHON_IMAGE: python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
   NODE_IMAGE: node:20@sha256:8f693eaa7e0a8e71560c9a82b55fd54c2ae920a2ba5d2cde28bac7d1c01c9ba5
   TRIVY_IMAGE: aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
