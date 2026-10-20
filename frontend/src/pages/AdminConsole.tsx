@@ -115,6 +115,13 @@ export function formatSlaTarget(hours: number): string {
 // Category icons come from the shared municipal set in components/categoryIcons.ts.
 
 type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
+const TABS: readonly Tab[] = ['branding', 'users', 'departments', 'services', 'integration', 'system', 'health', 'compliance'];
+
+/** The section a link asked for (`/admin#compliance`, the `/setup` redirect), else Branding. */
+function tabFromHash(): Tab {
+    const hash = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
+    return (TABS as readonly string[]).includes(hash) ? (hash as Tab) : 'branding';
+}
 
 // Sidebar accordion components
 interface SidebarGroupProps {
@@ -643,7 +650,10 @@ export default function AdminConsole() {
     const dialog = useDialog();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [currentTab, setCurrentTab] = useState<Tab>('branding');
+    const [currentTab, setCurrentTab] = useState<Tab>(tabFromHash);
+    // The hash as the page was opened, before the tab effect below writes
+    // `#branding` over an empty one.
+    const arrivalHash = useRef(typeof window !== 'undefined' ? window.location.hash.slice(1) : '');
     const [isLoading, setIsLoading] = useState(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -1142,7 +1152,7 @@ export default function AdminConsole() {
      * ignoring a link.
      */
     useEffect(() => {
-        if (window.location.hash.slice(1)) return;
+        if (arrivalHash.current) return;
         let cancelled = false;
         api.getSetupState()
             .then(state => { if (!cancelled && !state.completed) setCurrentTab('integration'); })
@@ -1625,7 +1635,7 @@ export default function AdminConsole() {
         // positioned ancestor -- every sr-only label in the audit table -- is
         // laid out against the page, not clipped by overflow, and stretched
         // the document until the whole frame scrolled away.
-        <div className="relative h-screen flex overflow-hidden">
+        <div className="relative h-viewport flex overflow-hidden">
             {/* The one voluntary outbound call this application makes. Gated on
               * a configured deployment rather than on sign-in: `township_name`
               * only leaves its placeholder once somebody has been through
@@ -1934,41 +1944,32 @@ export default function AdminConsole() {
                                     onDismiss={() => setInviteNotice(null)}
                                 />
 
-                                {/* Stats Cards */}
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                                                <UserIcon className="w-5 h-5 text-blue-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.length}</p>
-                                                <p className="text-xs text-blue-300/70">Total Users</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-                                                <Shield className="w-5 h-5 text-amber-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'admin').length}</p>
-                                                <p className="text-xs text-amber-300/70">Administrators</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                                                <Users className="w-5 h-5 text-emerald-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'staff').length}</p>
-                                                <p className="text-xs text-emerald-300/70">Staff Members</p>
+                                {/* Stats: three across at every width. Stacked on a phone
+                                    they were three full-width cards, a whole screen of
+                                    numbers before the first user. */}
+                                <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                                    {[
+                                        { n: users.length, label: 'Total users', Icon: UserIcon, tone: 'blue' },
+                                        { n: users.filter(u => u.role === 'admin').length, label: 'Administrators', Icon: Shield, tone: 'amber' },
+                                        { n: users.filter(u => u.role === 'staff').length, label: 'Staff', Icon: Users, tone: 'emerald' },
+                                    ].map(({ n, label, Icon, tone }) => (
+                                        <div key={label} className={`p-3 sm:p-4 rounded-2xl bg-gradient-to-br backdrop-blur-sm border ${
+                                            tone === 'blue' ? 'from-blue-500/10 to-blue-600/5 border-blue-500/20'
+                                                : tone === 'amber' ? 'from-amber-500/10 to-amber-600/5 border-amber-500/20'
+                                                    : 'from-emerald-500/10 to-emerald-600/5 border-emerald-500/20'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <div className={`hidden sm:flex w-10 h-10 rounded-xl items-center justify-center ${
+                                                    tone === 'blue' ? 'bg-blue-500/20' : tone === 'amber' ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}>
+                                                    <Icon className={`w-5 h-5 ${tone === 'blue' ? 'text-blue-400' : tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`} aria-hidden="true" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-xl sm:text-2xl font-bold text-white tabular-nums">{n}</p>
+                                                    <p className={`text-[11px] sm:text-xs truncate ${
+                                                        tone === 'blue' ? 'text-blue-300/80' : tone === 'amber' ? 'text-amber-300/80' : 'text-emerald-300/80'}`}>{label}</p>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
+                                    ))}
                                 </div>
 
                                 {/* Premium Table */}
@@ -1994,65 +1995,79 @@ export default function AdminConsole() {
                                                 transition={{ delay: index * 0.05 }}
                                                 className="px-4 md:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200 group"
                                             >
-                                                {/* Mobile: Card Layout */}
+                                                {/* Mobile: Card Layout. Name and role on top, then the
+                                                    address (once: a username that is the email is not
+                                                    shown twice), then departments with the actions
+                                                    grouped at the end of the row. */}
                                                 <div className="md:hidden space-y-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="flex items-center gap-3 min-w-0">
+                                                            <div className={`relative w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
                                                                 ? 'bg-gradient-to-br from-amber-300 to-orange-500 text-amber-950 drop-shadow-sm shadow-orange-900/50'
                                                                 : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-primary-900/60'
                                                                 }`}>
                                                                 {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
                                                                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
                                                             </div>
-                                                            <div>
-                                                                <p className="font-semibold text-white text-sm">{u.full_name || u.username}</p>
-                                                                <p className="text-xs text-white/40">@{u.username}</p>
+                                                            <div className="min-w-0">
+                                                                <p className="font-semibold text-white text-sm truncate">{u.full_name || u.username}</p>
+                                                                <p className="text-xs text-white/50 truncate">{u.email && u.email !== u.username ? u.email : `@${u.username}`}</p>
+                                                                {u.email && u.email !== u.username && u.username !== u.full_name && (
+                                                                    <p className="text-[11px] text-white/35 truncate">@{u.username}</p>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <RoleChip role={u.role} size="sm" />
                                                     </div>
-                                                    <p className="text-xs text-white/50 truncate">{u.email}</p>
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex flex-wrap gap-1">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="flex flex-wrap gap-1 min-w-0">
                                                             {u.departments && u.departments.length > 0 ? (
-                                                                u.departments.slice(0, 2).map((dept) => (
-                                                                    <span key={dept.id} className="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-white/70 border border-white/10">
-                                                                        {dept.name}
-                                                                    </span>
-                                                                ))
+                                                                <>
+                                                                    {u.departments.slice(0, 2).map((dept) => (
+                                                                        <span key={dept.id} className="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-white/70 border border-white/10 truncate max-w-[10rem]">
+                                                                            {dept.name}
+                                                                        </span>
+                                                                    ))}
+                                                                    {u.departments.length > 2 && (
+                                                                        <span className="px-1 py-0.5 text-xs text-white/40">+{u.departments.length - 2}</span>
+                                                                    )}
+                                                                </>
                                                             ) : (
-                                                                <span className="text-xs text-white/25 italic">No department</span>
+                                                                <span className="text-xs text-white/35 italic">No department</span>
                                                             )}
                                                         </div>
-                                                        {u.is_active !== false && (
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {u.is_active !== false && (
+                                                                <button
+                                                                    onClick={() => handleResendInvite(u)}
+                                                                    className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/10 text-white/60 hover:text-white transition-colors"
+                                                                    title="Resend invite"
+                                                                    aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                                >
+                                                                    <Mail className="w-4 h-4" aria-hidden="true" />
+                                                                </button>
+                                                            )}
                                                             <button
-                                                                onClick={() => handleResendInvite(u)}
-                                                                className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
-                                                                title="Resend invite"
-                                                                aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                                onClick={() => openEditUser(u)}
+                                                                className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/10 text-white/60 hover:text-white transition-colors"
+                                                                title={`Edit ${u.full_name || u.username}`}
+                                                                aria-label={`Edit ${u.full_name || u.username}`}
                                                             >
-                                                                <Mail className="w-4 h-4" aria-hidden="true" />
+                                                                <Pencil className="w-4 h-4" aria-hidden="true" />
                                                             </button>
-                                                        )}
-                                                        <button
-                                                            onClick={() => openEditUser(u)}
-                                                            className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
-                                                            title={`Edit ${u.full_name || u.username}`}
-                                                        >
-                                                            <Pencil className="w-4 h-4" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteUser(u.id)}
-                                                            disabled={u.id === user?.id}
-                                                            className={`p-2 rounded-lg ${u.id === user?.id
-                                                                ? 'text-white/20 cursor-not-allowed'
-                                                                : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
-                                                                }`}
-                                                            title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
+                                                            <button
+                                                                onClick={() => handleDeleteUser(u.id)}
+                                                                disabled={u.id === user?.id}
+                                                                className={`p-2 rounded-lg bg-white/[0.04] ${u.id === user?.id
+                                                                    ? 'text-white/20 cursor-not-allowed'
+                                                                    : 'hover:bg-red-500/20 text-white/60 hover:text-red-400'
+                                                                    }`}
+                                                                title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
+                                                                aria-label={u.id === user?.id ? 'You cannot delete your own account' : `Delete ${u.full_name || u.username}`}
+                                                            >
+                                                                <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
 

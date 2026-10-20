@@ -1159,7 +1159,7 @@ export default function StaffDashboard() {
     };
 
     return (
-        <div className="relative h-screen flex overflow-hidden">
+        <div className="relative h-viewport flex overflow-hidden">
             {/* Mobile sidebar backdrop */}
             <AnimatePresence>
                 {sidebarOpen && (
