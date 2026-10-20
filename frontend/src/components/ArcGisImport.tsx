@@ -161,8 +161,16 @@ export function ArcGisImportForm({ onCancel, onCreated, onBusyChange }: ImportFo
                 <p id={id('url-help')} className="-mt-2 text-xs text-white/60">https links only.</p>
                 <details open={needsToken} onToggle={e => setNeedsToken((e.target as HTMLDetailsElement).open)}
                     className="rounded-xl border border-white/15 bg-white/[0.03] px-3 py-2">
-                    <summary className="cursor-pointer text-sm text-white/80 py-1">This service needs a sign-in</summary>
+                    {/* Phrased as a condition. "This service needs a sign-in" read as a
+                        statement about the link just pasted, or about every link. */}
+                    <summary className="cursor-pointer text-sm text-white/80 py-1">
+                        Only if the layer isn't public: add a sign-in token
+                    </summary>
                     <div className="pt-2 space-y-1">
+                        <p className="text-xs text-white/60">
+                            Most county and town layers are public and need nothing here. If "Check link"
+                            says the layer needs a token, get one from whoever runs that ArcGIS site.
+                        </p>
                         <Input label="Sign-in token" type="password" autoComplete="off" spellCheck={false}
                             value={token} onChange={e => setToken(e.target.value)} maxLength={4096}
                             disabled={!!progress} aria-describedby={id('token-help')} />
@@ -435,7 +443,7 @@ export function ArcGisSourcePanel({ layer, onUpdated }: { layer: MapLayer; onUpd
                 </div>
             </div>
             <details className="text-sm">
-                <summary className="cursor-pointer text-white/80">This service needs a sign-in</summary>
+                <summary className="cursor-pointer text-white/80">Only if the layer isn't public: add a sign-in token</summary>
                 <div className="pt-2">
                     <Input label="Sign-in token for this refresh" type="password" autoComplete="off" spellCheck={false}
                         value={token} onChange={e => setToken(e.target.value)} maxLength={4096} />

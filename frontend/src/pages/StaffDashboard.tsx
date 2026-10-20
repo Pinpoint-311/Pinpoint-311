@@ -76,7 +76,7 @@ import { usePageNavigation } from '../hooks/usePageNavigation';
 import NotificationSettings from '../components/NotificationSettings';
 import ManualIntake from '../components/ManualIntake';
 import ActivityFeed from '../components/ActivityFeed';
-import { bellAppearance, markKeyRead, readIdsFromStorage, readKey, unreadCount } from '../components/activityBell';
+import { bellAppearance, feedKeysFor, markKeysRead, readIdsFromStorage, readKey, unreadCount } from '../components/activityBell';
 import { bandFor, bandLabel, countByBand } from '../components/priority';
 import PrintWorkOrder from '../components/PrintWorkOrder';
 import MatchedAssetCard from '../components/MatchedAssetCard';
@@ -818,6 +818,34 @@ export default function StaffDashboard() {
     }, []);
     const listBehindOverlay = !!selectedRequest && isNarrowViewport;
 
+    /* On a phone the list header (title, search, filters, sort) took most of
+     * the screen, so scrolling through incidents meant a thumbnail of a list.
+     * Scrolled down, it collapses to the three scope buttons, which stay put,
+     * and a one-line way back to search and filters. Back near the top it
+     * opens again. Hysteresis (48px to close, 8px to open) keeps it from
+     * flickering at the edge, and it never closes while focus is inside it --
+     * somebody typing a search is not done with it. */
+    const [listHeaderCollapsed, setListHeaderCollapsed] = useState(false);
+    const listHeaderExtrasRef = useRef<HTMLDivElement>(null);
+    const listHeaderTopRef = useRef<HTMLDivElement>(null);
+    const onListScroll = (e: React.UIEvent<HTMLDivElement>) => {
+        if (!isNarrowViewport) { if (listHeaderCollapsed) setListHeaderCollapsed(false); return; }
+        const el = e.currentTarget;
+        const top = el.scrollTop;
+        // Only when the list is long enough to stay scrolled once the header
+        // shrinks; otherwise the browser clamps scrollTop to 0, the header
+        // opens again, and it flickers between the two.
+        const room = el.scrollHeight - el.clientHeight;
+        if (!listHeaderCollapsed && top > 48 && room > 480) {
+            const active = document.activeElement;
+            if (active && (listHeaderExtrasRef.current?.contains(active) || listHeaderTopRef.current?.contains(active))) return;
+            setListHeaderCollapsed(true);
+        } else if (listHeaderCollapsed && top < 8) {
+            setListHeaderCollapsed(false);
+        }
+    };
+    useEffect(() => { if (!isNarrowViewport) setListHeaderCollapsed(false); }, [isNarrowViewport]);
+
     // Lock body scroll when mobile overlay is open to prevent scroll bleed-through
     useEffect(() => {
         if (selectedRequest && window.innerWidth < 1024) {
@@ -931,10 +959,12 @@ export default function StaffDashboard() {
         // whether that's a mouse click on a card, Enter/Space on one (both
         // fire the same button onClick), a hash change from browser
         // back/forward, or a "similar reports" jump. Every path lands here,
-        // so this is the one place to clear that request's unread bell
-        // notification. `markKeyRead` already no-ops (no localStorage write,
-        // no re-render) when there was nothing unread to clear.
-        if (markKeyRead(readKey({ service_request_id: requestId }))) {
+        // so this is the one place to clear every unread notice for it (new,
+        // needs-an-owner, latest update). `markKeysRead` already no-ops (no
+        // localStorage write, no re-render) when there was nothing to clear.
+        const known = allRequests.find(r => r.service_request_id === requestId);
+        const keys = known ? feedKeysFor(known) : [readKey({ service_request_id: requestId })];
+        if (markKeysRead(keys)) {
             setActivityTick(t => t + 1);
         }
         try {
@@ -2346,7 +2376,8 @@ export default function StaffDashboard() {
                             {...(listBehindOverlay ? ({ inert: '' } as Record<string, string>) : {})}
                         >
                             {/* List Header with Quick Stats */}
-                            <div className="p-4 border-b border-white/10 space-y-3">
+                            <div className={`border-b border-white/10 transition-[padding] duration-200 motion-reduce:transition-none ${listHeaderCollapsed ? 'px-3 py-2 space-y-2 bg-[#1e1b4b]/80 backdrop-blur-md' : 'p-4 space-y-3'}`}>
+                                <div ref={listHeaderTopRef} className={listHeaderCollapsed ? 'hidden' : 'space-y-3'}>
                                 <div className="flex items-center justify-between">
                                     <h2 className="text-lg font-semibold text-white">
                                         Incidents{' '}
@@ -2393,6 +2424,8 @@ export default function StaffDashboard() {
                                     </button>
                                 )}
 
+                                </div>
+
                                 {/* Assignment Filter Buttons - Premium Styling.
                                     Three mutually exclusive scopes whose selection was
                                     signalled only by a gradient fill and a ring (WCAG
@@ -2407,7 +2440,7 @@ export default function StaffDashboard() {
                                         type="button"
                                         onClick={() => setFilterAssignment("me")}
                                         aria-pressed={filterAssignment === 'me'}
-                                        className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'me'
+                                        className={`flex-1 ${listHeaderCollapsed ? 'px-2 py-2 text-xs' : 'px-2 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm'} rounded-xl font-semibold transition-all ${filterAssignment === 'me'
                                             ? 'bg-gradient-to-r from-primary-500 to-primary-600 text-white shadow-lg shadow-primary-500/40 ring-2 ring-primary-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
                                             }`}
@@ -2418,7 +2451,7 @@ export default function StaffDashboard() {
                                         type="button"
                                         onClick={() => setFilterAssignment("department")}
                                         aria-pressed={filterAssignment === 'department'}
-                                        className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'department'
+                                        className={`flex-1 ${listHeaderCollapsed ? 'px-2 py-2 text-xs' : 'px-2 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm'} rounded-xl font-semibold transition-all ${filterAssignment === 'department'
                                             ? 'bg-gradient-to-r from-purple-500 to-purple-600 text-white shadow-lg shadow-purple-500/40 ring-2 ring-purple-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
                                             }`}
@@ -2429,7 +2462,7 @@ export default function StaffDashboard() {
                                         type="button"
                                         onClick={() => setFilterAssignment("all")}
                                         aria-pressed={filterAssignment === 'all'}
-                                        className={`flex-1 px-4 py-3 rounded-xl text-sm font-semibold transition-all ${filterAssignment === 'all'
+                                        className={`flex-1 ${listHeaderCollapsed ? 'px-2 py-2 text-xs' : 'px-2 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm'} rounded-xl font-semibold transition-all ${filterAssignment === 'all'
                                             ? 'bg-gradient-to-r from-slate-500 to-slate-600 text-white shadow-lg shadow-slate-500/40 ring-2 ring-slate-400/60'
                                             : 'bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 hover:text-white hover:border-white/25'
                                             }`}
@@ -2439,6 +2472,22 @@ export default function StaffDashboard() {
                                 </div>
 
 
+                                {listHeaderCollapsed && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setListHeaderCollapsed(false)}
+                                        className="w-full flex items-center justify-between gap-2 px-1 text-xs text-white/60 hover:text-white"
+                                        aria-expanded={false}
+                                    >
+                                        <span className="tabular-nums">{isLoading ? '…' : sortedRequests.length} incidents</span>
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <Search className="w-3.5 h-3.5" aria-hidden="true" />
+                                            Search &amp; filters{activePanelFilters || searchQuery ? ` (${activePanelFilters + (searchQuery ? 1 : 0)} on)` : ''}
+                                        </span>
+                                    </button>
+                                )}
+
+                                <div ref={listHeaderExtrasRef} className={listHeaderCollapsed ? 'hidden' : 'space-y-3'}>
                                 {/* Search, with the filter toggle beside it. The toggle was an
                                     icon-only magnifying glass in the far corner of the header --
                                     hard to find, and a magnifying glass reads as "search", not
@@ -2582,10 +2631,11 @@ export default function StaffDashboard() {
                                         )}
                                     </div>
                                 )}
+                                </div>
                             </div>
 
                             {/* Request List */}
-                            <div className="flex-1 overflow-auto overscroll-contain">
+                            <div className="flex-1 overflow-auto overscroll-contain" onScroll={onListScroll}>
                                 {isLoading ? (
                                     <div className="flex justify-center py-12">
                                         <div className="w-8 h-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />

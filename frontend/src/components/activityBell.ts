@@ -124,6 +124,37 @@ export function markKeyRead(key: string): boolean {
     return true;
 }
 
+/**
+ * Every Activity Feed key a request can have: its "new" notice, its "needs an
+ * owner" notice, and the notice for its latest update (keyed by that update's
+ * time, so a later update is news again). Opening the request is reading all
+ * of them -- clearing only "new" left an updated request unread in the feed
+ * however many times it was opened.
+ */
+export function feedKeysFor(request: Pick<ServiceRequest, 'service_request_id' | 'updated_datetime'>): string[] {
+    const id = request.service_request_id;
+    const keys = [`new-${id}`, `dept-${id}`];
+    if (request.updated_datetime) {
+        const t = new Date(request.updated_datetime).getTime();
+        if (Number.isFinite(t)) keys.push(`upd-${id}-${t}`);
+    }
+    return keys;
+}
+
+/** markKeyRead for several keys at once, with one storage write. */
+export function markKeysRead(keys: string[]): boolean {
+    const readIds = readIdsFromStorage(localStorage.getItem('activityFeedRead'));
+    const fresh = keys.filter(k => !readIds.has(k));
+    if (fresh.length === 0) return false;
+    fresh.forEach(k => readIds.add(k));
+    try {
+        localStorage.setItem('activityFeedRead', JSON.stringify([...readIds]));
+    } catch {
+        return false;
+    }
+    return true;
+}
+
 /** Read the seen-ids list without letting a corrupted entry break the header. */
 export function readIdsFromStorage(raw: string | null): Set<string> {
     try {

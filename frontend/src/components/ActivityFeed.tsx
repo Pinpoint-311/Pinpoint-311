@@ -71,10 +71,16 @@ export default function ActivityFeed({
     userDepartmentIds,
     onSelectRequest
 }: ActivityFeedProps) {
-    const [readItems, setReadItems] = useState<Set<string>>(() => {
-        const stored = localStorage.getItem('activityFeedRead');
-        return stored ? new Set(JSON.parse(stored)) : new Set();
-    });
+    const [readItems, setReadItems] = useState<Set<string>>(
+        () => readIdsFromStorage(localStorage.getItem('activityFeedRead')),
+    );
+    // Re-read on every open. The dashboard marks requests read when they are
+    // opened from the list or the map, and this panel stays mounted for the
+    // dashboard's lifetime: its mount-time copy kept those requests unread
+    // here, and its "N unread" never went down for them.
+    useEffect(() => {
+        if (isOpen) setReadItems(readIdsFromStorage(localStorage.getItem('activityFeedRead')));
+    }, [isOpen, requests]);
     const announce = useAnnounce();
 
     /* This slide-over is a modal dialog in every way that matters to a sighted
