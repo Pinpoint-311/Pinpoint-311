@@ -77,8 +77,8 @@ def county_parcels():
         poly(1, -74.05, 40.05, PIN="IN-1"),
         poly(2, -74.06, 40.06, PIN="IN-2"),
         poly(3, -74.07, 40.03, PIN="IN-3"),
-        poly(4, -74.0005, 40.05, PIN="STRADDLE"),             # crosses the east edge
-        poly(5, -73.9994, 40.05, PIN="BORDER"),               # ~50 m east of it: kept by the buffer
+        poly(4, -74.0007, 40.05, PIN="STRADDLE"),             # crosses the east edge, 70% inside
+        poly(5, -73.9994, 40.05, PIN="BORDER"),               # ~50 m east of it: the neighbour's
         poly(6, -74.50, 40.50, PIN="FAR"),                    # another town entirely
         poly(7, -73.99, 40.05, PIN="EAST"),                   # ~850 m east: out
         # Off the north-east corner, diagonally ~113 m away: inside the
@@ -727,7 +727,7 @@ async def _new_table_layer(db, name="Parcels"):
 
 
 @pg
-async def test_upload_keeps_only_the_township_with_its_border(pgdb):
+async def test_upload_keeps_only_the_townships_own_parcels(pgdb):
     await _set_boundary(pgdb)
     clip = await gis_layers.load_clip(pgdb)
     assert clip.applied and clip.area_name == "Testville"
@@ -736,9 +736,38 @@ async def test_upload_keeps_only_the_township_with_its_border(pgdb):
         pgdb, layer, gis_layers.iter_inline_features({"type": "FeatureCollection", "features": county_parcels()}),
         clip=clip)
     await pgdb.commit()
-    assert await _keys(pgdb, layer.id) == ["BORDER", "IN-1", "IN-2", "IN-3", "STRADDLE"]
-    assert summary["feature_count"] == 5 and summary["outside"] == 3
-    assert summary["clip_message"] == "Kept 5 of 8 features inside Testville."
+    # STRADDLE is mostly inside, so it is the town's; BORDER, in the 100 m margin
+    # but wholly outside the line, is the neighbour's.
+    assert await _keys(pgdb, layer.id) == ["IN-1", "IN-2", "IN-3", "STRADDLE"]
+    assert summary["feature_count"] == 4 and summary["outside"] == 4
+    assert summary["clip_message"] == "Kept 4 of 8 features inside Testville."
+
+
+@pg
+async def test_a_neighbours_parcel_on_the_town_line_is_dropped_and_a_big_zone_is_trimmed(pgdb):
+    from sqlalchemy import text
+    await _set_boundary(pgdb)
+    clip = await gis_layers.load_clip(pgdb)
+    layer = await _new_table_layer(pgdb)
+    feats = [
+        # Shares the east edge exactly: touches the boundary, nothing inside.
+        poly(1, E, 40.05, size=0.002, PIN="NEIGHBOUR"),
+        # Mostly outside, with a sliver (~10 m x 220 m) over the line: the neighbour's.
+        poly(2, E - 0.0001, 40.06, size=0.002, PIN="SLIVER"),
+        # A county zone: a third of it is in town, several km² of it.
+        {"type": "Feature", "id": 3, "properties": {"OBJECTID": 3, "PIN": "ZONE"},
+         "geometry": {"type": "Polygon", "coordinates": [[[E - 0.05, S], [E + 0.10, S], [E + 0.10, N],
+                                                          [E - 0.05, N], [E - 0.05, S]]]}},
+    ]
+    summary = await gis_layers.import_features(
+        pgdb, layer, gis_layers.iter_inline_features({"type": "FeatureCollection", "features": feats}), clip=clip)
+    await pgdb.commit()
+    assert await _keys(pgdb, layer.id) == ["ZONE"]
+    assert summary["outside"] == 2
+    # Trimmed to the town and its 100 m margin, not 10 km east of it.
+    east = (await pgdb.execute(text(
+        "SELECT ST_XMax(geom) FROM map_layer_features WHERE layer_id = :l"), {"l": layer.id})).scalar_one()
+    assert east < E + 0.002
 
 
 @pg
@@ -760,13 +789,14 @@ async def test_the_cap_counts_features_after_the_clip(pgdb, monkeypatch):
     monkeypatch.setattr(gis_layers, "INSERT_BATCH", 2)
     county = county_parcels() + [poly(100 + i, -74.6 + i * 0.002, 40.6) for i in range(20)]
     layer = await _new_table_layer(pgdb)
-    summary = await gis_layers.import_features(pgdb, layer, county, clip=clip)  # 28 read, 5 in town
-    assert summary["feature_count"] == 5
-    assert summary["clip_message"] == "Kept 5 of 28 features within your township boundary."
+    summary = await gis_layers.import_features(pgdb, layer, county, clip=clip)  # 28 read, 4 in town
+    assert summary["feature_count"] == 4
+    assert summary["clip_message"] == "Kept 4 of 28 features within your township boundary."
     await pgdb.rollback()
     layer = await _new_table_layer(pgdb)
     with pytest.raises(LayerUploadError) as exc:
-        await gis_layers.import_features(pgdb, layer, county + [poly(99, -74.08, 40.08)], clip=clip)
+        await gis_layers.import_features(
+            pgdb, layer, county + [poly(98, -74.08, 40.08), poly(99, -74.085, 40.085)], clip=clip)
     assert "more than 5 features inside your township boundary" in str(exc.value)
 
 
@@ -854,7 +884,7 @@ async def test_arcgis_polygon_import_matches_an_upload_and_sends_the_spatial_fil
     assert layer["source_url"] == LAYER_URL and layer["source_synced_at"]
     assert layer["source_sync"] is None                      # off by default
     assert layer["feature_id_property"] == "PIN"
-    assert layer["import_summary"]["clip_message"] == "Kept 5 of 6 features inside Testville."
+    assert layer["import_summary"]["clip_message"] == "Kept 4 of 6 features inside Testville."
     assert job.read == 6
     # Only the township's envelope was asked for: FAR and EAST never left the server.
     for q in fake.queries():
@@ -870,7 +900,7 @@ async def test_arcgis_polygon_import_matches_an_upload_and_sends_the_spatial_fil
     gis_layers.append_chunk(up["upload_id"], 0, raw, admin.id)
     uploaded = await create_polygon_layer(MapLayerPolygonCreate(name="Upload", upload_id=up["upload_id"]),
                                           db=pgdb, admin=admin)
-    assert uploaded.feature_count == layer["feature_count"] == 5
+    assert uploaded.feature_count == layer["feature_count"] == 4
     assert await _keys(pgdb, uploaded.id) == await _keys(pgdb, layer["id"])
     assert uploaded.available_properties == layer["available_properties"]
 

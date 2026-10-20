@@ -68,7 +68,7 @@ describe('ArcGisImportForm', () => {
         expect(within(type).getByRole('button', { name: /polygons/i }).getAttribute('aria-pressed')).toBe('true');
         expect((within(type).getByRole('button', { name: /points/i }) as HTMLButtonElement).disabled).toBe(true);
         expect((screen.getByLabelText(/layer name/i) as HTMLInputElement).value).toBe('Tax Parcels');
-        expect(screen.getByText(/only features inside testville/i)).toBeTruthy();
+        expect(screen.getByText(/only what is in testville is kept/i)).toBeTruthy();
         expect(api.inspectArcGis).toHaveBeenCalledWith(LAYER_URL, undefined);
     });
 

@@ -242,7 +242,7 @@ export function ArcGisImportForm({ onCancel, onCreated, onBusyChange }: ImportFo
                     <Input label="Layer name" value={name} onChange={e => setName(e.target.value)} required maxLength={100}
                         disabled={!!progress} />
                     {found?.clipped
-                        ? <p className="text-xs text-white/60">Only features inside {found.area} (and 100 m around it) are kept.</p>
+                        ? <p className="text-xs text-white/60">Only what is in {found.area} is kept: shapes mostly inside it, trimmed at its edge, and points within 100 m of it.</p>
                         : <p className="text-xs text-white/60">No township boundary is set, so every feature is imported. Set one in Setup to limit layers to the township.</p>}
                 </div>
             )}

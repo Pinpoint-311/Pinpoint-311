@@ -77,6 +77,13 @@ DISK_HEADROOM_FACTOR = 2
 # Features within this distance of the township boundary are kept, so parcels
 # and roads on the border are not lost to a boundary drawn a few metres off.
 CLIP_BUFFER_M = 100
+# A polygon is the town's when at least this share of its area is inside the
+# boundary itself (not the buffer), or when this much of it is: a parcel that
+# merely shares the town line, or sits in the 100 m margin, belongs to the
+# neighbour; a county flood or zoning area that covers part of the town is
+# kept, trimmed to the town and its margin.
+CLIP_MIN_SHARE = 0.5
+CLIP_MIN_INSIDE_M2 = 20_000
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_TTL_SECONDS = 6 * 3600
 # An upload nobody has added to for this long is abandoned. An active one
@@ -589,21 +596,26 @@ def portal_visibility_problems(layer) -> Tuple[List[str], List[str]]:
 # The township clip
 # ---------------------------------------------------------------------------
 #
-# A town that uploads the county's parcel file wants the town's parcels. Every
-# file upload and ArcGIS import keeps only the features that intersect the
-# township boundary (SystemSettings.township_boundary, the outline the maps
-# draw) buffered by CLIP_BUFFER_M, so border parcels and roads survive a
-# boundary drawn a little off. The buffered outline is built once per import,
+# A town that uploads the county's parcel file wants the town's parcels.
+# Points keep those within CLIP_BUFFER_M of the township boundary
+# (SystemSettings.township_boundary, the outline the maps draw). Polygons are
+# judged against the boundary itself: kept when mostly inside it (or with a
+# large piece inside), then trimmed to the buffered outline. Intersecting the
+# buffer was the rule for polygons too, and it kept the whole ring of
+# neighbouring parcels along the town line, and county-wide zones at full
+# size, far outside the town. The buffered outline is built once per import,
 # in PostGIS (geography buffer, so the margin is metres everywhere), and kept
 # as EWKB: each later statement decodes it as a constant, which lets PostGIS
 # prepare it once per statement. A cheap bounding-box test in Python drops
 # most out-of-town features before they reach the database at all.
 
 _CLIP_GEOM = "ST_GeomFromEWKB(decode(CAST(:clip AS text), 'hex'))"
+_INNER_GEOM = "ST_GeomFromEWKB(decode(CAST(:inner AS text), 'hex'))"
 _CLIP_BUILD_SQL = (
-    "SELECT encode(ST_AsEWKB(g), 'hex') AS clip, ST_XMin(g) AS w, ST_YMin(g) AS s, "
-    "ST_XMax(g) AS e, ST_YMax(g) AS n FROM (SELECT ST_Buffer(CAST(ST_CollectionExtract(ST_MakeValid("
-    "ST_SetSRID(ST_GeomFromGeoJSON(:b), 4326)), 3) AS geography), CAST(:m AS float8))::geometry AS g) q"
+    "SELECT encode(ST_AsEWKB(g), 'hex') AS clip, encode(ST_AsEWKB(i), 'hex') AS inner, "
+    "ST_XMin(g) AS w, ST_YMin(g) AS s, ST_XMax(g) AS e, ST_YMax(g) AS n "
+    "FROM (SELECT i, ST_Buffer(CAST(i AS geography), CAST(:m AS float8))::geometry AS g "
+    "FROM (SELECT ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(:b), 4326)), 3) AS i) b) q"
 )
 
 
@@ -620,6 +632,8 @@ class Clip:
     area_name: Optional[str] = None
     ewkb_hex: Optional[str] = None
     bbox: Optional[Tuple[float, float, float, float]] = None
+    # The boundary itself, unbuffered: what a polygon's share is measured against.
+    inner_hex: Optional[str] = None
 
     @property
     def area(self) -> str:
@@ -693,7 +707,7 @@ async def load_clip(db) -> Clip:
         return Clip(applied=False, reason="unreadable", area_name=name)
     if not r["clip"] or r["w"] is None:
         return Clip(applied=False, reason="unreadable", area_name=name)
-    return Clip(applied=True, area_name=name, ewkb_hex=r["clip"],
+    return Clip(applied=True, area_name=name, ewkb_hex=r["clip"], inner_hex=r["inner"],
                 bbox=(float(r["w"]), float(r["s"]), float(r["e"]), float(r["n"])))
 
 
@@ -754,6 +768,22 @@ _KEY_SQL = (
 )
 _EMPTY_SQL = "DELETE FROM map_layer_features WHERE layer_id = :l AND ST_IsEmpty(geom)"
 _OUTSIDE_SQL = f"DELETE FROM map_layer_features WHERE layer_id = :l AND NOT ST_Intersects(geom, {_CLIP_GEOM})"
+# Polygons not wholly inside the boundary: measured, and dropped unless enough
+# of them is in town. ST_CoveredBy first, so the town's own parcels (nearly
+# all of them) never pay for an intersection.
+_NOT_TOWNS_SQL = (
+    f"WITH c AS (SELECT {_INNER_GEOM} AS g), "
+    "x AS (SELECT f.id, ST_Area(CAST(f.geom AS geography)) AS a, "
+    "ST_Area(CAST(ST_Intersection(f.geom, c.g) AS geography)) AS ai "
+    "FROM map_layer_features f, c WHERE f.layer_id = :l AND NOT ST_CoveredBy(f.geom, c.g)) "
+    "DELETE FROM map_layer_features WHERE id IN ("
+    "SELECT id FROM x WHERE ai < CAST(:share AS float8) * a AND ai < CAST(:min_m2 AS float8))"
+)
+# What is kept but reaches past the town's margin is trimmed to it.
+_TRIM_SQL = (
+    f"UPDATE map_layer_features SET geom = ST_Multi(ST_CollectionExtract(ST_Intersection(geom, {_CLIP_GEOM}), 3)) "
+    f"WHERE layer_id = :l AND NOT ST_CoveredBy(geom, {_CLIP_GEOM})"
+)
 
 
 async def assign_feature_keys(db, layer) -> None:
@@ -769,6 +799,12 @@ async def _prune_rows(db, layer, clip: Optional[Clip]) -> Tuple[int, int]:
     outside = 0
     if clip is not None and clip.applied:
         outside = (await db.execute(text(_OUTSIDE_SQL), {"l": layer.id, "clip": clip.ewkb_hex})).rowcount or 0
+        if clip.inner_hex:
+            outside += (await db.execute(text(_NOT_TOWNS_SQL), {
+                "l": layer.id, "inner": clip.inner_hex,
+                "share": CLIP_MIN_SHARE, "min_m2": CLIP_MIN_INSIDE_M2})).rowcount or 0
+            await db.execute(text(_TRIM_SQL), {"l": layer.id, "clip": clip.ewkb_hex})
+            outside += (await db.execute(text(_EMPTY_SQL), {"l": layer.id})).rowcount or 0
     return empty, outside
 
 
