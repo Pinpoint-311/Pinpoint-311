@@ -166,12 +166,17 @@ export default function SecretStoreGate({ onChosen, onState }: {
                                 onChange={() => { setPicked(store.id); setError(null); }}
                                 className="sr-only"
                             />
-                            <p className="text-sm font-semibold text-white">
-                                {store.name}
-                                {/* Selection was carried by background colour alone. */}
-                                {picked === store.id && <span className="sr-only"> (selected)</span>}
-                            </p>
-                            <p className="text-[11px] text-white/55 leading-relaxed mt-0.5">{store.blurb}</p>
+                            {/* One full-width block: index.css makes every label holding
+                                a radio a centred flex row, which put the name and its
+                                description side by side and squeezed both on a phone. */}
+                            <span className="block w-full">
+                                <span className="block text-sm font-semibold text-white">
+                                    {store.name}
+                                    {/* Selection was carried by background colour alone. */}
+                                    {picked === store.id && <span className="sr-only"> (selected)</span>}
+                                </span>
+                                <span className="block text-[11px] text-white/55 leading-relaxed mt-0.5">{store.blurb}</span>
+                            </span>
                         </label>
                     ))}
                 </div>

@@ -52,7 +52,7 @@ export function AccordionSection({
                 <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-white">{title}</h3>
                     {subtitle && (
-                        <p className="text-sm text-white/50 truncate">{subtitle}</p>
+                        <p className="text-sm text-white/50 line-clamp-2 sm:truncate">{subtitle}</p>
                     )}
                 </div>
                 {badge && (

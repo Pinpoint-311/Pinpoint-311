@@ -59,7 +59,7 @@ const B = ({ children }: { children: React.ReactNode }) => (
  *  loses everything typed into the boxes below. */
 const L = ({ href, children }: { href: string; children: React.ReactNode }) => (
     <a href={href} target="_blank" rel="noopener noreferrer"
-        className="text-primary-300 underline underline-offset-2">{children}</a>
+        className="inline-link text-primary-300 underline underline-offset-2 break-words">{children}</a>
 );
 
 /**
@@ -108,7 +108,7 @@ const WHY_A_TEMPLATE_IS_SAFE = (
 );
 
 const C = ({ children }: { children: React.ReactNode }) => (
-    <code className="bg-black/30 px-1 rounded text-[11px] text-primary-200">{children}</code>
+    <code className="bg-black/30 px-1 rounded text-[11px] text-primary-200 break-all">{children}</code>
 );
 
 // ===========================================================================

@@ -75,11 +75,12 @@ function RetentionNotice() {
                     <h3 className="font-semibold text-white">
                         No retention period is set
                     </h3>
-                    <p className="text-white/75 text-sm leading-relaxed">{policy.detail}</p>
-                    <p className="text-white/55 text-sm leading-relaxed">
-                        Closed requests are kept until you set a period from the town's
-                        records retention schedule. Set it under <strong className="text-white/75">Compliance → Document
-                        Retention</strong>.
+                    {/* The server's own explanation already ends with where to set
+                        it; a second paragraph saying the same again was noise. */}
+                    <p className="text-white/75 text-sm leading-relaxed">
+                        {policy.detail || <>Closed requests are kept until you set a period from the
+                            town's records retention schedule, under <strong className="text-white">Compliance
+                            → Document Retention</strong>.</>}
                     </p>
                 </div>
             </div>
@@ -1412,11 +1413,11 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
             <Card className="border-indigo-500/20 bg-indigo-500/5">
                 <button
                     onClick={() => toggleGuide('master')}
-                    className="w-full flex items-center justify-between"
+                    className="w-full flex items-center justify-between gap-3"
                 >
-                    <div className="flex items-center gap-3">
-                        <BookOpen className="w-5 h-5 text-indigo-400" />
-                        <div className="text-left">
+                    <div className="flex items-center gap-3 min-w-0">
+                        <BookOpen className="w-5 h-5 text-indigo-400 shrink-0" aria-hidden="true" />
+                        <div className="text-left min-w-0">
                             <h3 className="font-semibold text-white">Setup Instructions</h3>
                             <p className="text-white/50 text-xs">Answer a few questions, then work through one thing at a time</p>
                         </div>
@@ -1471,7 +1472,7 @@ export default function SetupIntegrationsPage({ secrets, onSaveSecret, onRefresh
                             </span>
                         )}
                         {outstanding > 0 && (
-                            <span className="sm:hidden text-xs font-semibold text-amber-300">{outstanding}</span>
+                            <span className="sm:hidden px-2 py-0.5 rounded-full border border-amber-500/30 bg-amber-500/15 text-[11px] font-semibold text-amber-300 whitespace-nowrap">{outstanding} to do</span>
                         )}
                         {expandedGuide === 'master' ? <ChevronUp className="w-5 h-5 text-white/50" /> : <ChevronDown className="w-5 h-5 text-white/50" />}
                     </div>

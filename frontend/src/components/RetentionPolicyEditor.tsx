@@ -309,7 +309,7 @@ export default function RetentionPolicyEditor({
             {/* Mode */}
             <fieldset className="m-0 min-w-0 border-0 p-0">
                 <legend className="mb-3 text-sm font-semibold text-white">When that time is up</legend>
-                <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     {modes.map(m => (
                         <label
                             key={m.value}
@@ -385,7 +385,7 @@ export default function RetentionPolicyEditor({
                                         </button>
                                     </span>
                                 </div>
-                                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
                                     {group.fields.map(field => (
                                         <CheckboxCard
                                             key={field.id}

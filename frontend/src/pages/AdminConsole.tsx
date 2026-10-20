@@ -2706,8 +2706,8 @@ export default function AdminConsole() {
                             {/* Custom Map Layers — its own card/section, matching Maps Configuration above */}
                             {mapsReady && (
                                 <div className="mt-6 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
-                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex items-center justify-between gap-4">
-                                                <div className="flex items-center gap-3">
+                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+                                                <div className="flex items-center gap-3 min-w-0">
                                                     <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
                                                         <Layers className="w-4 h-4 text-violet-400" />
                                                     </div>
@@ -2716,10 +2716,10 @@ export default function AdminConsole() {
                                                         <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map, and polygon layers (parcels, zones) recorded on reports</p>
                                                     </div>
                                                 </div>
-                                                <div className="flex flex-wrap justify-end gap-2">
+                                                <div className="flex flex-wrap sm:justify-end gap-2">
                                                 <Button
                                                     size="sm"
-                                                    className="shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
+                                                    className="w-full sm:w-auto shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
                                                     onClick={() => {
                                                         setEditingLayer(null);
                                                         setNewLayer({
@@ -2765,7 +2765,10 @@ export default function AdminConsole() {
                                                             transition={{ delay: idx * 0.05 }}
                                                             className="px-4 py-3.5 rounded-xl bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.06] transition-all group"
                                                         >
-                                                            <div className="flex items-center gap-3">
+                                                            {/* On a phone the actions take their own row: beside the
+                                                                name they left it a one-word column and the description
+                                                                a few characters. */}
+                                                            <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center gap-3">
                                                                 <div
                                                                     className="w-9 h-9 rounded-lg border-2 shrink-0 shadow-lg"
                                                                     style={{
@@ -2774,8 +2777,8 @@ export default function AdminConsole() {
                                                                     }}
                                                                 />
                                                                 <div className="flex-1 min-w-0">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-sm font-semibold text-white">{layer.name}</span>
+                                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                                                        <span className="text-sm font-semibold text-white break-words">{layer.name}</span>
                                                                         {layer.layer_type && (
                                                                             <Chip tone="neutral" value={layer.layer_type} />
                                                                         )}
@@ -2790,7 +2793,7 @@ export default function AdminConsole() {
                                                                         )}
                                                                     </div>
                                                                     {layer.description && (
-                                                                        <p className="text-xs text-white/35 mt-0.5 truncate">{layer.description}</p>
+                                                                        <p className="text-xs text-white/45 mt-1 line-clamp-2 sm:truncate">{layer.description}</p>
                                                                     )}
                                                                     {arcgisSourceLabel(layer) && (
                                                                         <p className="text-xs text-white/50 mt-0.5">
@@ -2799,7 +2802,7 @@ export default function AdminConsole() {
                                                                         </p>
                                                                     )}
                                                                 </div>
-                                                                <div className="flex items-center gap-1 shrink-0">
+                                                                <div className="flex items-center justify-end gap-1 shrink-0 w-full sm:w-auto border-t border-white/[0.06] pt-2 sm:border-0 sm:pt-0">
                                                                     {layer.source_url && (
                                                                         <ArcGisRefreshButton layer={layer} onUpdated={() => loadTabData()} />
                                                                     )}
@@ -2820,6 +2823,8 @@ export default function AdminConsole() {
                                                                                 : 'text-white/20 hover:bg-white/5 hover:text-white/40'
                                                                         }`}
                                                                         title={(layer as any).visible_on_map ?? true ? 'Visible on map' : 'Hidden from map'}
+                                                                        aria-label={`${(layer as any).visible_on_map ?? true ? 'Hide' : 'Show'} ${layer.name} on the map`}
+                                                                        aria-pressed={(layer as any).visible_on_map ?? true}
                                                                     >
                                                                         {(layer as any).visible_on_map ?? true ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                                                     </button>
@@ -2918,10 +2923,6 @@ export default function AdminConsole() {
                                                 </h3>
                                                 <p className="text-white/75 text-sm leading-relaxed">
                                                     {retentionPolicy.detail}
-                                                </p>
-                                                <p className="text-white/60 text-sm leading-relaxed">
-                                                    Nothing has been deleted or redacted. Closed requests are kept,
-                                                    including any older than your published retention schedule allows.
                                                 </p>
                                                 <p className="text-white/50 text-sm leading-relaxed">
                                                     Set a retention period below to start it.
@@ -3129,7 +3130,7 @@ export default function AdminConsole() {
                                         number it was never knew it was in scope. */}
                                     {exportOpen && (
                                         <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-                                            <div className="grid gap-3 sm:grid-cols-2">
+                                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                                 <label className="text-sm">
                                                     <span className="block text-white/60 mb-1">Submitted from</span>
                                                     <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)}
@@ -3170,7 +3171,7 @@ export default function AdminConsole() {
 
                                             <div>
                                                 <span className="block text-white/60 text-sm mb-2">Fields to include</span>
-                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                                     {exportFields.map(f => (
                                                         <label key={f.id} className="flex !items-start gap-2 text-sm">
                                                             <Checkbox checked={exportChosen.has(f.id)}
