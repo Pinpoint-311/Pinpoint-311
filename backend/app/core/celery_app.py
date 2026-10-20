@@ -1,6 +1,6 @@
 from celery import Celery
 from celery.schedules import crontab
-from celery.signals import worker_init, worker_process_init
+from celery.signals import worker_init, worker_process_init, worker_ready
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -60,12 +60,32 @@ def _crash_reporting_in_worker(**kwargs):
 worker_process_init.connect(_crash_reporting_in_worker)
 worker_init.connect(_crash_reporting_in_worker)
 
+
+def _fill_critical_facilities_soon(**_kwargs):
+    """A new town (or one upgraded onto the store) fills it within minutes.
+
+    Waiting for the daily beat would leave every report until then with no
+    "near a hospital" context at all. The task itself does nothing when the
+    store already has rows, so a restart costs one SELECT. Never raises: a
+    broker hiccup here must not stop the worker coming up.
+    """
+    try:
+        from app.tasks.critical_facilities import refresh_critical_facilities
+        refresh_critical_facilities.apply_async(kwargs={"only_if_empty": True}, countdown=90)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("could not queue the critical-facilities fill", exc_info=True)
+
+
+worker_ready.connect(_fill_critical_facilities_soon)
+
 celery_app = Celery(
     "township_311",
     broker=settings.redis_url,
     backend=settings.redis_url,
     include=["app.tasks.service_requests", "app.tasks.integrations", "app.tasks.road_data",
-             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades"]
+             "app.tasks.storage", "app.tasks.connector_checks", "app.tasks.upgrades",
+             "app.tasks.critical_facilities", "app.tasks.staff_invites", "app.tasks.arcgis_sync"]
 )
 
 celery_app.conf.update(
@@ -117,6 +137,29 @@ celery_app.conf.update(
         "monthly-road-refresh": {
             "task": "app.tasks.road_data.refresh_roads_monthly",
             "schedule": crontab(hour=4, minute=15),  # checked daily, acts monthly
+        },
+        # Hospitals, schools, fire stations... for the "near critical
+        # infrastructure" check. Checked daily, refreshes when a week old (or
+        # empty), so a failed refresh is retried the next day. One Overpass
+        # query for the whole town; reports never call out.
+        # While the store is still empty (a new install, or the public
+        # Overpass instance was down on the first try), retry every hour
+        # instead of waiting a day. A no-op once anything is loaded.
+        "hourly-critical-facilities-fill": {
+            "task": "app.tasks.critical_facilities.refresh_critical_facilities",
+            "schedule": crontab(minute=20),
+            "kwargs": {"only_if_empty": True},
+        },
+        "daily-critical-facilities-check": {
+            "task": "app.tasks.critical_facilities.refresh_critical_facilities",
+            "schedule": crontab(hour=4, minute=45),
+        },
+        # Map layers an admin set to sync from ArcGIS daily or weekly. Hourly
+        # sweep; each layer is due on its own interval, and an unchanged
+        # source costs a request or two (app/tasks/arcgis_sync.py).
+        "hourly-arcgis-layer-sync": {
+            "task": "app.tasks.arcgis_sync.sync_arcgis_layers",
+            "schedule": crontab(minute=23),
         },
         # Test every configured connector once a day.
         #

@@ -121,7 +121,7 @@ describe('the fork, before anything is chosen', () => {
         expect(details).toBeTruthy();
         // Every word of it is still here, just not in the way.
         expect(details!.textContent).toContain('It runs in');
-        expect(details!.textContent).toContain('scoped to');
+        expect(details!.textContent).toContain('covers only the resources');
         // Closed by default: the reader sees the action first.
         expect((details as HTMLDetailsElement).open).toBe(false);
 

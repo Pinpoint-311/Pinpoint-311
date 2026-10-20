@@ -430,18 +430,34 @@ body {
     background: rgba(255, 255, 255, 0.3);
 }
 
-/* Mobile-specific styles */
-@media (max-width: 768px) {
-    .glass-button {
-        padding: 14px 28px;
-        min-height: 48px;
-    }
+/* The staff and admin shells are fixed to the viewport and scroll an inner
+ * pane. 100vh on a phone is the height with the browser's toolbar hidden, so
+ * while the toolbar shows, the bottom of that pane sat behind it and the end
+ * of a long page (Compliance, Users) could not be reached. 100dvh is the
+ * height actually visible; 100vh stays as the fallback for older browsers. */
+.h-viewport {
+    height: 100vh;
+    height: 100dvh;
+}
 
-    .glass-input {
-        padding: 14px 16px;
-        min-height: 48px;
-        font-size: 16px;
-        /* Prevent zoom on iOS */
+/* Mobile-specific styles.
+ *
+ * In the components layer, not loose in the file: unlayered, this padding
+ * outranked every utility, so on a phone `pl-10` beside a search icon lost to
+ * 16px and the placeholder ran under the icon in every search box. */
+@layer components {
+    @media (max-width: 768px) {
+        .glass-button {
+            padding: 14px 28px;
+            min-height: 48px;
+        }
+
+        .glass-input {
+            padding: 14px 16px;
+            min-height: 48px;
+            font-size: 16px;
+            /* Prevent zoom on iOS */
+        }
     }
 }
 

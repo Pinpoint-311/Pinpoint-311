@@ -54,8 +54,9 @@ import {
     MapPinned,
     MapPinOff,
     UserSearch,
+    ChevronRight,
 } from 'lucide-react';
-import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge } from '../components/ui';
+import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge, Checkbox } from '../components/ui';
 import { humanize } from '../utils/humanize';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -73,16 +74,25 @@ import { combinedRoadList } from '../utils/agencyLibrary';
 import RoadCorridorMap from '../components/RoadCorridorMap';
 import SetupIntegrationsPage from '../components/SetupIntegrationsPage';
 import Open311ApiKeys from '../components/Open311ApiKeys';
-import { ContextLayerSettingsModal, layerPurposeLabel } from '../components/PolygonLayerManager';
+import { ContextLayerSettingsModal, layerPurposeLabel, limitText, uploadInChunks, useLayerLimits } from '../components/PolygonLayerManager';
+import { ArcGisRefreshButton, ArcGisSourcePanel, arcgisSourceLabel } from '../components/ArcGisImport';
 import { CategoryScopePicker } from '../components/CategoryScopePicker';
 import AddLayerTypeStep, { type NewLayerType } from '../components/AddLayerTypeStep';
 import AuditLogViewer from '../components/AuditLogViewer';
 import SignInProviderNote from '../components/SignInProviderNote';
+import { InviteCheckbox, InviteNotice, inviteResultMessage } from '../components/StaffInvite';
 import { useSignInProvider } from '../hooks/useSignInProvider';
 import BackupRestore from '../components/BackupRestore';
 import VersionSwitcher from '../components/VersionSwitcher';
+import RetentionPolicyEditor from '../components/RetentionPolicyEditor';
 import StayInformedHost from '../components/StayInformed';
 import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
+
+// Options that belong to a feature module: an inset panel under the module's
+// title (past its 44px icon and 16px gap), with a coloured edge, so it reads as
+// part of that module and not as the next row.
+const NESTED_PANEL =
+    'mt-4 sm:ml-[60px] overflow-hidden rounded-xl border border-white/10 border-l-2 bg-black/20 shadow-[inset_0_1px_3px_rgba(0,0,0,0.25)]';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -105,6 +115,13 @@ export function formatSlaTarget(hours: number): string {
 // Category icons come from the shared municipal set in components/categoryIcons.ts.
 
 type Tab = 'branding' | 'users' | 'departments' | 'services' | 'integration' | 'system' | 'health' | 'compliance';
+const TABS: readonly Tab[] = ['branding', 'users', 'departments', 'services', 'integration', 'system', 'health', 'compliance'];
+
+/** The section a link asked for (`/admin#compliance`, the `/setup` redirect), else Branding. */
+function tabFromHash(): Tab {
+    const hash = typeof window !== 'undefined' ? window.location.hash.slice(1) : '';
+    return (TABS as readonly string[]).includes(hash) ? (hash as Tab) : 'branding';
+}
 
 // Sidebar accordion components
 interface SidebarGroupProps {
@@ -633,7 +650,10 @@ export default function AdminConsole() {
     const dialog = useDialog();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
-    const [currentTab, setCurrentTab] = useState<Tab>('branding');
+    const [currentTab, setCurrentTab] = useState<Tab>(tabFromHash);
+    // The hash as the page was opened, before the tab effect below writes
+    // `#branding` over an empty one.
+    const arrivalHash = useRef(typeof window !== 'undefined' ? window.location.hash.slice(1) : '');
     const [isLoading, setIsLoading] = useState(false);
     const [saveMessage, setSaveMessage] = useState<string | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -707,7 +727,10 @@ export default function AdminConsole() {
         full_name: '',
         role: 'staff' as 'staff' | 'admin',
         department_ids: [] as number[],
+        send_invite: true,
     });
+    // What happened to the last invite (created or resent), shown above the table.
+    const [inviteNotice, setInviteNotice] = useState<{ message: string; ok: boolean } | null>(null);
 
     /* Editing an existing staff member.
      *
@@ -930,6 +953,11 @@ export default function AdminConsole() {
     // An upload in progress in the Add Layer dialog; closing then would orphan it.
     const [layerUploadBusy, setLayerUploadBusy] = useState(false);
     const [polygonSettingsLayer, setPolygonSettingsLayer] = useState<MapLayer | null>(null);
+    // A point layer's file goes up in parts (it can be larger than one request
+    // may be), so it is kept as a File until Create / Update.
+    const [pointFile, setPointFile] = useState<File | null>(null);
+    const [pointProgress, setPointProgress] = useState<string | null>(null);
+    const layerLimits = useLayerLimits();
     const [newLayer, setNewLayer] = useState({
         name: '',
         description: '',
@@ -1013,8 +1041,6 @@ export default function AdminConsole() {
        there is no schedule to pre-fill it from, and a pre-filled number here
        is a destruction date nobody chose. */
     const [retentionDays, setRetentionDays] = useState<string>('');
-    const [isSavingRetention, setIsSavingRetention] = useState(false);
-    const [isRunningRetention, setIsRunningRetention] = useState(false);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [deletedRequests, setDeletedRequests] = useState<any[]>([]);
 
@@ -1126,7 +1152,7 @@ export default function AdminConsole() {
      * ignoring a link.
      */
     useEffect(() => {
-        if (window.location.hash.slice(1)) return;
+        if (arrivalHash.current) return;
         let cancelled = false;
         api.getSetupState()
             .then(state => { if (!cancelled && !state.completed) setCurrentTab('integration'); })
@@ -1300,14 +1326,27 @@ export default function AdminConsole() {
                 role: newUser.role,
                 full_name: newUser.full_name || undefined,
                 department_ids: newUser.department_ids.length > 0 ? newUser.department_ids : undefined,
+                send_invite: newUser.send_invite,
             };
-            await api.createUser(userData as any);
+            const created = await api.createUser(userData);
+            const message = inviteResultMessage(created.invite, created.email || newUser.email);
+            setInviteNotice(message ? { message, ok: created.invite === 'queued' } : null);
             setShowUserModal(false);
-            setNewUser({ username: '', email: '', full_name: '', role: 'staff', department_ids: [] });
+            setNewUser({ username: '', email: '', full_name: '', role: 'staff', department_ids: [], send_invite: true });
             loadTabData();
         } catch (err: any) {
             console.error('Failed to create user:', err);
             alert(err.message || 'Failed to create user');
+        }
+    };
+
+    const handleResendInvite = async (u: User) => {
+        try {
+            const { invite } = await api.resendInvite(u.id);
+            const message = inviteResultMessage(invite, u.email, 'resent');
+            setInviteNotice(message ? { message, ok: invite === 'queued' } : null);
+        } catch (err) {
+            reportError('Could not resend the invite', err);
         }
     };
 
@@ -1469,7 +1508,9 @@ export default function AdminConsole() {
             await api.updateService(editingService.id, {
                 routing_mode: serviceRouting.routing_mode,
                 routing_config: config,
-                assigned_department_id: serviceRouting.assigned_department_id || undefined,
+                // null, not undefined: "no department" must reach the server
+                // to clear one that was set.
+                assigned_department_id: serviceRouting.assigned_department_id || null,
                 icon: serviceRouting.icon,
                 // 0 explicitly clears the SLA; a value sets it.
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
@@ -1596,7 +1637,7 @@ export default function AdminConsole() {
         // positioned ancestor -- every sr-only label in the audit table -- is
         // laid out against the page, not clipped by overflow, and stretched
         // the document until the whole frame scrolled away.
-        <div className="relative h-screen flex overflow-hidden">
+        <div className="relative h-viewport flex overflow-hidden">
             {/* The one voluntary outbound call this application makes. Gated on
               * a configured deployment rather than on sign-in: `township_name`
               * only leaves its placeholder once somebody has been through
@@ -1899,41 +1940,38 @@ export default function AdminConsole() {
                                     </Button>
                                 </div>
 
-                                {/* Stats Cards */}
-                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-500/10 to-blue-600/5 border border-blue-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
-                                                <UserIcon className="w-5 h-5 text-blue-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.length}</p>
-                                                <p className="text-xs text-blue-300/70">Total Users</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-amber-500/10 to-amber-600/5 border border-amber-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center">
-                                                <Shield className="w-5 h-5 text-amber-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'admin').length}</p>
-                                                <p className="text-xs text-amber-300/70">Administrators</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div className="p-4 rounded-2xl bg-gradient-to-br from-emerald-500/10 to-emerald-600/5 border border-emerald-500/20 backdrop-blur-sm">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center">
-                                                <Users className="w-5 h-5 text-emerald-400" />
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-white">{users.filter(u => u.role === 'staff').length}</p>
-                                                <p className="text-xs text-emerald-300/70">Staff Members</p>
+                                <InviteNotice
+                                    message={inviteNotice?.message ?? null}
+                                    ok={!!inviteNotice?.ok}
+                                    onDismiss={() => setInviteNotice(null)}
+                                />
+
+                                {/* Stats: three across at every width. Stacked on a phone
+                                    they were three full-width cards, a whole screen of
+                                    numbers before the first user. */}
+                                <div className="grid grid-cols-3 gap-2 sm:gap-4">
+                                    {[
+                                        { n: users.length, label: 'Total users', Icon: UserIcon, tone: 'blue' },
+                                        { n: users.filter(u => u.role === 'admin').length, label: 'Administrators', Icon: Shield, tone: 'amber' },
+                                        { n: users.filter(u => u.role === 'staff').length, label: 'Staff', Icon: Users, tone: 'emerald' },
+                                    ].map(({ n, label, Icon, tone }) => (
+                                        <div key={label} className={`p-3 sm:p-4 rounded-2xl bg-gradient-to-br backdrop-blur-sm border ${
+                                            tone === 'blue' ? 'from-blue-500/10 to-blue-600/5 border-blue-500/20'
+                                                : tone === 'amber' ? 'from-amber-500/10 to-amber-600/5 border-amber-500/20'
+                                                    : 'from-emerald-500/10 to-emerald-600/5 border-emerald-500/20'}`}>
+                                            <div className="flex items-center gap-3">
+                                                <div className={`hidden sm:flex w-10 h-10 rounded-xl items-center justify-center ${
+                                                    tone === 'blue' ? 'bg-blue-500/20' : tone === 'amber' ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}>
+                                                    <Icon className={`w-5 h-5 ${tone === 'blue' ? 'text-blue-400' : tone === 'amber' ? 'text-amber-400' : 'text-emerald-400'}`} aria-hidden="true" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="text-xl sm:text-2xl font-bold text-white tabular-nums">{n}</p>
+                                                    <p className={`text-[11px] sm:text-xs truncate ${
+                                                        tone === 'blue' ? 'text-blue-300/80' : tone === 'amber' ? 'text-amber-300/80' : 'text-emerald-300/80'}`}>{label}</p>
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
+                                    ))}
                                 </div>
 
                                 {/* Premium Table */}
@@ -1959,55 +1997,79 @@ export default function AdminConsole() {
                                                 transition={{ delay: index * 0.05 }}
                                                 className="px-4 md:px-6 py-4 hover:bg-white/[0.03] transition-all duration-200 group"
                                             >
-                                                {/* Mobile: Card Layout */}
+                                                {/* Mobile: Card Layout. Name and role on top, then the
+                                                    address (once: a username that is the email is not
+                                                    shown twice), then departments with the actions
+                                                    grouped at the end of the row. */}
                                                 <div className="md:hidden space-y-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex items-center gap-3">
-                                                            <div className={`relative w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
+                                                    <div className="flex items-start justify-between gap-3">
+                                                        <div className="flex items-center gap-3 min-w-0">
+                                                            <div className={`relative w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-bold text-sm ring-1 ring-white/10 shadow-xl ${u.role === 'admin'
                                                                 ? 'bg-gradient-to-br from-amber-300 to-orange-500 text-amber-950 drop-shadow-sm shadow-orange-900/50'
                                                                 : 'bg-gradient-to-br from-primary-400 to-primary-600 text-white shadow-primary-900/60'
                                                                 }`}>
                                                                 {u.full_name ? u.full_name.charAt(0).toUpperCase() : u.username.charAt(0).toUpperCase()}
                                                                 <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-emerald-500 border-2 border-slate-900 shadow-md shadow-emerald-900/70" />
                                                             </div>
-                                                            <div>
-                                                                <p className="font-semibold text-white text-sm">{u.full_name || u.username}</p>
-                                                                <p className="text-xs text-white/40">@{u.username}</p>
+                                                            <div className="min-w-0">
+                                                                <p className="font-semibold text-white text-sm truncate">{u.full_name || u.username}</p>
+                                                                <p className="text-xs text-white/50 truncate">{u.email && u.email !== u.username ? u.email : `@${u.username}`}</p>
+                                                                {u.email && u.email !== u.username && u.username !== u.full_name && (
+                                                                    <p className="text-[11px] text-white/35 truncate">@{u.username}</p>
+                                                                )}
                                                             </div>
                                                         </div>
                                                         <RoleChip role={u.role} size="sm" />
                                                     </div>
-                                                    <p className="text-xs text-white/50 truncate">{u.email}</p>
-                                                    <div className="flex items-center justify-between">
-                                                        <div className="flex flex-wrap gap-1">
+                                                    <div className="flex items-center justify-between gap-2">
+                                                        <div className="flex flex-wrap gap-1 min-w-0">
                                                             {u.departments && u.departments.length > 0 ? (
-                                                                u.departments.slice(0, 2).map((dept) => (
-                                                                    <span key={dept.id} className="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-white/70 border border-white/10">
-                                                                        {dept.name}
-                                                                    </span>
-                                                                ))
+                                                                <>
+                                                                    {u.departments.slice(0, 2).map((dept) => (
+                                                                        <span key={dept.id} className="px-2 py-0.5 text-xs rounded-lg bg-white/5 text-white/70 border border-white/10 truncate max-w-[10rem]">
+                                                                            {dept.name}
+                                                                        </span>
+                                                                    ))}
+                                                                    {u.departments.length > 2 && (
+                                                                        <span className="px-1 py-0.5 text-xs text-white/40">+{u.departments.length - 2}</span>
+                                                                    )}
+                                                                </>
                                                             ) : (
-                                                                <span className="text-xs text-white/25 italic">No department</span>
+                                                                <span className="text-xs text-white/35 italic">No department</span>
                                                             )}
                                                         </div>
-                                                        <button
-                                                            onClick={() => openEditUser(u)}
-                                                            className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
-                                                            title={`Edit ${u.full_name || u.username}`}
-                                                        >
-                                                            <Pencil className="w-4 h-4" />
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleDeleteUser(u.id)}
-                                                            disabled={u.id === user?.id}
-                                                            className={`p-2 rounded-lg ${u.id === user?.id
-                                                                ? 'text-white/20 cursor-not-allowed'
-                                                                : 'hover:bg-red-500/20 text-white/40 hover:text-red-400'
-                                                                }`}
-                                                            title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
-                                                        >
-                                                            <Trash2 className="w-4 h-4" />
-                                                        </button>
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {u.is_active !== false && (
+                                                                <button
+                                                                    onClick={() => handleResendInvite(u)}
+                                                                    className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/10 text-white/60 hover:text-white transition-colors"
+                                                                    title="Resend invite"
+                                                                    aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                                >
+                                                                    <Mail className="w-4 h-4" aria-hidden="true" />
+                                                                </button>
+                                                            )}
+                                                            <button
+                                                                onClick={() => openEditUser(u)}
+                                                                className="p-2 rounded-lg bg-white/[0.04] hover:bg-white/10 text-white/60 hover:text-white transition-colors"
+                                                                title={`Edit ${u.full_name || u.username}`}
+                                                                aria-label={`Edit ${u.full_name || u.username}`}
+                                                            >
+                                                                <Pencil className="w-4 h-4" aria-hidden="true" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleDeleteUser(u.id)}
+                                                                disabled={u.id === user?.id}
+                                                                className={`p-2 rounded-lg bg-white/[0.04] ${u.id === user?.id
+                                                                    ? 'text-white/20 cursor-not-allowed'
+                                                                    : 'hover:bg-red-500/20 text-white/60 hover:text-red-400'
+                                                                    }`}
+                                                                title={u.id === user?.id ? "Cannot delete yourself" : "Delete user"}
+                                                                aria-label={u.id === user?.id ? 'You cannot delete your own account' : `Delete ${u.full_name || u.username}`}
+                                                            >
+                                                                <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 </div>
 
@@ -2064,7 +2126,17 @@ export default function AdminConsole() {
 
                                                     {/* Actions */}
                                                     <div className="col-span-1 flex justify-end">
-                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                                                            {u.is_active !== false && (
+                                                                <button
+                                                                    onClick={() => handleResendInvite(u)}
+                                                                    className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
+                                                                    title="Resend invite"
+                                                                    aria-label={`Resend invite to ${u.full_name || u.username}`}
+                                                                >
+                                                                    <Mail className="w-4 h-4" aria-hidden="true" />
+                                                                </button>
+                                                            )}
                                                             <button
                                                                 onClick={() => openEditUser(u)}
                                                                 className="p-2 rounded-lg hover:bg-white/10 text-white/40 hover:text-white transition-colors"
@@ -2260,8 +2332,8 @@ export default function AdminConsole() {
                                                         all -- there is no default address in the code, because
                                                         a wrong one is worse than no offer. */}
                                                     {mod.key === 'platform_feedback' && isOn && (
-                                                        <div className="mt-4 border-l-2 border-sky-500/20 pl-4 ml-1">
-                                                            <label className="block text-[11px] font-semibold text-white/40 uppercase tracking-wider mb-2" htmlFor="platform-feedback-email">
+                                                        <div className={`${NESTED_PANEL} border-l-sky-400/60 px-4 py-3.5`}>
+                                                            <label className="block text-xs font-medium text-white/80 mb-2" htmlFor="platform-feedback-email">
                                                                 Email for longer feedback
                                                             </label>
                                                             <input
@@ -2286,41 +2358,54 @@ export default function AdminConsole() {
                                                         COLUMN_DICTIONARY, so the disclosure cannot drift from
                                                         what the export actually ships; enforcement is
                                                         server-side at row build, this is just the switch. */}
-                                                    {mod.key === 'research_portal' && researchPacks.length > 0 && (
-                                                        <div className="mt-4 space-y-2 border-l-2 border-violet-500/20 pl-4 ml-1">
-                                                            <p className="text-[11px] font-semibold text-white/40 uppercase tracking-wider">Research field packs</p>
-                                                            {researchPacks.map((pack) => {
-                                                                const packOn = packSwitches[pack.id] ?? pack.enabled;
-                                                                return (
-                                                                    <div key={pack.id} className="flex items-start justify-between gap-3 py-1.5">
-                                                                        <div className="min-w-0">
-                                                                            <p className="text-xs font-medium text-white/80">{pack.label}</p>
-                                                                            <p className="text-[11px] text-white/40">
-                                                                                contains: {pack.contains.join(', ')}
-                                                                            </p>
-                                                                            {pack.why_default_off && (
-                                                                                <p className="text-[11px] text-amber-300/80 mt-0.5">
-                                                                                    Off by default: {pack.why_default_off}
-                                                                                </p>
-                                                                            )}
-                                                                        </div>
-                                                                        <button
-                                                                            onClick={() => setPackSwitches((p) => ({ ...p, [pack.id]: !packOn }))}
-                                                                            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 mt-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${packOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
-                                                                            style={{ width: 36, height: 20, minHeight: 20, maxHeight: 20, padding: 0 }}
-                                                                            role="switch"
-                                                                            aria-checked={packOn}
-                                                                            aria-label={`Toggle ${pack.label}`}
-                                                                        >
-                                                                            <span
-                                                                                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${packOn ? 'translate-x-5' : 'translate-x-1'}`}
-                                                                                style={{ width: 13, height: 13 }}
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                        </button>
-                                                                    </div>
-                                                                );
-                                                            })}
+                                                    {mod.key === 'research_portal' && isOn && researchPacks.length > 0 && (
+                                                        <div className={`${NESTED_PANEL} border-l-violet-400/60`}>
+                                                            <div className="px-4 pt-3.5 pb-2">
+                                                                <p className="text-xs font-medium text-white/80">Research field packs</p>
+                                                                <p className="text-[11px] text-white/50 mt-0.5">The groups of fields researchers receive in each export.</p>
+                                                            </div>
+                                                            <ul className="divide-y divide-white/[0.07]">
+                                                                {researchPacks.map((pack) => {
+                                                                    const packOn = packSwitches[pack.id] ?? pack.enabled;
+                                                                    return (
+                                                                        <li key={pack.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                                                                            <div className="min-w-0">
+                                                                                <p className="text-xs font-medium text-white/90">{pack.label}</p>
+                                                                                {pack.why_default_off && (
+                                                                                    <p className="text-[11px] text-amber-300/85 mt-0.5 leading-relaxed">
+                                                                                        Off by default: {pack.why_default_off}
+                                                                                    </p>
+                                                                                )}
+                                                                                <details className="group/fields mt-1">
+                                                                                    <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded text-[11px] text-white/50 hover:text-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 [&::-webkit-details-marker]:hidden">
+                                                                                        <ChevronRight className="h-3 w-3 transition-transform group-open/fields:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+                                                                                        {pack.contains.length} {pack.contains.length === 1 ? 'field' : 'fields'}
+                                                                                    </summary>
+                                                                                    <div className="mt-1.5 flex flex-wrap gap-1">
+                                                                                        {pack.contains.map((field) => (
+                                                                                            <code key={field} className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-white/60">{field}</code>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </details>
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => setPackSwitches((p) => ({ ...p, [pack.id]: !packOn }))}
+                                                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 mt-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${packOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                                                style={{ width: 36, height: 20, minHeight: 20, maxHeight: 20, padding: 0 }}
+                                                                                role="switch"
+                                                                                aria-checked={packOn}
+                                                                                aria-label={`Toggle ${pack.label}`}
+                                                                            >
+                                                                                <span
+                                                                                    className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${packOn ? 'translate-x-5' : 'translate-x-1'}`}
+                                                                                    style={{ width: 13, height: 13 }}
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                            </button>
+                                                                        </li>
+                                                                    );
+                                                                })}
+                                                            </ul>
                                                         </div>
                                                     )}
                                                 </motion.div>
@@ -2623,8 +2708,8 @@ export default function AdminConsole() {
                             {/* Custom Map Layers — its own card/section, matching Maps Configuration above */}
                             {mapsReady && (
                                 <div className="mt-6 rounded-2xl bg-white/[0.03] backdrop-blur-xl border border-white/10 overflow-hidden shadow-2xl">
-                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex items-center justify-between gap-4">
-                                                <div className="flex items-center gap-3">
+                                    <div className="px-5 sm:px-6 py-4 border-b border-white/10 bg-gradient-to-r from-white/[0.05] to-transparent flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+                                                <div className="flex items-center gap-3 min-w-0">
                                                     <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 border border-violet-500/20 flex items-center justify-center shrink-0">
                                                         <Layers className="w-4 h-4 text-violet-400" />
                                                     </div>
@@ -2633,10 +2718,10 @@ export default function AdminConsole() {
                                                         <p className="text-xs text-white/40 mt-0.5">Infrastructure assets displayed on the portal map, and polygon layers (parcels, zones) recorded on reports</p>
                                                     </div>
                                                 </div>
-                                                <div className="flex flex-wrap justify-end gap-2">
+                                                <div className="flex flex-wrap sm:justify-end gap-2">
                                                 <Button
                                                     size="sm"
-                                                    className="shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
+                                                    className="w-full sm:w-auto shrink-0 bg-gradient-to-r from-violet-500 to-violet-600 hover:from-violet-400 hover:to-violet-500 shadow-lg shadow-violet-500/20"
                                                     onClick={() => {
                                                         setEditingLayer(null);
                                                         setNewLayer({
@@ -2653,6 +2738,7 @@ export default function AdminConsole() {
                                                             routing_config: null,
                                                             visible_on_map: true,
                                                         });
+                                                        setPointFile(null);
                                                         api.getServices().then(setServices).catch(console.error);
                                                         setShowLayerModal(true);
                                                     }}
@@ -2681,7 +2767,10 @@ export default function AdminConsole() {
                                                             transition={{ delay: idx * 0.05 }}
                                                             className="px-4 py-3.5 rounded-xl bg-white/[0.04] border border-white/[0.06] hover:bg-white/[0.06] transition-all group"
                                                         >
-                                                            <div className="flex items-center gap-3">
+                                                            {/* On a phone the actions take their own row: beside the
+                                                                name they left it a one-word column and the description
+                                                                a few characters. */}
+                                                            <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center gap-3">
                                                                 <div
                                                                     className="w-9 h-9 rounded-lg border-2 shrink-0 shadow-lg"
                                                                     style={{
@@ -2690,8 +2779,8 @@ export default function AdminConsole() {
                                                                     }}
                                                                 />
                                                                 <div className="flex-1 min-w-0">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-sm font-semibold text-white">{layer.name}</span>
+                                                                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                                                        <span className="text-sm font-semibold text-white break-words">{layer.name}</span>
                                                                         {layer.layer_type && (
                                                                             <Chip tone="neutral" value={layer.layer_type} />
                                                                         )}
@@ -2706,10 +2795,19 @@ export default function AdminConsole() {
                                                                         )}
                                                                     </div>
                                                                     {layer.description && (
-                                                                        <p className="text-xs text-white/35 mt-0.5 truncate">{layer.description}</p>
+                                                                        <p className="text-xs text-white/45 mt-1 line-clamp-2 sm:truncate">{layer.description}</p>
+                                                                    )}
+                                                                    {arcgisSourceLabel(layer) && (
+                                                                        <p className="text-xs text-white/50 mt-0.5">
+                                                                            {arcgisSourceLabel(layer)}
+                                                                            {layer.source_sync_status === 'held' && <span className="text-amber-200"> · needs review</span>}
+                                                                        </p>
                                                                     )}
                                                                 </div>
-                                                                <div className="flex items-center gap-1 shrink-0">
+                                                                <div className="flex items-center justify-end gap-1 shrink-0 w-full sm:w-auto border-t border-white/[0.06] pt-2 sm:border-0 sm:pt-0">
+                                                                    {layer.source_url && (
+                                                                        <ArcGisRefreshButton layer={layer} onUpdated={() => loadTabData()} />
+                                                                    )}
                                                                     <button
                                                                         onClick={async () => {
                                                                             try {
@@ -2727,6 +2825,8 @@ export default function AdminConsole() {
                                                                                 : 'text-white/20 hover:bg-white/5 hover:text-white/40'
                                                                         }`}
                                                                         title={(layer as any).visible_on_map ?? true ? 'Visible on map' : 'Hidden from map'}
+                                                                        aria-label={`${(layer as any).visible_on_map ?? true ? 'Hide' : 'Show'} ${layer.name} on the map`}
+                                                                        aria-pressed={(layer as any).visible_on_map ?? true}
                                                                     >
                                                                         {(layer as any).visible_on_map ?? true ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                                                     </button>
@@ -2752,6 +2852,7 @@ export default function AdminConsole() {
                                                                                 routing_config: (layer as any).routing_config || null,
                                                                                 visible_on_map: (layer as any).visible_on_map ?? true,
                                                                             });
+                                                                            setPointFile(null);
                                                                             api.getServices().then(setServices).catch(console.error);
                                                                             setShowLayerModal(true);
                                                                         }}
@@ -2824,10 +2925,6 @@ export default function AdminConsole() {
                                                 </h3>
                                                 <p className="text-white/75 text-sm leading-relaxed">
                                                     {retentionPolicy.detail}
-                                                </p>
-                                                <p className="text-white/60 text-sm leading-relaxed">
-                                                    Nothing has been deleted or redacted. Closed requests are kept,
-                                                    including any older than your published retention schedule allows.
                                                 </p>
                                                 <p className="text-white/50 text-sm leading-relaxed">
                                                     Set a retention period below to start it.
@@ -2973,360 +3070,58 @@ export default function AdminConsole() {
                                     icon={Clock}
                                     iconClassName="text-amber-400"
                                 >
-                                    {/* No state picker, and no default period. It looked up a
-                                        retention period in a table of all 51 US jurisdictions
-                                        that nobody had checked — 41 of them five years, each
-                                        citing that state's records authority as its source,
-                                        which is what made it look researched. Both answers
-                                        below come from the town. */}
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2" htmlFor="retention-days">
-                                                Keep closed requests for (days)
-                                            </label>
-                                            <input
-                                                id="retention-days"
-                                                type="number"
-                                                value={retentionDays}
-                                                onChange={(e) => setRetentionDays(e.target.value)}
-                                                placeholder="e.g. 2555"
-                                                min="1"
-                                                max="36500"
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400 placeholder:text-white/40"
-                                            />
-                                            {/* Shown in years as it is typed. A schedule states
-                                                "7 years" and this field takes days, so 7 typed
-                                                here is a week — and a week is a policy that
-                                                destroys almost everything on its first run. */}
-                                            <p className="text-white/50 text-xs mt-1">
-                                                {retentionDays && parseInt(retentionDays) > 0
-                                                    ? `${formatYears(parseInt(retentionDays))} — records are cleared once they have been closed this long.`
-                                                    : 'Not set, so nothing is cleared. Enter days: 5 years is 1825, 7 years is 2555.'}
-                                            </p>
-                                        </div>
-
-                                        <div>
-                                            <label className="block text-sm font-medium text-white/70 mb-2">Archival Mode</label>
-                                            <select
-                                                value={selectedMode}
-                                                onChange={(e) => setSelectedMode(e.target.value as 'redact' | 'purge')}
-                                                className="w-full bg-white/10 border border-white/20 rounded-lg px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-amber-400"
-                                                aria-label="Select archival mode"
-                                            >
-                                                {/* Not "anonymise". Anonymising means removing what
-                                                    ties data to a person; this also clears the
-                                                    description and the staff notes, which is
-                                                    redaction. The two are not interchangeable when
-                                                    the difference is what a town tells a judge. */}
-                                                <option value="redact" className="bg-slate-800">Redact — clear the fields you choose, keep the record</option>
-                                                {/* Not deletion. It could never have worked --
-                                                    NOT NULL foreign keys from the audit log and the
-                                                    comments, with no cascade -- and making it work
-                                                    meant deleting audit rows that form the
-                                                    tamper-evident chain. Clearing every field
-                                                    removes the personal data and leaves a row that
-                                                    still counts. */}
-                                                <option value="purge" className="bg-slate-800">Purge — clear every field, keep the row for counting</option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    {/* What a run actually clears.
-                                        This was fixed in code -- names, email, phone, description,
-                                        staff notes and photos, always -- and when it became a
-                                        catalog those same seven arrived pre-ticked. Inherited that
-                                        way they were never anybody's decision, and the decision
-                                        they stood in for is which of a resident's details this
-                                        town destroys permanently. Nothing is ticked now. */}
-                                    {selectedMode !== 'purge' && scrubFields && (
-                                        <div className="mt-6 rounded-2xl border border-white/10 bg-white/[0.03] p-5">
-                                            <h4 className="font-semibold text-white">What gets cleared</h4>
-                                            <p className="text-white/55 text-xs mt-1 mb-4">
-                                                The record stays and still counts in your statistics. Only the
-                                                fields you check are permanently cleared.
-                                            </p>
-                                            {/* auto-rows-fr plus h-full: every card in a row is
-                                                the height of the tallest, so a two-line
-                                                description does not leave the card beside it
-                                                floating in a short box. */}
-                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 auto-rows-fr">
-                                                {scrubFields.map(field => (
-                                                    <label
-                                                        key={field.id}
-                                                        className={`group flex h-full items-start gap-3 rounded-xl border p-3.5 cursor-pointer transition-colors ${field.selected
-                                                            ? 'bg-amber-500/10 border-amber-400/30'
-                                                            : 'bg-white/[0.02] border-white/10 hover:border-white/20'}`}
-                                                    >
-                                                        {/* Pinned to the title's cap height rather
-                                                            than centred on the text block. Centring
-                                                            put the box beside the title on a
-                                                            one-line card and beside the description
-                                                            on a two-line one, so no two rows lined
-                                                            up and the grid read as ragged. */}
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={field.selected}
-                                                            onChange={(e) => setScrubFields(prev => (prev || []).map(f =>
-                                                                f.id === field.id ? { ...f, selected: e.target.checked } : f))}
-                                                            className="mt-[3px] w-4 h-4 shrink-0 self-start accent-amber-400"
-                                                        />
-                                                        <span className="min-w-0 flex-1">
-                                                            <span className="block text-sm font-medium text-white/90 leading-5">{field.label}</span>
-                                                            <span className="block text-xs text-white/60 mt-1 leading-relaxed">{field.detail}</span>
-                                                        </span>
-                                                    </label>
-                                                ))}
-                                            </div>
-                                            {!scrubFields.some(f => f.selected) && (
-                                                <p className="text-amber-300 text-xs mt-3">
-                                                    Check at least one field. Retention does not run until you do.
-                                                </p>
-                                            )}
-                                        </div>
-                                    )}
-
-                                    {/* What the two answers add up to, in a sentence, before
-                                        anything is saved. */}
-                                    {(() => {
-                                        const days = parseInt(retentionDays) || 0;
-                                        const chosen = (scrubFields || []).filter(f => f.selected);
-                                        const willRun = days > 0 && (selectedMode === 'purge' || chosen.length > 0);
-                                        return (
-                                            <div className={`mt-4 p-4 rounded-lg border ${willRun
-                                                ? 'bg-amber-500/10 border-amber-500/30'
-                                                : 'bg-white/[0.03] border-white/15'}`}>
-                                                <div className="flex items-start gap-3">
-                                                    <Clock className={`w-5 h-5 mt-0.5 ${willRun ? 'text-amber-400' : 'text-white/40'}`} aria-hidden="true" />
-                                                    <div>
-                                                        {willRun ? (
-                                                            <>
-                                                                <p className="text-amber-400 font-medium">
-                                                                    Closed requests are kept {formatYears(days)}, then{' '}
-                                                                    {selectedMode === 'purge'
-                                                                        ? 'every field on them is cleared'
-                                                                        : `${chosen.length} ${chosen.length === 1 ? 'field is' : 'fields are'} cleared`}.
-                                                                </p>
-                                                                {selectedMode !== 'purge' && (
-                                                                    <p className="text-white/70 text-sm mt-1">
-                                                                        Cleared: {chosen.map(f => f.label).join(', ')}.
-                                                                    </p>
-                                                                )}
-                                                                <p className="text-white/45 text-xs mt-1">
-                                                                    This period applies to every request. To keep a request
-                                                                    longer, place a legal hold on it.
-                                                                </p>
-                                                            </>
-                                                        ) : (
-                                                            <p className="text-white/70 text-sm">
-                                                                {days > 0
-                                                                    ? 'A period is set but no fields are checked, so retention will not run.'
-                                                                    : 'No period is set, so retention will not run and closed requests are kept indefinitely.'}
-                                                            </p>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })()}
-
-                                    <div className="flex gap-4 mt-6">
-                                        <Button
-                                            onClick={async () => {
-                                                setIsSavingRetention(true);
+                                    <RetentionPolicyEditor
+                                        days={retentionDays}
+                                        onDaysChange={setRetentionDays}
+                                        mode={selectedMode}
+                                        onModeChange={setSelectedMode}
+                                        fields={scrubFields}
+                                        onFieldsChange={setScrubFields}
+                                        saved={retentionPolicy ? {
+                                            days: retentionPolicy.retention_days || 0,
+                                            mode: retentionPolicy.mode === 'purge' ? 'purge' : 'redact',
+                                            fieldIds: (retentionPolicy.scrub_fields || []).filter(f => f.selected).map(f => f.id),
+                                        } : null}
+                                        onApplied={async (message) => {
+                                            await loadTabData();
+                                            setSaveMessage(message);
+                                            setTimeout(() => setSaveMessage(null), 8000);
+                                        }}
+                                        onRunStarted={(message) => {
+                                            setSaveMessage(message);
+                                            setTimeout(() => {
+                                                setSaveMessage(null);
+                                                loadTabData();
+                                            }, 3000);
+                                        }}
+                                        onError={reportError}
+                                        reviewing={previewLoading}
+                                        onReview={async () => {
+                                            setPreviewLoading(true);
+                                            setPreviewError(null);
+                                            try {
+                                                setRetentionPreview(await api.previewRetentionRun(50));
+                                            } catch (err) {
+                                                setRetentionPreview(null);
+                                                setPreviewError(err instanceof Error ? err.message : 'Could not load the preview');
+                                            } finally {
+                                                setPreviewLoading(false);
+                                            }
+                                        }}
+                                        exportOpen={exportOpen}
+                                        onExport={async () => {
+                                            setExportOpen(o => !o);
+                                            if (!exportFields.length) {
                                                 try {
-                                                    const saved = await api.updateRetentionPolicy({
-                                                        mode: selectedMode,
-                                                        scrub_fields: (scrubFields || [])
-                                                            .filter(f => f.selected).map(f => f.id),
-                                                        // 0 explicitly clears the period, which stops
-                                                        // retention running. Omitting it would leave a
-                                                        // previously-set period stuck with no way to remove it.
-                                                        retention_days: retentionDays ? parseInt(retentionDays) : 0
-                                                    });
-                                                    await loadTabData();
-                                                    /* The server decides whether this is a policy, and says
-                                                       so. "Updated successfully" over a save that left
-                                                       retention switched off is the quiet the warning above
-                                                       exists to break. */
-                                                    setSaveMessage(saved.configured
-                                                        ? 'Retention policy saved and now in force'
-                                                        : `Saved, but retention still will not run. ${saved.detail || ''}`);
-                                                    setTimeout(() => setSaveMessage(null), 8000);
+                                                    const { fields } = await api.getPublicRecordsFields();
+                                                    setExportFields(fields);
+                                                    setExportChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
                                                 } catch (err) {
-                                                    reportError('Could not apply the retention policy', err);
-                                                } finally {
-                                                    setIsSavingRetention(false);
+                                                    reportError('Could not load the export options', err);
                                                 }
-                                            }}
-                                            variant="secondary"
-                                            disabled={isSavingRetention}
-                                            className="bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-white font-semibold border-amber-400/40 shadow-lg shadow-orange-900/30"
-                                        >
-                                            {isSavingRetention ? 'Saving...' : 'Apply Policy'}
-                                        </Button>
-
-                                        <Button
-                                            variant="secondary"
-                                            onClick={async () => {
-                                                /* Show the numbers, then ask.
-                                                 *
-                                                 * This button used to run
-                                                 * immediately. In delete mode
-                                                 * that permanently destroys
-                                                 * resident records, and the
-                                                 * response came back before
-                                                 * the task had touched
-                                                 * anything, so nothing on
-                                                 * screen could say what had
-                                                 * happened. */
-                                                setIsRunningRetention(true);
-                                                let plan;
-                                                try {
-                                                    plan = await api.previewRetentionRun();
-                                                } catch (err) {
-                                                    setIsRunningRetention(false);
-                                                    reportError('Could not work out what this would affect', err);
-                                                    return;
-                                                }
-                                                setIsRunningRetention(false);
-
-                                                if (plan.blocked === 'legal_hold') {
-                                                    await dialog.alert({
-                                                        title: 'Legal hold is on',
-                                                        message: 'Nothing is archived or deleted while the instance-wide legal hold is on. Lift the hold to run retention.',
-                                                        variant: 'info',
-                                                    });
-                                                    return;
-                                                }
-                                                /* Before the "nothing is due" branch below, which would
-                                                   otherwise report an empty run as a quiet success —
-                                                   "no records have passed the null-day retention
-                                                   period" is not the reason nothing would happen. */
-                                                if (plan.blocked === 'unconfigured') {
-                                                    await dialog.alert({
-                                                        title: 'No retention schedule is set',
-                                                        message: plan.detail
-                                                            || 'Set a retention period and the fields to clear before running retention.',
-                                                        variant: 'warning',
-                                                    });
-                                                    return;
-                                                }
-                                                if (!plan.eligible) {
-                                                    await dialog.alert({
-                                                        title: 'Nothing is due yet',
-                                                        message: `No closed records have passed the ${plan.retention_days}-day retention period.`,
-                                                        variant: 'info',
-                                                    });
-                                                    return;
-                                                }
-
-                                                const purging = plan.mode === 'purge';
-                                                const ok = await dialog.confirm({
-                                                    title: purging ? 'Clear every field on these records' : 'Redact these records',
-                                                    variant: purging ? 'danger' : 'warning',
-                                                    confirmText: purging ? 'Clear them' : 'Redact them',
-                                                    requireTyped: plan.confirmation_required || undefined,
-                                                    message: (
-                                                        <div className="space-y-3">
-                                                            <p>
-                                                                <strong className="text-white">{plan.will_act_on ?? plan.eligible}</strong>{' '}
-                                                                closed {(plan.will_act_on ?? plan.eligible) === 1 ? 'record has' : 'records have'} passed
-                                                                the {plan.retention_days}-day retention period this town set.
-                                                            </p>
-                                                            <p>
-                                                                {purging
-                                                                    ? 'Every field is cleared, including names, contact details, descriptions, photos, comments and the map pin. The rows stay so your totals don\u2019t change. This can\u2019t be undone.'
-                                                                    : 'Only the fields you checked are cleared. The rows and all other fields stay.'}
-                                                            </p>
-                                                            {/* Named, from the server's own list. A
-                                                                clerk approving this should not have
-                                                                to remember which boxes are ticked on
-                                                                a screen they cannot see right now. */}
-                                                            {!!plan.scrub_fields?.length && (
-                                                                <p className="text-white/70 text-sm">
-                                                                    Cleared: {plan.scrub_fields.join(', ')}.
-                                                                </p>
-                                                            )}
-                                                            {!!plan.on_legal_hold && (
-                                                                <p className="text-amber-300">
-                                                                    {plan.on_legal_hold} flagged {plan.on_legal_hold === 1 ? 'record is' : 'records are'} under
-                                                                    legal hold and will be skipped.
-                                                                </p>
-                                                            )}
-                                                            <p className="text-slate-400 text-sm">
-                                                                The run covers every eligible record.
-                                                            </p>
-                                                        </div>
-                                                    ),
-                                                });
-                                                if (!ok) return;
-
-                                                setIsRunningRetention(true);
-                                                try {
-                                                    const result = await api.runRetentionNow(plan.confirmation_required || undefined);
-                                                    setSaveMessage(`Retention task started: ${result.message}`);
-                                                    setTimeout(() => {
-                                                        setSaveMessage(null);
-                                                        loadTabData();
-                                                    }, 3000);
-                                                } catch (err) {
-                                                    reportError('Could not start the retention task', err);
-                                                } finally {
-                                                    setIsRunningRetention(false);
-                                                }
-                                            }}
-                                            disabled={isRunningRetention}
-                                        >
-                                            {isRunningRetention ? 'Running...' : 'Run Retention Now'}
-                                        </Button>
-
-                                        {/* Read before you press. A count cannot
-                                            show that the oldest eligible record is
-                                            four years past its date because the
-                                            policy has never actually run, nor that
-                                            something assumed exempt is in the list
-                                            because nobody set the hold. */}
-                                        <Button
-                                            variant="secondary"
-                                            disabled={previewLoading}
-                                            onClick={async () => {
-                                                setPreviewLoading(true);
-                                                setPreviewError(null);
-                                                try {
-                                                    setRetentionPreview(await api.previewRetentionRun(50));
-                                                } catch (err) {
-                                                    setRetentionPreview(null);
-                                                    setPreviewError(err instanceof Error ? err.message : 'Could not load the preview');
-                                                } finally {
-                                                    setPreviewLoading(false);
-                                                }
-                                            }}
-                                        >
-                                            {previewLoading ? 'Checking…' : 'Review what would be archived'}
-                                        </Button>
-
-                                        <Button
-                                            variant="secondary"
-                                            onClick={async () => {
-                                                setExportOpen(o => !o);
-                                                if (!exportFields.length) {
-                                                    try {
-                                                        const { fields } = await api.getPublicRecordsFields();
-                                                        setExportFields(fields);
-                                                        setExportChosen(new Set(fields.filter(f => f.selected).map(f => f.id)));
-                                                    } catch (err) {
-                                                        reportError('Could not load the export options', err);
-                                                    }
-                                                }
-                                            }}
-                                        >
-                                            {/* Named for the job, not for a statute. The label used
-                                                to read "Export for OPRA" everywhere, from the same
-                                                unverified table. */}
-                                            Export for a records request
-                                        </Button>
-                                    </div>
+                                            }
+                                        }}
+                                    />
 
                                     {/* Pick what is being released.
                                         A custodian is answering a specific
@@ -3337,7 +3132,7 @@ export default function AdminConsole() {
                                         number it was never knew it was in scope. */}
                                     {exportOpen && (
                                         <div className="mt-4 rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-4">
-                                            <div className="grid gap-3 sm:grid-cols-2">
+                                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                                 <label className="text-sm">
                                                     <span className="block text-white/60 mb-1">Submitted from</span>
                                                     <input type="date" value={exportStart} onChange={e => setExportStart(e.target.value)}
@@ -3356,13 +3151,12 @@ export default function AdminConsole() {
                                                 <div className="flex flex-wrap gap-3">
                                                     {['open', 'in_progress', 'closed'].map(v => (
                                                         <label key={v} className="flex items-center gap-2 text-sm text-white/80">
-                                                            <input type="checkbox" checked={exportStatuses.has(v)}
+                                                            <Checkbox checked={exportStatuses.has(v)}
                                                                 onChange={e => setExportStatuses(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(v) : next.delete(v);
                                                                     return next;
-                                                                })}
-                                                                className="w-4 h-4 rounded border-white/20 bg-transparent" />
+                                                                })} />
                                                             {v === 'in_progress' ? 'In progress' : v.charAt(0).toUpperCase() + v.slice(1)}
                                                         </label>
                                                     ))}
@@ -3379,16 +3173,15 @@ export default function AdminConsole() {
 
                                             <div>
                                                 <span className="block text-white/60 text-sm mb-2">Fields to include</span>
-                                                <div className="grid gap-2 sm:grid-cols-2">
+                                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                                     {exportFields.map(f => (
-                                                        <label key={f.id} className="flex items-start gap-2 text-sm">
-                                                            <input type="checkbox" checked={exportChosen.has(f.id)}
+                                                        <label key={f.id} className="flex !items-start gap-2 text-sm">
+                                                            <Checkbox checked={exportChosen.has(f.id)}
                                                                 onChange={e => setExportChosen(prev => {
                                                                     const next = new Set(prev);
                                                                     e.target.checked ? next.add(f.id) : next.delete(f.id);
                                                                     return next;
-                                                                })}
-                                                                className="w-4 h-4 mt-0.5 rounded border-white/20 bg-transparent" />
+                                                                })} />
                                                             <span>
                                                                 <span className={f.sensitive ? 'text-amber-200' : 'text-white/80'}>
                                                                     {f.label}
@@ -3819,14 +3612,11 @@ export default function AdminConsole() {
                         <div className="space-y-1.5 max-h-40 overflow-y-auto">
                             {departments.map((dept) => (
                                 <label key={dept.id} className="flex items-center gap-2 text-sm text-white/80 cursor-pointer">
-                                    <input
-                                        type="checkbox"
+                                    <Checkbox
                                         checked={editUser.department_ids.includes(dept.id)}
                                         onChange={(e) => setEditUser((p) => e.target.checked
                                             ? { ...p, department_ids: [...p.department_ids, dept.id] }
-                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })}
-                                        className="rounded"
-                                    />
+                                            : { ...p, department_ids: p.department_ids.filter(id => id !== dept.id) })} />
                                     {dept.name}
                                 </label>
                             ))}
@@ -3835,14 +3625,11 @@ export default function AdminConsole() {
                     {/* Deactivating rather than deleting is what a records system
                         wants: the person keeps their history and simply cannot
                         sign in. Deleting is still available on the row. */}
-                    <label className="flex items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
-                        <input
-                            type="checkbox"
+                    <label className="flex !items-start gap-2.5 text-sm text-white/80 cursor-pointer rounded-lg bg-white/[0.03] border border-white/10 px-3 py-2.5">
+                        <Checkbox
                             checked={editUser.is_active}
                             onChange={(e) => setEditUser((p) => ({ ...p, is_active: e.target.checked }))}
-                            className="rounded mt-0.5"
-                            disabled={editingUser?.id === user?.id}
-                        />
+                            disabled={editingUser?.id === user?.id} />
                         <span>
                             Active
                             <span className="block text-[11px] text-white/40">
@@ -3902,8 +3689,7 @@ export default function AdminConsole() {
                             <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto p-2 rounded-lg bg-white/5 border border-white/10">
                                 {departments.map((dept) => (
                                     <label key={dept.id} className="flex items-center gap-2 cursor-pointer hover:bg-white/5 p-1 rounded">
-                                        <input
-                                            type="checkbox"
+                                        <Checkbox
                                             checked={newUser.department_ids.includes(dept.id)}
                                             onChange={(e) => {
                                                 if (e.target.checked) {
@@ -3911,15 +3697,18 @@ export default function AdminConsole() {
                                                 } else {
                                                     setNewUser((p) => ({ ...p, department_ids: p.department_ids.filter(id => id !== dept.id) }));
                                                 }
-                                            }}
-                                            className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500 focus:ring-primary-500"
-                                        />
+                                            }} />
                                         <span className="text-sm text-white/80">{dept.name}</span>
                                     </label>
                                 ))}
                             </div>
                         </div>
                     )}
+
+                    <InviteCheckbox
+                        checked={newUser.send_invite}
+                        onChange={(next) => setNewUser((p) => ({ ...p, send_invite: next }))}
+                    />
 
                     <div className="flex justify-end gap-3 pt-4">
                         <Button variant="ghost" onClick={() => setShowUserModal(false)}>Cancel</Button>
@@ -4392,8 +4181,7 @@ export default function AdminConsole() {
                                                     .filter(u => u.role === 'staff' || u.role === 'admin')
                                                     .map(u => (
                                                         <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
+                                                            <Checkbox
                                                                 checked={(serviceRouting.routing_config.staff_ids || []).includes(u.id)}
                                                                 onChange={(e) => {
                                                                     const currentIds = serviceRouting.routing_config.staff_ids || [];
@@ -4404,16 +4192,16 @@ export default function AdminConsole() {
                                                                         ...p,
                                                                         routing_config: { ...p.routing_config, staff_ids: newIds }
                                                                     }));
-                                                                }}
-                                                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500"
-                                                            />
+                                                                }} />
                                                             <span className="text-sm text-white/80">{u.full_name || u.username}</span>
                                                             <span className="text-xs text-white/40">@{u.username}</span>
                                                         </label>
                                                     ))}
                                             </div>
-                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
+                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 ? (
                                                 <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
+                                            ) : (
+                                                <p className="text-xs text-white/50">Each new report goes to one person: the first one you ticked who is still active (and in this category's department, if it has one). The others are backups, in the order you ticked them.</p>
                                             )}
                                         </div>
                                     )}
@@ -4606,8 +4394,7 @@ export default function AdminConsole() {
                                                     .filter(u => u.role === 'staff' || u.role === 'admin')
                                                     .map(u => (
                                                         <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-white/5 rounded cursor-pointer">
-                                                            <input
-                                                                type="checkbox"
+                                                            <Checkbox
                                                                 checked={(serviceRouting.routing_config.staff_ids || []).includes(u.id)}
                                                                 onChange={(e) => {
                                                                     const currentIds = serviceRouting.routing_config.staff_ids || [];
@@ -4618,16 +4405,16 @@ export default function AdminConsole() {
                                                                         ...p,
                                                                         routing_config: { ...p.routing_config, staff_ids: newIds }
                                                                     }));
-                                                                }}
-                                                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-primary-500"
-                                                            />
+                                                                }} />
                                                             <span className="text-sm text-white/80">{u.full_name || u.username}</span>
                                                             <span className="text-xs text-white/40">@{u.username}</span>
                                                         </label>
                                                     ))}
                                             </div>
-                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
+                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 ? (
                                                 <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
+                                            ) : (
+                                                <p className="text-xs text-white/50">Each new report goes to one person: the first one you ticked who is still active (and in this category's department, if it has one). The others are backups, in the order you ticked them.</p>
                                             )}
                                         </div>
                                     )}
@@ -4967,16 +4754,13 @@ export default function AdminConsole() {
                                                     <option value="checkbox">Checkboxes</option>
                                                 </select>
                                                 <label className="flex items-center gap-2 text-sm text-white/70">
-                                                    <input
-                                                        type="checkbox"
+                                                    <Checkbox
                                                         checked={q.required}
                                                         onChange={(e) => {
                                                             const newQs = [...serviceRouting.routing_config.custom_questions];
                                                             newQs[idx] = { ...newQs[idx], required: e.target.checked };
                                                             setServiceRouting(p => ({ ...p, routing_config: { ...p.routing_config, custom_questions: newQs } }));
-                                                        }}
-                                                        className="rounded"
-                                                    />
+                                                        }} />
                                                     Required
                                                 </label>
                                             </div>
@@ -5059,14 +4843,93 @@ export default function AdminConsole() {
                         // Straight on to choosing what staff see: nothing is shown until then.
                         setPolygonSettingsLayer(layer);
                     }}
+                    onArcGisCreated={(layer, kind) => {
+                        setLayerUploadBusy(false);
+                        loadTabData();
+                        if (kind === 'polygons') {
+                            setShowLayerModal(false);
+                            setPolygonSettingsLayer(layer);
+                            return;
+                        }
+                        // Points continue into the point form, as the layer it now is:
+                        // colours, categories, and its ArcGIS source.
+                        setEditingLayer(layer);
+                        setPointFile(null);
+                        setNewLayer({
+                            name: layer.name,
+                            description: layer.description || '',
+                            layer_type: 'point',
+                            fill_color: layer.fill_color,
+                            stroke_color: layer.stroke_color,
+                            fill_opacity: layer.fill_opacity,
+                            stroke_width: layer.stroke_width,
+                            service_codes: layer.service_codes || [],
+                            geojson: layer.geojson,
+                            routing_mode: layer.routing_mode === 'block' ? 'block' : 'log',
+                            routing_config: layer.routing_config || null,
+                            visible_on_map: layer.visible_on_map ?? true,
+                        });
+                        setSaveMessage(layer.import_summary?.clip_message || 'Layer imported');
+                        setTimeout(() => setSaveMessage(null), 6000);
+                    }}
                 >
                 <form
                     onSubmit={async (e) => {
                         e.preventDefault();
-                        if (!newLayer.name || !newLayer.geojson) {
+                        const isPoint = newLayer.layer_type === 'point';
+                        if (!newLayer.name || (isPoint ? !(pointFile || editingLayer) : !newLayer.geojson)) {
                             alert("Enter a name and upload a GeoJSON file.");
                             return;
                         }
+                        if (isPoint) {
+                            // Points: the file goes up in parts and the server builds the
+                            // layer (clipped to the township, under the point-layer cap).
+                            // Editing without a new file leaves the features alone rather
+                            // than sending them all back.
+                            const settings = {
+                                name: newLayer.name,
+                                description: newLayer.description,
+                                fill_color: newLayer.fill_color,
+                                stroke_color: newLayer.stroke_color,
+                                fill_opacity: newLayer.fill_opacity,
+                                stroke_width: newLayer.stroke_width,
+                                service_codes: newLayer.service_codes,
+                                routing_mode: newLayer.routing_mode,
+                                routing_config: newLayer.routing_config,
+                                visible_on_map: newLayer.visible_on_map,
+                            };
+                            setLayerUploadBusy(true);
+                            try {
+                                let uploadId: string | null = null;
+                                if (pointFile) {
+                                    setPointProgress('Uploading…');
+                                    uploadId = await uploadInChunks(pointFile, (sent, total) =>
+                                        setPointProgress(`Uploading ${Math.round(sent / 1048576)} of ${Math.max(1, Math.round(total / 1048576))} MB…`));
+                                    setPointProgress('Importing points…');
+                                }
+                                let saved: MapLayer;
+                                if (editingLayer) {
+                                    if (uploadId) await api.reuploadLayerFeatures(editingLayer.id, uploadId);
+                                    saved = await api.updateMapLayer(editingLayer.id, { ...settings, layer_type: 'point' });
+                                    setSaveMessage('Layer updated');
+                                } else {
+                                    saved = await api.createPointLayer({ ...settings, upload_id: uploadId as string });
+                                    setSaveMessage(saved.import_summary?.clip_message ? `Layer created. ${saved.import_summary.clip_message}` : 'Layer created');
+                                }
+                                setPointFile(null);
+                                setShowLayerModal(false);
+                                loadTabData();
+                                setTimeout(() => setSaveMessage(null), 6000);
+                            } catch (err: any) {
+                                console.error('Failed to save layer:', err);
+                                alert(err.message || 'Failed to save layer');
+                            } finally {
+                                setPointProgress(null);
+                                setLayerUploadBusy(false);
+                            }
+                            return;
+                        }
+                        if (!newLayer.geojson) return;
                         try {
                             if (editingLayer) {
                                 await api.updateMapLayer(editingLayer.id, {
@@ -5310,9 +5173,15 @@ export default function AdminConsole() {
                                 <input
                                     type="file"
                                     accept=".geojson,.json"
+                                    aria-label={newLayer.layer_type === 'polygon' ? 'Or upload a GeoJSON file' : 'GeoJSON file'}
                                     onChange={async (e) => {
                                         const file = e.target.files?.[0];
                                         if (!file) return;
+                                        if (newLayer.layer_type === 'point') {
+                                            setPointFile(file);
+                                            e.target.value = '';
+                                            return;
+                                        }
                                         try {
                                             const text = await file.text();
                                             const geojson = JSON.parse(text);
@@ -5327,10 +5196,25 @@ export default function AdminConsole() {
                                     }}
                                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-primary-500 file:text-white hover:file:bg-primary-600 file:cursor-pointer"
                                 />
-                                {newLayer.geojson && (
+                                {newLayer.layer_type === 'point' ? (
+                                    <>
+                                        {pointFile && (
+                                            <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />{pointFile.name} ready to upload</p>
+                                        )}
+                                        <p className="text-xs text-white/40 mt-1">
+                                            {editingLayer ? 'Choose a file only to replace the points. ' : ''}
+                                            Point features in WGS 84{layerLimits ? `, ${limitText(layerLimits, 'points')}` : ''}. Only points inside the township are kept.
+                                        </p>
+                                        {pointProgress && <p role="status" className="text-sm text-sky-300 mt-1">{pointProgress}</p>}
+                                    </>
+                                ) : newLayer.geojson && (
                                     <p className="text-xs text-green-400 mt-1 flex items-center gap-1"><Check className="w-3.5 h-3.5" aria-hidden="true" />GeoJSON loaded</p>
                                 )}
                             </div>
+
+                            {editingLayer?.source_url && (
+                                <ArcGisSourcePanel layer={editingLayer} onUpdated={(layer) => { setEditingLayer(layer); loadTabData(); }} />
+                            )}
 
                             {/* Category selector. Empty = every category, which is
                                 how the resident form and call intake read it. */}
@@ -5345,7 +5229,7 @@ export default function AdminConsole() {
 
                             <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
                                 <Button variant="ghost" onClick={() => setShowLayerModal(false)}>Cancel</Button>
-                                <Button type="submit" disabled={!newLayer.layer_type}>{editingLayer ? 'Update Layer' : 'Create Layer'}</Button>
+                                <Button type="submit" disabled={!newLayer.layer_type || !!pointProgress} isLoading={!!pointProgress}>{editingLayer ? 'Update Layer' : 'Create Layer'}</Button>
                             </div>
                         </>
                     )}

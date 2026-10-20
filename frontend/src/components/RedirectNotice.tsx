@@ -185,7 +185,7 @@ export default function RedirectNotice({
                                     {usable.length > 1 && contact.name && (
                                         <p className="text-sm font-semibold text-white/85">{contact.name}</p>
                                     )}
-                                    <div className="grid gap-2 sm:grid-cols-2">
+                                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                                         {contact.phone && (
                                             <ContactAction icon={Phone} label="Call" value={contact.phone} kind="phone" />
                                         )}

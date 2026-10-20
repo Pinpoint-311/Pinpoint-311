@@ -283,6 +283,16 @@ async def persist_boundary(db, geojson_data: dict, name: str = None,
             logger.warning("Inline road seeding failed: %s", inline_exc)
             seeding = "failed"
 
+    # The critical-facility store covers the boundary, so a new boundary is a
+    # new area to fetch. Queued only: it is one slow Overpass query, and the
+    # daily check fills it anyway if no worker is listening.
+    try:
+        from app.services.enqueue import enqueue
+        from app.tasks.critical_facilities import refresh_critical_facilities
+        enqueue(refresh_critical_facilities, force=True)
+    except Exception as exc:
+        logger.warning("Could not queue the critical-facilities refresh: %s", exc)
+
     return {"boundary": boundary_data, "seeding": seeding}
 
 
@@ -516,6 +526,19 @@ STATE_FIPS = {
 }
 
 
+def census_name_where(town_name: str, state_fips: str) -> str:
+    """TIGERweb `where` clause matching a place name within one state.
+
+    ArcGIS evaluates this as SQL, so the typed name is a string literal and its
+    quotes are doubled. Interpolated raw, "Coeur d'Alene" was a syntax error and
+    any quote in the box let the typed text rewrite the query, state filter
+    included. (Admin-only and a public Census service, so a correctness bug
+    more than a security one -- but it is SQL built from input all the same.)
+    """
+    name = (town_name or "").upper().replace("'", "''")
+    return f"UPPER(BASENAME) LIKE '%{name}%' AND STATE = '{state_fips}'"
+
+
 @router.get("/census-boundary-search")
 async def search_census_boundary(
     town_name: str,
@@ -543,7 +566,7 @@ async def search_census_boundary(
     
     # Build query
     base_url = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/tigerWMS_Current/MapServer"
-    where_clause = f"UPPER(BASENAME) LIKE '%{town_name.upper()}%' AND STATE = '{state_fips}'"
+    where_clause = census_name_where(town_name, state_fips)
     
     params = {
         "f": "geojson",

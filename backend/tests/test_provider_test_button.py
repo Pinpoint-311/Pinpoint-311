@@ -98,7 +98,7 @@ def test_encryption_fails_when_something_else_did_the_wrapping(monkeypatch):
 
     result = _run(system._test_kms())
     assert result["ok"] is False
-    assert "azure" in result["detail"] and "local" in result["detail"]
+    assert "Azure Key Vault" in result["detail"] and "application key" in result["detail"]
 
 
 def test_encryption_asks_the_key_service_rather_than_a_cache(monkeypatch):
@@ -1237,4 +1237,4 @@ class TestKmsFailureIsExplained:
 
         detail = _run(system._test_kms())["detail"]
 
-        assert "local" in detail
+        assert "application key" in detail

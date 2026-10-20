@@ -404,8 +404,19 @@ def _status_label(new_status: str, i18n: Dict[str, str]) -> str:
     }.get(new_status, str(new_status).replace("_", " ").title())
 
 
-def _tracking_url(portal_url: str, request_id: str) -> str:
-    return f"{(portal_url or '').rstrip('/')}/#track/{request_id}"
+def _tracking_url(portal_url: str, request_id: str) -> Optional[str]:
+    """The link to a request, or None when the site's address is not known.
+
+    A relative or localhost link in an email goes nowhere, so with no address
+    the button is left out rather than sent broken.
+    """
+    if not portal_url:
+        return None
+    return f"{portal_url.rstrip('/')}/#track/{request_id}"
+
+
+def _button(label: str, url: Optional[str]):
+    return L.button(label, url) if url else None
 
 
 def _absolute(url: Optional[str], portal_url: str) -> Optional[str]:
@@ -414,7 +425,7 @@ def _absolute(url: Optional[str], portal_url: str) -> Optional[str]:
     if not url:
         return None
     if url.startswith("/"):
-        return f"{(portal_url or '').rstrip('/')}{url}"
+        return f"{portal_url.rstrip('/')}{url}" if portal_url else None
     return _safe_url(url)
 
 
@@ -445,7 +456,7 @@ def _confirmation_parts(i18n, township_name, request_id, service_name,
     blocks = [
         L.heading(i18n.get("request_received", "Request received"), 2),
         L.fields(rows),
-        L.button(i18n.get("track_request", "Track your request"), tracking_url),
+        _button(i18n.get("track_request", "Track your request"), tracking_url),
     ]
     footer = [i18n.get("thank_you", "Thank you for helping make {township} a better place.")
               .format(township=township_name)]
@@ -479,7 +490,7 @@ def _status_update_parts(i18n, township_name, request_id, service_name, new_stat
     photo = _absolute(completion_photo_url, portal_url) if new_status == "closed" else None
     if photo:
         blocks.append(L.image(photo, i18n.get("completion_photo", "Completion photo")))
-    blocks.append(L.button(i18n.get("view_details", "View request details"), tracking_url))
+    blocks.append(_button(i18n.get("view_details", "View request details"), tracking_url))
     subject = i18n.get("subject_status", "Request #{id} status: {status} - {township}").format(
         id=request_id, status=label, township=township_name)
     footer = [i18n.get("receiving_because",
@@ -506,7 +517,7 @@ def _comment_parts(i18n, township_name, request_id, service_name, comment_author
             (i18n.get("request_id", "Request ID"), f"#{request_id}"),
             (i18n.get("category", "Category"), service_name),
         ]),
-        L.button(i18n.get("view_conversation", "View the full conversation"), tracking_url),
+        _button(i18n.get("view_conversation", "View the full conversation"), tracking_url),
     ]
     subject = i18n.get("subject_comment", "New update on request #{id} - {township}").format(
         id=request_id, township=township_name)
@@ -812,3 +823,95 @@ async def build_sms_status_update_async(
         message += f"\n{i18n.get('sms_details', 'Details')}: {tracking_link}"
     
     return message
+
+
+# --- Staff invite -------------------------------------------------------------
+#
+# Sent to a new staff account when an administrator creates it (and again on
+# "Resend invite"). Staff-facing, so English only, like the health alerts and
+# the weekly digest: EMAIL_I18N is the resident's language, and a staff member
+# has none recorded at this point.
+#
+# There is no password and no token in it. Sign-in goes through the town's
+# identity provider, so the message only has to say where to go and which
+# account to use; anybody who forwards it has forwarded a link to a login page.
+
+# Role values (app.schemas.UserRole) in the words the invitee would use.
+INVITE_ROLE_WORDS = {
+    "admin": ("an administrator", "Administrator",
+              "You can work on service requests and manage staff accounts and settings."),
+    "staff": ("a staff member", "Staff",
+              "You can view and work on service requests."),
+    "researcher": ("a researcher", "Researcher",
+                   "You can use the Research Lab to analyze request data."),
+}
+
+
+def invite_role_words(role: Optional[str]) -> tuple:
+    """(with article, title-case label, one-sentence description) for a role."""
+    return INVITE_ROLE_WORDS.get((role or "").strip().lower(), INVITE_ROLE_WORDS["staff"])
+
+
+def build_staff_invite_email(
+    *,
+    township_name: str,
+    logo_url: Optional[str],
+    primary_color: str,
+    invitee_email: str,
+    invitee_name: Optional[str],
+    role: Optional[str],
+    department_names: Optional[list] = None,
+    invited_by: Optional[str] = None,
+    provider_name: Optional[str] = None,
+    origin: Optional[str] = None,
+) -> Dict[str, str]:
+    """The staff invite. Returns {'subject','html','text'}.
+
+    `origin` is the site's public address (api.system.public_origin). When it
+    is None the message carries no link at all and says where to go in words:
+    a guessed address -- localhost, a container hostname -- is worse than none,
+    because it looks right and goes nowhere.
+    """
+    town = township_name or "your township"
+    with_article, label, description = invite_role_words(role)
+    by = (invited_by or "").strip() or "An administrator"
+    depts = [str(d) for d in (department_names or []) if str(d).strip()]
+    account = f"your {provider_name} account" if provider_name else "your work account"
+
+    origin = _safe_url(origin)
+    login_url = f"{origin.rstrip('/')}/login" if origin else None
+
+    greeting = f"Hello {invitee_name.strip()}," if (invitee_name or "").strip() else "Hello,"
+    blocks = [
+        L.heading("Your 311 staff account is ready", 2),
+        L.paragraph(greeting),
+        L.paragraph(f"{by} added you as {with_article}. {description}"),
+        L.fields([
+            ("Role", label),
+            ("Department" if len(depts) == 1 else "Departments", ", ".join(depts)),
+            ("Sign-in email", invitee_email),
+        ]),
+        L.paragraph(f"Sign in with {account} using this email address. "
+                    f"There is no separate password for the 311 system."),
+    ]
+    if login_url:
+        blocks.append(L.button("Sign in", login_url))
+    else:
+        blocks.append(L.paragraph("To get started, sign in at your township's 311 site."))
+
+    subject = f"You have been added to {town}'s 311 system"
+    footer = [
+        f"You are receiving this because an administrator at {town} created an "
+        f"account for this email address. If you were not expecting it, you can "
+        f"ignore this message or tell your administrator.",
+    ]
+    return L.build_email(
+        subject=subject,
+        township_name=township_name,
+        blocks=blocks,
+        logo_url=logo_url,
+        primary_color=primary_color,
+        footer_lines=footer,
+        preheader=f"{by} added you as {with_article}.",
+        tagline="Staff account",
+    )

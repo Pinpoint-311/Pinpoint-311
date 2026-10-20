@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
-import { NEW_FOR_MS, bellAppearance, markKeyRead, readIdsFromStorage, readKey, unreadCount } from './activityBell';
+import { NEW_FOR_MS, bellAppearance, feedKeysFor, markKeyRead, markKeysRead, readIdsFromStorage, readKey, unreadCount } from './activityBell';
 import { ServiceRequest } from '../types';
 
 /**
@@ -131,5 +131,22 @@ describe('markKeyRead', () => {
         } finally {
             Storage.prototype.setItem = original;
         }
+    });
+});
+
+describe('opening a request reads every notice for it', () => {
+    beforeEach(() => localStorage.clear());
+
+    it('covers new, needs-an-owner and the latest update', () => {
+        const keys = feedKeysFor({ service_request_id: 'REQ-7', updated_datetime: '2026-10-20T10:00:00Z' });
+        expect(keys).toEqual(['new-REQ-7', 'dept-REQ-7', `upd-REQ-7-${Date.parse('2026-10-20T10:00:00Z')}`]);
+        expect(feedKeysFor({ service_request_id: 'REQ-8', updated_datetime: null })).toEqual(['new-REQ-8', 'dept-REQ-8']);
+    });
+
+    it('writes them once and reports whether anything was unread', () => {
+        localStorage.setItem('activityFeedRead', JSON.stringify(['new-REQ-7']));
+        expect(markKeysRead(['new-REQ-7', 'dept-REQ-7'])).toBe(true);
+        expect(readIdsFromStorage(localStorage.getItem('activityFeedRead'))).toEqual(new Set(['new-REQ-7', 'dept-REQ-7']));
+        expect(markKeysRead(['new-REQ-7', 'dept-REQ-7'])).toBe(false);
     });
 });

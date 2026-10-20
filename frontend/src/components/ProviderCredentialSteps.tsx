@@ -214,7 +214,7 @@ export default function ProviderCredentialSteps({
                             <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary-300/70" aria-hidden="true" />
                             <span>
                                 <span className="font-medium text-white/85">{r.label}</span>
-                                {r.where ? <> — entered on {r.where}, not here, so one credential does not end up in two boxes.</> : null}
+                                {r.where ? <> — entered on {r.where}, not here.</> : null}
                             </span>
                         </p>
                     ))}

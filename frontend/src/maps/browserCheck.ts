@@ -119,8 +119,8 @@ export async function checkMapInBrowser(
             ok: false,
             conclusive: true,
             detail: `The map could not be created in this browser: ${message}. If the browser `
-                + "console shows a Content-Security-Policy error, the provider's script host is "
-                + 'not permitted rather than the credential being wrong.',
+                + "console shows a Content-Security-Policy error, this site's security settings are "
+                + 'blocking the map provider, and the credential is probably fine.',
         };
     } finally {
         watch?.stop();

@@ -12,6 +12,7 @@ import {
     AdvancedStatistics,
     UserCreate,
     UserUpdate,
+    InviteOutcome,
     ConnectorHealthReport,
     ClientErrorEntry,
     ServiceCreate,
@@ -26,6 +27,26 @@ import type {
 } from './upgradeTypes';
 
 const API_BASE = '/api';
+
+/**
+ * True when an endpoint path would climb out of where its caller put it.
+ *
+ * Most paths interpolate ids unencoded, and some of those ids come from the
+ * URL: the portal's `#track/<id>` is decodeURIComponent'd and handed to
+ * getPublicRequestDetail, so a link to `/#track/..%2F..%2F..%2Fusers` made
+ * `/open311/v2/public/requests/../../../users`, which fetch() normalises to
+ * `/api/users` -- sent with the Authorization header of whoever is signed in
+ * (client-side path traversal). Checking here covers every call site at once.
+ * The WHATWG URL parser treats `\` like `/`, `%2e` like `.`, and drops tabs and
+ * newlines, so the check does the same before looking for `.`/`..` segments.
+ */
+export function hasDotSegment(endpoint: string): boolean {
+    const path = endpoint.replace(/[\t\n\r]/g, '').split(/[?#]/, 1)[0];
+    return path.split(/[\/\\]/).some(seg => {
+        const s = seg.replace(/%2e/gi, '.');
+        return s === '.' || s === '..';
+    });
+}
 
 /** A road limited to a stretch ("Oak Rd (Elm St to Route 10)"), as resolved on the map. */
 export interface RoadLimit {
@@ -388,6 +409,9 @@ class ApiClient {
         endpoint: string,
         options: RequestInit = {}
     ): Promise<T> {
+        if (hasDotSegment(endpoint)) {
+            throw new Error('Invalid request path');
+        }
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
             ...(options.headers as Record<string, string> || {}),
@@ -728,8 +752,10 @@ class ApiClient {
             legal_hold?: boolean;
             staff_notes?: string;
             priority?: number;
-            assigned_department_id?: number;
-            assigned_to?: string;
+            /** null clears it (back to triage). */
+            assigned_department_id?: number | null;
+            /** null unassigns. */
+            assigned_to?: string | null;
             closed_substatus?: string;
             completion_message?: string;
             completion_photo_url?: string;
@@ -849,11 +875,16 @@ class ApiClient {
     }
 
 
-    async createUser(data: UserCreate): Promise<User> {
-        return this.request<User>('/users/', {
+    async createUser(data: UserCreate): Promise<User & { invite: InviteOutcome }> {
+        return this.request<User & { invite: InviteOutcome }>('/users/', {
             method: 'POST',
             body: JSON.stringify(data),
         });
+    }
+
+    /** Send a staff member their invite email again (admin only, rate-limited). */
+    async resendInvite(id: number): Promise<{ invite: InviteOutcome }> {
+        return this.request<{ invite: InviteOutcome }>(`/users/${id}/invite`, { method: 'POST' });
     }
 
     /** Browser crashes staff and residents have hit. The error screen promises
@@ -1524,6 +1555,69 @@ class ApiClient {
         });
     }
 
+    /** The server's layer limits, so the console never hard-codes them. */
+    async getLayerLimits(): Promise<LayerLimits> {
+        return this.request('/map-layers/limits');
+    }
+
+    /** An inline point layer from a finished chunked upload. */
+    async createPointLayer(data: {
+        name: string;
+        description?: string;
+        upload_id: string;
+        fill_color?: string;
+        stroke_color?: string;
+        fill_opacity?: number;
+        stroke_width?: number;
+        service_codes?: string[];
+        routing_mode?: string;
+        routing_config?: object | null;
+        visible_on_map?: boolean;
+    }): Promise<MapLayer> {
+        return this.request('/map-layers/points', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    // Import from ArcGIS. The token is sent for the one request and never stored.
+    async inspectArcGis(url: string, token?: string): Promise<ArcGisInspection> {
+        return this.request('/map-layers/arcgis/inspect', {
+            method: 'POST',
+            body: JSON.stringify({ url, token: token || undefined }),
+        });
+    }
+
+    async importArcGis(data: {
+        url: string;
+        token?: string;
+        name: string;
+        description?: string;
+        as: 'points' | 'polygons';
+        source_sync?: ArcGisSync;
+    }): Promise<ArcGisJob> {
+        return this.request('/map-layers/arcgis/import', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    async getArcGisJob(jobId: string): Promise<ArcGisJob> {
+        return this.request(`/map-layers/arcgis/jobs/${encodeURIComponent(jobId)}`);
+    }
+
+    async refreshArcGisLayer(layerId: number, opts: { token?: string; apply_anyway?: boolean } = {}): Promise<ArcGisJob> {
+        return this.request(`/map-layers/${layerId}/arcgis/refresh`, {
+            method: 'POST',
+            body: JSON.stringify({ token: opts.token || undefined, apply_anyway: !!opts.apply_anyway }),
+        });
+    }
+
+    async checkArcGisLayer(layerId: number): Promise<ArcGisJob> {
+        return this.request(`/map-layers/${layerId}/arcgis/check`, { method: 'POST' });
+    }
+
+    async setArcGisSync(layerId: number, sourceSync: ArcGisSync): Promise<MapLayer> {
+        return this.request(`/map-layers/${layerId}/arcgis/sync`, {
+            method: 'PUT',
+            body: JSON.stringify({ source_sync: sourceSync }),
+        });
+    }
+
     async backfillLayerContext(layerId: number): Promise<{ scanned: number; updated: number }> {
         return this.request(`/map-layers/${layerId}/backfill`, { method: 'POST' });
     }
@@ -2049,18 +2143,6 @@ class ApiClient {
         return this.request<Record<string, any>>('/system/api-usage/pricing');
     }
 
-    /** Translation spend against the daily/monthly character budget (admin). */
-    async getTranslationBudget(): Promise<TranslationBudgetUsage> {
-        return this.request<TranslationBudgetUsage>('/system/translate/budget');
-    }
-
-    async updateTranslationBudget(daily_chars: number, monthly_chars: number): Promise<TranslationBudgetUsage> {
-        return this.request<TranslationBudgetUsage>('/system/translate/budget', {
-            method: 'PUT',
-            body: JSON.stringify({ daily_chars, monthly_chars }),
-        });
-    }
-
     // On-server photo-redaction detectors (plate model, face fallback).
     async getRedactionDetectors(): Promise<RedactionDetectors> {
         return this.request<RedactionDetectors>('/system/redaction/detectors');
@@ -2262,6 +2344,54 @@ export interface Open311Settings {
 export const api = new ApiClient();
 export default api;
 
+export interface LayerLimits {
+    max_upload_bytes: number;
+    max_features: number;
+    max_inline_features: number;
+    max_inline_bytes: number;
+    chunk_bytes: number;
+}
+
+export type ArcGisSync = 'off' | 'daily' | 'weekly';
+
+export interface ArcGisLayerChoice {
+    id: number | null;
+    name: string;
+    url: string;
+    geometry: 'point' | 'polygon' | 'line' | null;
+    feature_count: number | null;
+    /** Features inside the township's envelope, when a boundary is set. */
+    in_area_count: number | null;
+    fields: string[];
+    limit: number;
+    importable: boolean;
+    problem: string | null;
+    warning: string | null;
+}
+
+export interface ArcGisInspection {
+    kind: 'layer' | 'service' | 'item' | 'hub';
+    resolved_url: string;
+    layers: ArcGisLayerChoice[];
+    area: string | null;
+    clipped: boolean;
+}
+
+export interface ArcGisJob {
+    job_id: string;
+    kind: 'import' | 'refresh' | 'check';
+    state: 'running' | 'done' | 'failed';
+    read: number;
+    expected: number | null;
+    error: string | null;
+    result: {
+        layer: MapLayer;
+        before?: number | null;
+        after?: number | null;
+        sync?: { state: 'unchanged' | 'updated' | 'held' | 'error'; reason?: string; before?: number; after?: number };
+    } | null;
+}
+
 // Type for MapLayer
 export interface MapLayer {
     id: number;
@@ -2297,7 +2427,18 @@ export interface MapLayer {
     /** Fields that look personal: "owner" (confident) or "maybe". */
     field_flags?: Record<string, 'owner' | 'maybe'>;
     warnings?: string[];
-    import_summary?: { feature_count: number; skipped: number; properties: string[]; feature_id_property: string | null } | null;
+    import_summary?: {
+        feature_count: number; skipped: number; properties: string[]; feature_id_property: string | null;
+        /** "Kept N of M features inside <town>", or why nothing was clipped. */
+        clip_message?: string; total?: number; outside?: number;
+    } | null;
+    /** Imported from ArcGIS: the layer's REST address (never a token) and sync state. */
+    source_url?: string | null;
+    source_synced_at?: string | null;
+    source_sync?: 'daily' | 'weekly' | null;
+    source_checked_at?: string | null;
+    source_sync_status?: 'ok' | 'updated' | 'held' | 'error' | null;
+    source_sync_error?: string | null;
     created_at?: string;
     updated_at?: string;
 }
@@ -2681,16 +2822,6 @@ export interface DailyUsageResponse {
     }>;
 }
 
-export interface TranslationBudgetPeriod {
-    period: string;
-    used: number;
-    limit: number;
-    remaining: number;
-    percent: number;
-    exhausted: boolean;
-    resets_at: string;
-}
-
 export interface RedactionModelStatus {
     file: string;
     present: boolean;
@@ -2709,11 +2840,3 @@ export interface RedactionDetectors {
     models: { plate: RedactionModelStatus; face: RedactionModelStatus; models_dir: string };
 }
 
-export interface TranslationBudgetUsage {
-    day: TranslationBudgetPeriod;
-    month: TranslationBudgetPeriod;
-    status: 'ok' | 'warning' | 'critical';
-    counter_store: 'redis' | 'memory' | 'unavailable';
-    defaults: { daily: number; monthly: number };
-    max_budget: number;
-}

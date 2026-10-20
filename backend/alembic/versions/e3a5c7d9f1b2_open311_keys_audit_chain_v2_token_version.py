@@ -1,10 +1,10 @@
-"""Open311 API keys, audit chain v2, session revocation, polygon context layers, and secure upgrades.
+"""Open311 API keys, audit chain v2, session revocation, polygon context layers, secure upgrades, and critical facilities.
 
 Revision ID: e3a5c7d9f1b2
 Revises: d2e4f6a8b0c1
 Create Date: 2026-10-18
 
-One revision for five changes that ship together. The orchestrator accepts a
+One revision for six changes that ship together. The orchestrator accepts a
 town only at exactly {min_db_revision, db_revision}; three chained revisions in
 one release would leave every town on d2e4f6a8b0c1 outside that window.
 
@@ -33,6 +33,9 @@ Session revocation (app/core/auth.py):
      whose version no longer matches the row is refused. Tokens issued before
      this revision have no `tv`, read as 0, so the deploy signs nobody out.
 
+Staff invites (app/tasks/staff_invites.py):
+  users.invited_at (nullable): when the invite email was last sent.
+
 Polygon context layers (app/services/gis_layers.py):
   map_layer_features  one row per polygon of a table-backed layer (tax
                       parcels, zones): layer_id FK ON DELETE CASCADE,
@@ -43,6 +46,10 @@ Polygon context layers (app/services/gis_layers.py):
   map_layers.feature_id_property / label_property / staff_properties /
      available_properties / feature_count / features_imported_at /
      resident_service_codes (nullable).
+  map_layers.source_url / source_synced_at / source_sync / source_last_edit /
+     source_checked_at / source_sync_status / source_sync_error (nullable):
+     layers imported from ArcGIS, and their optional automatic sync. No token
+     is ever stored.
   service_requests.gis_context JSONB (nullable) with a GIN jsonb_path_ops
      index: the containing features snapshotted at intake.
 
@@ -56,6 +63,17 @@ Secure upgrades, Phase 3 (app/services/upgrades.py, docs/design/secure-upgrades.
   updater_settings       singleton: require_two_person_approval (server
                          default true) and updater_last_seen_at. No row is
                          inserted; an absent row reads as the defaults.
+
+Critical facilities (app/services/critical_facilities.py):
+  critical_facilities         the town's hospitals, clinics, schools, fire /
+                              police / ambulance stations and nursing homes,
+                              refreshed weekly from OpenStreetMap: osm_type,
+                              osm_id, kind, name, geom geometry(Geometry, 4326)
+                              with a GIST index, fetched_at. The per-report
+                              proximity check reads it locally.
+  critical_facilities_status  singleton: last refresh, last attempt, counts
+                              per kind, source and last error. No row is
+                              inserted; the first refresh creates it.
 
 Additive only (expand): new tables, nullable columns, NOT NULL columns with
 server defaults, and no data writes. Older code ignores all of it, so the
@@ -111,6 +129,9 @@ def upgrade() -> None:
     # Session revocation
     op.add_column("users", sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"))
 
+    # Staff invites
+    op.add_column("users", sa.Column("invited_at", sa.DateTime(timezone=True), nullable=True))
+
     # Polygon context layers
     op.add_column("map_layers", sa.Column("feature_storage", sa.String(length=10), nullable=False, server_default="inline"))
     op.add_column("map_layers", sa.Column("feature_id_property", sa.String(length=100), nullable=True))
@@ -120,6 +141,13 @@ def upgrade() -> None:
     op.add_column("map_layers", sa.Column("feature_count", sa.Integer(), nullable=True))
     op.add_column("map_layers", sa.Column("features_imported_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("map_layers", sa.Column("resident_service_codes", sa.JSON(), nullable=True))
+    op.add_column("map_layers", sa.Column("source_url", sa.String(length=2048), nullable=True))
+    op.add_column("map_layers", sa.Column("source_synced_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync", sa.String(length=10), nullable=True))
+    op.add_column("map_layers", sa.Column("source_last_edit", sa.String(length=100), nullable=True))
+    op.add_column("map_layers", sa.Column("source_checked_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync_status", sa.String(length=20), nullable=True))
+    op.add_column("map_layers", sa.Column("source_sync_error", sa.String(length=500), nullable=True))
     op.create_table(
         "map_layer_features",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -219,8 +247,36 @@ def upgrade() -> None:
         sa.Column("updated_by", sa.String(length=100), nullable=True),
     )
 
+    # Critical facilities
+    op.create_table(
+        "critical_facilities",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("osm_type", sa.String(length=10), nullable=False),
+        sa.Column("osm_id", sa.BigInteger(), nullable=False),
+        sa.Column("kind", sa.String(length=32), nullable=False),
+        sa.Column("name", sa.String(length=300), nullable=True),
+        sa.Column("geom", Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=False), nullable=False),
+        sa.Column("fetched_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+    op.create_index("ix_critical_facilities_geom", "critical_facilities", ["geom"], postgresql_using="gist")
+    op.create_index("ix_critical_facilities_kind", "critical_facilities", ["kind"])
+    op.create_table(
+        "critical_facilities_status",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("refreshed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("attempted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("counts", sa.JSON(), nullable=True),
+        sa.Column("source", sa.String(length=300), nullable=True),
+        sa.Column("last_error", sa.Text(), nullable=True),
+        sa.Column("failing_since", sa.DateTime(timezone=True), nullable=True),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("critical_facilities_status")
+    op.drop_index("ix_critical_facilities_kind", table_name="critical_facilities")
+    op.drop_index("ix_critical_facilities_geom", table_name="critical_facilities")
+    op.drop_table("critical_facilities")
     op.drop_table("updater_settings")
     op.drop_table("updater_releases")
     op.drop_index("ix_updater_tokens_token_prefix", table_name="updater_tokens")
@@ -234,6 +290,13 @@ def downgrade() -> None:
     op.drop_index("ix_map_layer_features_geom", table_name="map_layer_features")
     op.drop_index("ix_map_layer_features_layer_key", table_name="map_layer_features")
     op.drop_table("map_layer_features")
+    op.drop_column("map_layers", "source_sync_error")
+    op.drop_column("map_layers", "source_sync_status")
+    op.drop_column("map_layers", "source_checked_at")
+    op.drop_column("map_layers", "source_last_edit")
+    op.drop_column("map_layers", "source_sync")
+    op.drop_column("map_layers", "source_synced_at")
+    op.drop_column("map_layers", "source_url")
     op.drop_column("map_layers", "resident_service_codes")
     op.drop_column("map_layers", "features_imported_at")
     op.drop_column("map_layers", "feature_count")
@@ -242,6 +305,7 @@ def downgrade() -> None:
     op.drop_column("map_layers", "label_property")
     op.drop_column("map_layers", "feature_id_property")
     op.drop_column("map_layers", "feature_storage")
+    op.drop_column("users", "invited_at")
     op.drop_column("users", "token_version")
     op.drop_column("audit_anchors", "auth_legacy_count")
     op.drop_column("audit_anchors", "auth_entry_count")

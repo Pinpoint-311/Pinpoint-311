@@ -295,7 +295,7 @@ pinpoint-311-pii
 Deployment name
 not in this deployment
 azureOpenAiDeploymentName
-no box for this — worth reporting`;
+Pinpoint doesn’t use this value`;
 
     it('refuses a value that cannot be what it claims', () => {
         const parsed = parseDeployOutputs('azure', PANEL);

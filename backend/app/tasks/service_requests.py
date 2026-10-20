@@ -192,6 +192,24 @@ async def configure_notifications(db):
             }, provider_type="smtp")
 
 
+
+async def _portal_url(db) -> str:
+    """The address residents use, for links in emails; "" if nothing has set one.
+
+    Was `custom_domain`, then the DOMAIN env var, then "http://localhost:5173".
+    The worker that sends these emails was not given DOMAIN by the compose
+    file, so on any instance without a custom domain every "Track your request"
+    button pointed at localhost. Now the same lookup the rest of the app uses
+    (custom domain, then DOMAIN), and when neither is set the templates leave
+    the link out rather than send one that cannot work.
+    """
+    from app.api.system import public_origin
+    origin = await public_origin(db)
+    if not origin:
+        logger.error("[Notification] No public address configured (custom domain or DOMAIN); "
+                     "sending without links")
+    return origin or ""
+
 @celery_app.task(bind=True, max_retries=3)
 def analyze_request(self, request_id: int):
     """Analyze service request with Vertex AI (if enabled)"""
@@ -514,10 +532,7 @@ def send_branded_notification(request_id: int, notification_type: str, old_statu
                 return {"status": "skipped", "reason": "notifications disabled"}
             
             # Get custom domain for portal URL
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -651,10 +666,7 @@ def send_comment_notification_task(request_id: int, comment_author: str, comment
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -739,10 +751,7 @@ def send_department_notification(request_id: int, department_email: str = None):
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             # Get the request
             result = await db.execute(
@@ -945,8 +954,7 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = (settings.custom_domain if settings else None) or os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
 
             result = await db.execute(select(ServiceRequest).where(ServiceRequest.id == request_id))
             request = result.scalar_one_or_none()
@@ -1088,6 +1096,131 @@ def notify_staff_of_activity(request_id: int, event: str, actor: str = None):
                     notified.append(staff.phone)
 
             logger.info(f"[Staff Activity:{event}] notified {len(notified)} for request {request.service_request_id}")
+            return {"status": "sent", "recipients": notified}
+
+    try:
+        return run_async(_notify())
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+@celery_app.task
+def notify_staff_of_assignment(request_id: int, actor: str = None):
+    """Tell staff a request was reassigned to them.
+
+    Recipients come from the request as it now stands: the assignee when there
+    is one, else the routed department's active staff. `actor` (the username
+    who reassigned it) is skipped, and each person's Notification Settings
+    apply through the "assignments" event, which follows the new-request
+    toggles and Assigned Only. Residents are not told: reassignment is
+    internal.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    async def _notify():
+        from app.models import SystemSettings, User, Department, user_departments
+        from app.services.notification_rules import pick_assignment_recipients, should_notify_staff
+
+        async with SessionLocal() as db:
+            result = await db.execute(select(ServiceRequest).where(ServiceRequest.id == request_id))
+            request = result.scalar_one_or_none()
+            if not request:
+                return {"error": "Request not found"}
+
+            assignee = None
+            if request.assigned_to:
+                assignee = (await db.execute(
+                    select(User)
+                    .where(User.username == request.assigned_to)
+                    .where(User.is_active == True)
+                )).scalar_one_or_none()
+
+            department = None
+            department_staff = []
+            if request.assigned_department_id:
+                department = (await db.execute(
+                    select(Department).where(Department.id == request.assigned_department_id)
+                )).scalar_one_or_none()
+                if assignee is None:
+                    department_staff = list((await db.execute(
+                        select(User)
+                        .join(user_departments)
+                        .where(user_departments.c.department_id == request.assigned_department_id)
+                        .where(User.is_active == True)
+                    )).scalars().all())
+
+            recipients = pick_assignment_recipients(assignee, department_staff)
+            if not recipients:
+                return {"status": "sent", "recipients": []}
+
+            await configure_notifications(db)
+            settings_result = await db.execute(select(SystemSettings).order_by(SystemSettings.id).limit(1))
+            settings = settings_result.scalar_one_or_none()
+            from app.services import capability_switches
+            sms_enabled_globally = await capability_switches.enabled("sms")
+            township_name = settings.township_name if settings else "Your Township"
+            logo_url = settings.logo_url if settings else None
+            primary_color = settings.primary_color if settings else "#6366f1"
+            portal_url = await _portal_url(db)
+
+            staff_link = f"{portal_url}/staff#request/{request.service_request_id}"
+            status_text = getattr(request.status, 'value', request.status) or ''
+            department_name = department.name if department else None
+
+            notified = []
+            for staff in recipients:
+                is_assigned_to_me = bool(request.assigned_to) and staff.username == request.assigned_to
+                send_email, send_sms = should_notify_staff(
+                    staff.notification_preferences or {}, "assignments",
+                    is_assigned_to_me=is_assigned_to_me,
+                    is_actor=bool(actor) and staff.username == actor,
+                    sms_enabled_globally=sms_enabled_globally,
+                )
+                label = "Assigned to you" if is_assigned_to_me else (
+                    f"Assigned to {department_name}" if department_name else "Assigned to your department")
+
+                if send_email and staff.email:
+                    fields = [
+                        ("Request", f"{request.service_request_id} - {request.service_name}"),
+                        ("Status", status_text),
+                        ("Address", request.address or "Not provided"),
+                    ]
+                    if department_name:
+                        fields.append(("Department", department_name))
+                    if actor:
+                        fields.append(("Assigned by", actor))
+                    message = L.build_email(
+                        subject=f"{label}: {request.service_request_id} — {request.service_name}",
+                        township_name=township_name,
+                        logo_url=logo_url,
+                        primary_color=primary_color,
+                        preheader=f"{label} - {request.service_request_id}",
+                        blocks=[
+                            L.heading(label, 2),
+                            L.fields(fields),
+                            L.button("View request in the staff dashboard", staff_link),
+                        ],
+                        footer_lines=[
+                            f"You're receiving this because you're staff at {township_name}.",
+                        ],
+                    )
+                    notification_service.send_email(
+                        to=staff.email, subject=message["subject"],
+                        body_html=message["html"], body_text=message["text"],
+                        from_name=f"{township_name} 311"
+                    )
+                    notified.append(staff.email)
+
+                if send_sms and staff.phone:
+                    await notification_service.send_sms(
+                        staff.phone,
+                        f"{township_name} 311 — {label}: {request.service_request_id} "
+                        f"({request.service_name})\n{staff_link}"
+                    )
+                    notified.append(staff.phone)
+
+            logger.info(f"[Staff Assignment] notified {len(notified)} for request {request.service_request_id}")
             return {"status": "sent", "recipients": notified}
 
     try:
@@ -1435,10 +1568,7 @@ def send_weekly_digest():
             township_name = settings.township_name if settings else "Your Township"
             logo_url = settings.logo_url if settings else None
             primary_color = settings.primary_color if settings else "#6366f1"
-            custom_domain = settings.custom_domain if settings else None
-            if not custom_domain:
-                custom_domain = os.environ.get('DOMAIN', '')
-            portal_url = f"https://{custom_domain}" if custom_domain and custom_domain != 'localhost' else "http://localhost:5173"
+            portal_url = await _portal_url(db)
             
             from app.services import capability_switches
             if not await capability_switches.enabled("email"):

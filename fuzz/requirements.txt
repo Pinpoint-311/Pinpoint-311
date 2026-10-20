@@ -1,0 +1,6 @@
+# pythonfuzz, GitLab's coverage-guided Python fuzzer, from GitLab's own package
+# registry (project 19904939). Installed with --index-url (not --extra-index-url)
+# and this hash: PyPI has an unrelated package with the same name. Its psutil
+# pin (5.6.3) does not build on Python 3.11, so --no-deps and psutil is pinned
+# separately in .gitlab-ci.yml (pythonfuzz only reads memory_info().rss).
+pythonfuzz==1.0.11 --hash=sha256:427a43d3c17ddfead1270c6326214bf1d2a287d66d902d21d8454d96f50c6f68

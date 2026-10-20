@@ -41,16 +41,76 @@ limiter = Limiter(key_func=rate_limit_key)
 
 
 def _sanitize_redirect_uri(redirect_uri: str) -> str:
-    """Validate redirect URI against allowed CORS origins to prevent open redirects."""
-    parsed_uri = urllib.parse.urlparse(redirect_uri)
+    """Where the sign-in flow is allowed to send the browser next.
+
+    Every error path in the OIDC callback hands this value to RedirectResponse,
+    so it is reachable by anyone who can get a staff member to click a link --
+    the classic phishing shape, where the victim really does start on the town's
+    own sign-in page and lands on a copy of it.
+
+    Checking ``urlparse().netloc`` against an allowlist is the right idea but is
+    not sufficient on its own, because browsers and urlparse disagree about what
+    an authority is. Four shapes got through:
+
+      https:evil.com      urlparse: scheme=https, netloc='', path='evil.com'
+                          Chrome: https://evil.com/
+      /\evil.com          urlparse: path='/\evil.com'
+                          browsers fold \ to / in the authority: //evil.com
+      \/evil.com          same, the other way round
+      https:/\evil.com    both of the above at once
+
+    In each, netloc is empty, the host check never ran, and the value was
+    returned unchanged. The fallback leaked too: it returned
+    ``parsed_uri.path``, and the path of ``https://evil.com//x`` is ``//x``,
+    which is protocol-relative -- rejecting a bad host produced a redirect to a
+    different bad host.
+
+    So: fold backslashes the way a browser does *before* parsing, require a
+    scheme we recognise if there is one, require an allowed host if there is an
+    authority, refuse a scheme without one, and make the fallback a path that
+    cannot be read as an authority.
+    """
+    text = (redirect_uri or "").strip().replace("\\", "/")
+
+    def _same_site_path(candidate: str) -> str:
+        # One leading slash and no second one. "//host" and "" are both
+        # unusable as a destination; "/" is the town's own front page.
+        if not candidate.startswith("/") or candidate.startswith("//"):
+            return "/"
+        return candidate
+
+    parsed_uri = urllib.parse.urlparse(text)
+
     if parsed_uri.netloc:
-        allowed_hosts = {"localhost", "127.0.0.1"}
-        cors = os.environ.get("CORS_ORIGINS", "")
-        if cors:
-            allowed_hosts.update(urllib.parse.urlparse(o).netloc for o in cors.split(","))
+        if parsed_uri.scheme and parsed_uri.scheme not in ("http", "https"):
+            return "/"
+        # Loopback is matched on the hostname, so any port works: the frontend
+        # dev server runs on 5173 and a netloc comparison against a bare
+        # "localhost" silently sent every developer to a bare path instead.
+        # `hostname` is the right property for this and not a loosening --
+        # urlparse reads "http://evil.example@localhost" as hostname=localhost,
+        # which is also where the browser goes, and "http://localhost@evil.example"
+        # as hostname=evil.example, which is refused.
+        if (parsed_uri.hostname or "") in ("localhost", "127.0.0.1", "::1"):
+            return text
+
+        # Configured origins are matched exactly, port included: CORS_ORIGINS
+        # names scheme://host:port, and "the same host on another port" is a
+        # different service, not the same one.
+        allowed_hosts = {
+            urllib.parse.urlparse(o.strip()).netloc for o in os.environ.get("CORS_ORIGINS", "").split(",")
+        }
+        allowed_hosts.discard("")
         if parsed_uri.netloc not in allowed_hosts:
-            return parsed_uri.path or "/"
-    return redirect_uri
+            return _same_site_path(parsed_uri.path)
+        return text
+
+    if parsed_uri.scheme:
+        # A scheme with no authority: "https:evil.com", "javascript:...",
+        # "data:...". None of these is a page on this town.
+        return "/"
+
+    return _same_site_path(text)
 
 
 # One-time bootstrap tokens (only work until staff sign-in is configured)

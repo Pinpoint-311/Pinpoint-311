@@ -895,7 +895,7 @@ export default function GovtechIntegrations() {
 
                             {mutedUntil && (
                                 <p className="relative text-[11px] mt-2 text-amber-200/85">
-                                    Nobody is being emailed about this until{' '}
+                                    Alert emails are paused until{' '}
                                     {new Date(mutedUntil).toLocaleDateString()}.
                                     {needsAttention ? ' It is still not working.' : ''}
                                 </p>
@@ -1349,7 +1349,7 @@ export default function GovtechIntegrations() {
                                             </span>
                                             {requiredMissing(wizard).length > 0 && (
                                                 <p className="text-white/60 text-[11px] mt-2">
-                                                    Fill in the fields above first — we need them to open the right sign-in page.
+                                                    Fill in the fields above first. They are needed to open the right sign-in page.
                                                 </p>
                                             )}
                                         </div>

@@ -260,7 +260,7 @@ def test_a_selected_but_unreachable_key_manager_is_reported(monkeypatch):
     pytest.importorskip("fastapi")
     result = _kms_check(monkeypatch, wrapped_by="local", selected="azure")
     assert result["status"] == "fallback"
-    assert "azure" in result["message"]
+    assert "Azure Key Vault" in result["message"]
     assert "not reachable" in result["message"]
 
 

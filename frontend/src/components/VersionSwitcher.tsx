@@ -10,7 +10,7 @@ import {
     type UpgradeAction, type UpgradeRequestRecord, type UpgradeStatus,
 } from '../services/upgradeTypes';
 import { useOptionalAnnounce } from './liveAnnounce';
-import { AccordionSection, Chip, Modal, statusTone, type ChipTone } from './ui';
+import { AccordionSection, Checkbox, Chip, Modal, statusTone, type ChipTone } from './ui';
 import { humanize } from '../utils/humanize';
 
 /**
@@ -169,8 +169,8 @@ export function UpdaterTokens({ readOnly, onChange }: { readOnly?: boolean; onCh
     return (
         <div className="space-y-3 text-sm">
             <p className="text-xs text-white/60">
-                The updater runs on the server and calls this instance over loopback with one of these tokens.
-                Only a hash is stored. See <a className="underline text-indigo-300" href={CONNECT_DOCS_URL} target="_blank" rel="noopener noreferrer">how to connect the updater<span className="sr-only"> (opens in a new tab)</span></a>.
+                The updater is a program on the server. It uses one of these tokens to connect to this instance.
+                Pinpoint keeps only a fingerprint of each token, not the token itself. See <a className="underline text-indigo-300" href={CONNECT_DOCS_URL} target="_blank" rel="noopener noreferrer">how to connect the updater<span className="sr-only"> (opens in a new tab)</span></a>.
             </p>
             {created?.token && (
                 <div className="rounded-lg border border-amber-400/40 bg-amber-500/10 p-3 space-y-2">
@@ -393,7 +393,7 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                             <dt className="text-white/50">Git SHA</dt><dd className="font-mono break-all">{current?.git_sha || 'not stamped'}</dd>
                             <dt className="text-white/50">Backend digest</dt><dd className="font-mono break-all" title={current?.backend_digest ?? undefined}>{shortDigest(current?.backend_digest)}</dd>
                             <dt className="text-white/50">Frontend digest</dt><dd className="font-mono break-all" title={current?.frontend_digest ?? undefined}>{shortDigest(current?.frontend_digest)}</dd>
-                            <dt className="text-white/50">Schema</dt><dd className="font-mono">{current?.db_revision || 'unknown'}</dd>
+                            <dt className="text-white/50">Database version</dt><dd className="font-mono">{current?.db_revision || 'unknown'}</dd>
                         </dl>
                     </div>
                     <button type="button" className="btn-outline text-xs" onClick={load} aria-label="Refresh version information">
@@ -453,7 +453,7 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                                         Mark failed
                                     </button>
                                     <span className="text-xs text-white/50">
-                                        Only if the updater has stopped{active.last_report_at ? ` (last report ${when(active.last_report_at)})` : ''}. It does not stop anything on the server, and a late report from this run is refused. A silent run fails on its own after its time limit.
+                                        Only if the updater has stopped{active.last_report_at ? ` (last report ${when(active.last_report_at)})` : ''}. This doesn’t stop anything on the server. If the updater reports back later, that report is ignored. A run that stops reporting fails on its own after its time limit.
                                     </span>
                                 </div>
                             )}
@@ -556,14 +556,14 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                             {form.action === 'upgrade' && (
                                 <div className="rounded-lg border border-red-400/30 bg-red-500/10 p-3 space-y-1">
                                     <div className="flex items-start gap-2">
-                                        <input id={destructiveId} type="checkbox" checked={allowDestructive}
-                                            onChange={e => setAllowDestructive(e.target.checked)} className="mt-0.5" />
+                                        <Checkbox id={destructiveId} checked={allowDestructive}
+                                            onChange={e => setAllowDestructive(e.target.checked)} size="sm" />
                                         <label htmlFor={destructiveId} className="text-xs font-medium">Allow a destructive migration</label>
                                     </div>
                                     <p className="text-xs text-red-200/90">
                                         Leave this off unless a previous attempt stopped “on hold: destructive migration”. A destructive
                                         migration drops or rewrites data and cannot be rolled back without restoring the backup.
-                                        {formRelease?.min_db_revision ? ` This release needs schema ${formRelease.min_db_revision} or later.` : ''}
+                                        {formRelease?.min_db_revision ? ` This release needs database version ${formRelease.min_db_revision} or later.` : ''}
                                     </p>
                                 </div>
                             )}
@@ -606,9 +606,9 @@ export function VersionControlPanel({ managed = false }: { managed?: boolean }) 
                         </section>
                     )}
 
-                    <label className="flex items-start gap-2 text-xs text-white/70">
-                        <input type="checkbox" checked={twoPerson} disabled={busy !== null}
-                            onChange={e => toggleTwoPerson(e.target.checked)} className="mt-0.5" />
+                    <label className="flex !items-start gap-2 text-xs text-white/70">
+                        <Checkbox checked={twoPerson} disabled={busy !== null}
+                            onChange={e => toggleTwoPerson(e.target.checked)} size="sm" />
                         <span>Require a second admin to approve upgrades and rollbacks (recommended). Restarts need one admin. Changes to this setting are audited.</span>
                     </label>
                 </>

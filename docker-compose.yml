@@ -100,7 +100,7 @@ services:
     restart: unless-stopped
     # No --reload: there is no source here to watch. docker-compose.dev.yml
     # turns it back on for contributors, who mount ./backend.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-server-header
     # No source mount, no repository mount and no Docker socket. The code that
     # runs is the code in the image, so what was signed is what serves; and a
     # compromise of this internet-facing container is not a compromise of the
@@ -188,9 +188,13 @@ services:
       # the advisory lock and performs the migration. It needs somewhere to put
       # the pre-migration dump, or it would refuse to start.
       - migration_backups:/backups
+      # Scheduled retention runs here and deletes cleared photos from disk;
+      # without the uploads volume it cleared the links and left the files.
+      - uploads_data:/data/uploads
       # Same models, so the health scan can see whether they are installed.
       - ${REDACTION_MODELS_DIR:-./models}:/models:ro
     environment:
+      UPLOAD_DIR: /data/uploads
       DATABASE_URL: postgresql+asyncpg://${DB_USER:-township}:${DB_PASSWORD:?Set DB_PASSWORD}@db/${DB_NAME:-township_db}
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:?Set a strong unique SECRET_KEY in .env (e.g. openssl rand -hex 32) — it signs JWTs and derives the PII encryption key}
@@ -198,6 +202,10 @@ services:
       GOOGLE_VERTEX_PROJECT: ${GOOGLE_VERTEX_PROJECT:-}
       GOOGLE_VERTEX_LOCATION: ${GOOGLE_VERTEX_LOCATION:-us-central1}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      # The worker sends the emails, and their links need the site's address.
+      # Without this every "Track your request" button pointed at localhost on
+      # an instance with no custom domain set.
+      DOMAIN: ${DOMAIN:-localhost}
       # The worker runs the nightly Accela syncs, so it needs the same app
       # credentials to exchange refresh tokens.
       ACCELA_CLIENT_ID: ${ACCELA_CLIENT_ID:-}

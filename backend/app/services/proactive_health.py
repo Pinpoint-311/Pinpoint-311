@@ -211,7 +211,7 @@ async def _db_connection_check(db) -> Dict[str, Any]:
         return _check(
             "db_connections", "Database connections", status, pct,
             f"{used} of {max_conn} connections in use ({pct}%).",
-            "Check for connection leaks or raise the pool/limit before it's exhausted." if status != "ok" else "",
+            "Restart the app if this keeps climbing, or raise the database connection limit before it runs out." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] db connection check failed: {e}")
@@ -247,7 +247,7 @@ async def _backup_age_check() -> Dict[str, Any]:
         return _check(
             "backup", "Backup freshness", status, round(hours, 1),
             f"Last backup was {round(hours)}h ago.",
-            "Backups are stale — verify the backup task is running." if status != "ok" else "",
+            "Backups are overdue. Check that scheduled backups are running." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] backup age check failed: {e}")
@@ -297,17 +297,21 @@ async def _redis_check() -> Dict[str, Any]:
         used_mb = round(used / (1024 ** 2), 1)
         if not max_mem:
             # No cap configured — report healthy with the current footprint.
-            return _check("redis", "Cache (Redis)", "ok", used_mb, f"Redis using {used_mb} MB (no cap set).")
+            return _check("redis", "Cache (Redis)", "ok", used_mb, f"The cache is using {used_mb} MB (no limit set).")
         pct = round(used / max_mem * 100, 1)
         status = classify_metric(pct, warn=80, crit=92)
         return _check(
             "redis", "Cache (Redis)", status, pct,
-            f"Redis memory at {pct}% of its cap ({used_mb} MB).",
-            "Raise maxmemory or review the eviction policy before keys are evicted." if status != "ok" else "",
+            f"The cache is using {pct}% of its memory limit ({used_mb} MB).",
+            "Raise the cache's memory limit (the Redis maxmemory setting) before it fills up." if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] redis check failed: {e}")
         return _check("redis", "Cache (Redis)", "unknown", None, "Could not reach Redis.")
+
+
+# Names an admin recognizes, for the provider ids stored in settings.
+_KMS_LABELS = {"google": "Google Cloud KMS", "azure": "Azure Key Vault", "aws": "AWS KMS"}
 
 
 async def _kms_check() -> Dict[str, Any]:
@@ -351,12 +355,12 @@ async def _kms_check() -> Dict[str, Any]:
             return _azure_key_posture_check()
         if actual == selected:
             return _check("kms", "Resident data encryption", "ok", actual,
-                          f"Resident data is being encrypted with your {actual} key.")
+                          f"Resident data is being encrypted with your {_KMS_LABELS.get(actual, actual)} key.")
 
         return _check(
             "kms", "Resident data encryption", "critical", actual,
-            f"Your {selected} key is not being used — new resident data is being "
-            f"encrypted with the application key instead.",
+            f"Your {_KMS_LABELS.get(selected, selected)} key is not being used. New resident "
+            f"data is being encrypted with this server's own key instead.",
             action=(
                 "Act today. Check that the key still exists and has not been scheduled "
                 "for deletion, and that its credentials have not expired. Records saved "
@@ -388,7 +392,7 @@ def _azure_key_posture_check() -> Dict[str, Any]:
         posture = azure_keyvault.key_posture()
     except Exception:
         return _check("kms", "Resident data encryption", "ok", "azure",
-                      "Resident data is being encrypted with your azure key. "
+                      "Resident data is being encrypted with your Azure Key Vault key. "
                       "(Its deletion protection could not be read.)")
     level = posture.get("recovery_level") or ""
     if "Purgeable" in level or not level.startswith("Recoverable"):
@@ -411,7 +415,7 @@ def _azure_key_posture_check() -> Dict[str, Any]:
             action="Extend the key's expiration date in the Key Vault, or rotate the key.",
         )
     return _check("kms", "Resident data encryption", "ok", "azure",
-                  f"Resident data is being encrypted with your azure key "
+                  f"Resident data is being encrypted with your Azure Key Vault key "
                   f"(purge protection on, {posture.get('recoverable_days') or '?'}-day recovery window).")
 
 
@@ -452,8 +456,8 @@ async def _redaction_check() -> Dict[str, Any]:
                 "without blurring faces or license plates.",
                 action=(
                     "Check the Photo Redaction card. On-server detection needs no "
-                    "account and works anywhere, so this usually means the image is "
-                    "missing OpenCV rather than that a credential is wrong."
+                    "account and works anywhere, so this usually means this server's "
+                    "install is missing OpenCV, not that a credential is wrong."
                 ),
             )
 
@@ -586,8 +590,8 @@ async def _retention_check(db) -> Dict[str, Any]:
             action=(
                 "Open Settings → Compliance → Document Retention and set how long closed "
                 "requests are kept, and what a run removes from them. Your clerk has the "
-                "town's approved records retention schedule; this product will not guess "
-                "at it. Until both are set, resident personal data is kept indefinitely."
+                "town's approved records retention schedule. Until both are set, resident "
+                "personal data is kept indefinitely."
             ),
         )
     except Exception:
@@ -597,7 +601,7 @@ async def _retention_check(db) -> Dict[str, Any]:
 
 
 async def _translation_budget_check() -> Dict[str, Any]:
-    """Is translation close to, or at, the town's spend budget?
+    """Is translation close to, or at, the built-in spend ceiling?
 
     Warning at 80% of the day's or the month's character budget, critical at
     100%. At 100% residents are being served the source text instead of a
@@ -617,20 +621,111 @@ async def _translation_budget_check() -> Dict[str, Any]:
         resets = "at midnight UTC" if worst is day else "on the 1st (UTC)"
         message = (
             f"Translation has used {worst['used']:,} of {which} {worst['limit']:,}-character "
-            f"budget ({worst['percent']:g}%)."
+            f"safety limit ({worst['percent']:g}%)."
         )
         if status == "critical":
             message += f" Residents see untranslated text until it resets {resets}."
         return _check(
-            "translation_budget", "Translation budget", status, worst["percent"], message,
-            ("Raise the budget on Settings > Service Providers > Translation Provider if this use "
-             "is expected; if it is not, the traffic is worth investigating before it resets.")
+            "translation_budget", "Translation safety limit", status, worst["percent"], message,
+            ("This ceiling is far above normal use, so reaching it usually means someone is using "
+             "the public translation feature heavily; the traffic is worth investigating. Spending "
+             "limits for expected use are set with the translation provider (Google Cloud quotas, "
+             "Azure pricing tier).")
             if status != "ok" else "",
         )
     except Exception as e:
         logger.warning(f"[proactive] translation budget check failed: {e}")
         return _check("translation_budget", "Translation budget", "unknown", None,
                       "Could not read translation usage.")
+
+
+async def _critical_facilities_check(db) -> Dict[str, Any]:
+    """Is the store behind "near a hospital / school" current?
+
+    Warning, not critical: an empty or stale store means reports lose their
+    proximity context (and the AI its priority nudge), not that anything is
+    lost. Only while a boundary is configured -- without one there is nothing
+    to fetch, and the boundary has its own place in setup.
+    """
+    try:
+        from datetime import datetime, timezone
+
+        from app.services import critical_facilities as cf
+
+        # In a savepoint: a database still without the table must not abort
+        # the transaction the remaining health reads share.
+        async with db.begin_nested():
+            st = await cf.store_status(db)
+        detail = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in st.items()}
+        counts = ", ".join(
+            f"{n} {cf.KIND_LABELS.get(k, k).lower()}" for k, n in sorted(st["counts"].items())
+        ) or "none"
+        error = f" Last error: {st['last_error']}" if st.get("last_error") else ""
+        action = ("It keeps retrying on its own. If it keeps failing, check that the server can "
+                  "reach download.geofabrik.de (the OpenStreetMap download) or the public Overpass "
+                  "servers, or set OVERPASS_URLS to one the town trusts.")
+        if not st["boundary_configured"]:
+            check = _check("critical_facilities", "Critical facilities", "ok", "no boundary",
+                           "No town boundary is set, so there is no area to load hospitals, "
+                           "schools and fire stations for.")
+        elif not st["total"]:
+            since = st.get("failing_since")
+            if since is None or datetime.now(timezone.utc) - since < cf.EMPTY_GRACE:
+                # Not loaded yet: a new install, or the public Overpass
+                # instance busy on the first tries. Retried hourly; not an
+                # alert until it has kept failing for a day.
+                check = _check("critical_facilities", "Critical facilities", "ok", 0,
+                               "Loading the town's hospitals, schools and fire stations. "
+                               "Retried every hour until it succeeds." + error)
+            else:
+                check = _check("critical_facilities", "Critical facilities", "warning", 0,
+                               "No hospitals, schools or fire stations have loaded for over a "
+                               "day, so reports show nothing near them." + error, action)
+        else:
+            refreshed = st.get("refreshed_at")
+            age = datetime.now(timezone.utc) - refreshed if refreshed else None
+            when = refreshed.strftime("%Y-%m-%d") if refreshed else "unknown"
+            if age is None or age > cf.STALE_AFTER:
+                check = _check("critical_facilities", "Critical facilities", "warning", st["total"],
+                               f"Facility list last refreshed {when}, over "
+                               f"{cf.STALE_AFTER.days} days ago ({counts})." + error, action)
+            else:
+                check = _check("critical_facilities", "Critical facilities", "ok", st["total"],
+                               f"{st['total']} loaded, refreshed {when}: {counts}." + error)
+        check["detail"] = detail
+        return check
+    except Exception:
+        logger.debug("Critical facilities health probe failed", exc_info=True)
+        return _check("critical_facilities", "Critical facilities", "unknown", None,
+                      "Could not read the critical-facility store.")
+
+
+async def _arcgis_sync_check(db) -> Dict[str, Any]:
+    """Has an automatic ArcGIS sync been held back for review?
+
+    Warning: the layer still shows its previous features, so nothing is
+    broken, but the town's data has moved on and an admin has to decide.
+    """
+    try:
+        from app.services import arcgis_import
+
+        async with db.begin_nested():
+            held = await arcgis_import.held_layers(db)
+        if not held:
+            return _check("arcgis_sync", "ArcGIS layer sync", "ok", 0,
+                          "No automatic ArcGIS layer sync is waiting for review.")
+        named = "; ".join(f"{name}: {reason}" for name, reason in held[:5])
+        more = f" (and {len(held) - 5} more)" if len(held) > 5 else ""
+        return _check(
+            "arcgis_sync", "ArcGIS layer sync", "warning", len(held),
+            f"Automatic sync held back the update for {len(held)} map layer"
+            f"{'s' if len(held) != 1 else ''}, which keep their previous features. {named}{more}",
+            "Open Admin Console > Map Layers, check the layer's source, then choose Apply anyway "
+            "or turn auto-sync off.")
+    except Exception:
+        logger.debug("ArcGIS sync health probe failed", exc_info=True)
+        return _check("arcgis_sync", "ArcGIS layer sync", "unknown", None,
+                      "Could not read the map layers' sync state.")
 
 
 # Every key `collect_checks` can emit. Named here so the mute route can refuse
@@ -648,6 +743,8 @@ CHECK_KEYS = (
     "redaction",
     "retention",
     "translation_budget",
+    "critical_facilities",
+    "arcgis_sync",
 )
 
 
@@ -665,6 +762,8 @@ async def collect_checks(db) -> List[Dict[str, Any]]:
         await _redaction_check(),
         await _retention_check(db),
         await _translation_budget_check(),
+        await _critical_facilities_check(db),
+        await _arcgis_sync_check(db),
     ]
     return checks
 

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, UniqueConstraint, CheckConstraint, Index, event, select
+from sqlalchemy import BigInteger, Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, Boolean, Table, UniqueConstraint, CheckConstraint, Index, event, select
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql import func
@@ -55,6 +55,9 @@ class User(Base):
     })
     phone = Column(String(50))  # Staff phone for SMS alerts
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+    # When an invite email was last sent to this account (app/tasks/staff_invites.py).
+    # Null for accounts never invited, including every account made before invites existed.
+    invited_at = Column(DateTime(timezone=True), nullable=True)
     
     # Staff can be assigned to multiple departments
     departments = relationship(
@@ -992,6 +995,22 @@ class MapLayer(Base):
     feature_count = Column(Integer, nullable=True)
     features_imported_at = Column(DateTime(timezone=True), nullable=True)
 
+    # Layers imported from ArcGIS (app/services/arcgis_import.py). The layer's
+    # REST address, never a token: secured services are refreshed by hand
+    # with a token given for that one request.
+    source_url = Column(String(2048), nullable=True)
+    source_synced_at = Column(DateTime(timezone=True), nullable=True)
+    # Automatic sync: NULL/"off" (default), "daily" or "weekly". Public
+    # services only. The change marker is the source's lastEditDate, or
+    # count+max objectid where it publishes none. Status: "ok" (up to date),
+    # "updated", "held" (a guardrail kept the old features; see the error),
+    # or "error".
+    source_sync = Column(String(10), nullable=True)
+    source_last_edit = Column(String(100), nullable=True)
+    source_checked_at = Column(DateTime(timezone=True), nullable=True)
+    source_sync_status = Column(String(20), nullable=True)
+    source_sync_error = Column(String(500), nullable=True)
+
     # Metadata
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
@@ -1036,6 +1055,53 @@ class MapLayerFeature(Base):
         Index("ix_map_layer_features_layer_key", "layer_id", "feature_key"),
         Index("ix_map_layer_features_geom", "geom", postgresql_using="gist"),
     )
+
+
+class CriticalFacility(Base):
+    """A hospital, clinic, school, fire/police/ambulance station or nursing home.
+
+    The town's whole set, refreshed weekly from OpenStreetMap in one query
+    (app/services/critical_facilities.py), so the per-report "near critical
+    infrastructure" check is a local distance and sends no resident location
+    anywhere. `geom` is the real outline where OSM has one -- a campus
+    polygon, not its centre -- so distance is measured to the edge.
+    Replaced wholesale on each refresh; `id` means nothing across refreshes.
+    """
+
+    __tablename__ = "critical_facilities"
+
+    id = Column(Integer, primary_key=True)
+    osm_type = Column(String(10), nullable=False)
+    osm_id = Column(BigInteger, nullable=False)
+    kind = Column(String(32), nullable=False)
+    name = Column(String(300), nullable=True)
+    geom = Column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=False), nullable=False)
+    fetched_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index("ix_critical_facilities_geom", "geom", postgresql_using="gist"),
+        Index("ix_critical_facilities_kind", "kind"),
+    )
+
+
+class CriticalFacilitiesStatus(Base):
+    """One row: when the facility store last refreshed, what it holds, the last error.
+
+    Read by the proactive health check. `refreshed_at` is the last successful
+    swap; `attempted_at` moves on every try, so the two diverging is a refresh
+    that keeps failing while the previous set stays in use.
+    """
+
+    __tablename__ = "critical_facilities_status"
+
+    id = Column(Integer, primary_key=True)
+    refreshed_at = Column(DateTime(timezone=True), nullable=True)
+    attempted_at = Column(DateTime(timezone=True), nullable=True)
+    counts = Column(JSON, nullable=True)
+    source = Column(String(300), nullable=True)
+    last_error = Column(Text, nullable=True)
+    # When the current run of failures began; cleared on success.
+    failing_since = Column(DateTime(timezone=True), nullable=True)
 
 
 class ResearchAccessLog(Base):

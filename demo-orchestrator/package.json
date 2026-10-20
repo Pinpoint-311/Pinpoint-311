@@ -5,7 +5,8 @@
     "type": "module",
     "scripts": {
         "start": "node server.js",
-        "cleanup": "node cleanup.js"
+        "cleanup": "node cleanup.js",
+        "test": "node --test"
     },
     "dependencies": {
         "cors": "^2.8.5",

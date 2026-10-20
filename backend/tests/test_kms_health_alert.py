@@ -35,7 +35,7 @@ def test_a_key_that_stopped_answering_is_critical(monkeypatch):
 
     check = _run(ph._kms_check())
     assert check["status"] == "critical"
-    assert "azure" in check["message"]
+    assert "Azure Key Vault" in check["message"]
     assert check["action"], "a critical check with no action is just bad news"
 
 

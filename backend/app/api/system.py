@@ -1597,6 +1597,12 @@ async def _test_identity(db) -> dict:
         f"(the token endpoint answered HTTP {resp.status_code}).")}
 
 
+def _kms_label(provider: str) -> str:
+    """The name an admin recognizes, for a provider id stored in settings."""
+    return {"google": "Google Cloud KMS", "azure": "Azure Key Vault", "aws": "AWS KMS",
+            "local": "the application key"}.get(provider, provider)
+
+
 async def _test_kms(db=None) -> dict:
     """Wrap a throwaway key and see which service actually did it.
 
@@ -1614,29 +1620,28 @@ async def _test_kms(db=None) -> dict:
     probe = pii_crypto.probe_wrap()
     actual = probe["backend"]
     if actual == selected:
-        label = {"google": "Google Cloud KMS", "azure": "Azure Key Vault",
-                 "aws": "AWS KMS", "local": "the application key"}.get(actual, actual)
-        evidence = (f"a {probe['wrapped_len']}-byte wrapped key came back"
-                    + (f" (ciphertext begins {probe['peek']}…)" if probe.get("peek") else ""))
+        label = _kms_label(actual)
+        evidence = (f"it returned a {probe['wrapped_len']}-byte encrypted copy"
+                    + (f" (starting {probe['peek']}…)" if probe.get("peek") else ""))
         return {"ok": True, "detail": _steps(
-            "Generated a throwaway 256-bit data key on this server.",
-            f"Asked the key service to wrap it — {evidence}.",
-            f"The wrapping is tagged as {label}, which is the provider you selected — "
-            f"so resident data is being encrypted with the key you chose.",
-            "Discarded the test key. Nothing was stored.",
+            "Made a temporary test key on this server.",
+            f"Asked the key service to encrypt it with your key: {evidence}.",
+            f"The encrypted copy is marked as coming from {label}, the provider you "
+            f"selected, so resident data is being encrypted with the key you chose.",
+            "Deleted the test key. Nothing was stored.",
         )}
     if actual == "unknown":
         # The wrap failed rather than being done by some other service. Saying
         # it "was wrapped with unknown" described a mystery backend and named
         # nothing to fix; the reason now comes back with the probe.
-        reason = probe.get("error") or "the wrap did not complete."
+        reason = probe.get("error") or "the test encryption did not complete."
         return {"ok": False, "detail": (
-            f"Resident data is not being encrypted with the {selected} key you "
-            f"selected: {reason}")}
+            f"Resident data is not being encrypted with the {_kms_label(selected)} key "
+            f"you selected: {reason}")}
     return {"ok": False, "detail": (
-        f"Selected {selected}, but a test key was wrapped with {actual}. Resident "
-        f"data is not being encrypted with the key you chose — check the "
-        f"credentials and that the key still exists.")}
+        f"You selected {_kms_label(selected)}, but the test key was encrypted with "
+        f"{_kms_label(actual)} instead. Resident data is not being encrypted with the "
+        f"key you chose. Check the credentials and that the key still exists.")}
 
 
 async def _test_redaction(db=None) -> dict:
@@ -2352,10 +2357,10 @@ async def _test_secrets(db=None) -> dict:
         if got is None:
             return {"ok": False, "detail": (
                 f"{label} accepted a test write and then had nothing to return. Credentials "
-                f"saved here may not be readable by the workers that need them.")}
+                f"saved here may not be readable by the parts of Pinpoint that need them.")}
         return {"ok": False, "detail": (
             f"{label} returned a different value than the one just written to it. "
-            f"Something else is writing the same key, or reads are being served stale.")}
+            f"Something else is writing the same key, or it is returning an out-of-date copy.")}
 
     removed = await _cleanup()
     if not removed:
@@ -4102,8 +4107,8 @@ async def get_advanced_statistics(
         raise HTTPException(
             status_code=500,
             detail=(
-                f"The advanced statistics could not be built ({type(exc).__name__}). "
-                f"The full error and its traceback are in the server log."
+                f"The advanced statistics could not be built (error type: {type(exc).__name__}). "
+                f"The full error is in the server log."
             ),
         )
 
@@ -5080,8 +5085,8 @@ async def suggest_translation(
         # a worse outcome than a clear refusal.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The translation budget for this period is used up. Raise it on the "
-                   "Translation Provider card, or wait for it to reset.",
+            detail="Translation has reached its built-in safety limit for today or this "
+                   "month, which usually means unusual traffic. Try again after it resets.",
         )
     if translated is None:
         raise HTTPException(
@@ -5245,56 +5250,6 @@ async def batch_translate(
     translations = [results.get(text, text) for text in texts]
 
     return {"translations": translations, "budget_exhausted": budget_exhausted}
-
-
-class TranslationBudgetUpdate(BaseModel):
-    daily_chars: int
-    monthly_chars: int
-
-
-@router.get("/translate/budget")
-async def get_translation_budget(_: User = Depends(get_current_admin)):
-    """Today's and this month's translation spend against the budget (admin)."""
-    from app.services import translation_budget
-    return await translation_budget.usage()
-
-
-@router.put("/translate/budget")
-async def update_translation_budget(
-    body: TranslationBudgetUpdate,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin),
-):
-    """Set the daily and monthly character budgets (admin only, audited).
-
-    Zero is allowed and means "serve only what is already cached".
-    """
-    from app.services import translation_budget as tb
-
-    for name, value in (("daily_chars", body.daily_chars), ("monthly_chars", body.monthly_chars)):
-        if value < 0 or value > tb.MAX_BUDGET_CHARS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{name} must be between 0 and {tb.MAX_BUDGET_CHARS:,}.",
-            )
-    if body.daily_chars > body.monthly_chars:
-        raise HTTPException(
-            status_code=400,
-            detail="The daily budget cannot be larger than the monthly budget.",
-        )
-    old_daily, old_monthly = await tb.get_limits()
-    await _persist_secret(db, tb.DAILY_KEY, str(body.daily_chars))
-    await _persist_secret(db, tb.MONTHLY_KEY, str(body.monthly_chars))
-    tb.forget_cached_limits()
-    from app.services.admin_audit import record_admin_action
-    await record_admin_action(
-        db, event_type="translation_budget_updated", actor=admin,
-        details={
-            "daily_chars": {"from": old_daily, "to": body.daily_chars},
-            "monthly_chars": {"from": old_monthly, "to": body.monthly_chars},
-        },
-    )
-    return await tb.usage()
 
 
 # ============ On-server redaction detectors ============
@@ -5711,8 +5666,8 @@ async def execute_runbook(
 
     if action == "restart-all" or action.startswith("restart-"):
         raise HTTPException(status_code=410, detail=(
-            "Restarts are now requests the host updater runs for this instance only. "
-            "Use Restart in System Health (POST /api/system/upgrade-requests with action=restart)."
+            "Restarts are requested from System Health → Restart, and the host updater runs "
+            "them for this instance only. (API: POST /api/system/upgrade-requests with action=restart.)"
         ))
 
     try:

@@ -33,8 +33,10 @@ import math
 import os
 import re
 import secrets
+import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
@@ -45,16 +47,49 @@ logger = logging.getLogger(__name__)
 # Limits
 # ---------------------------------------------------------------------------
 #
-# 100 MB / 200,000 features covers a county-sized parcel layer (a large New
-# Jersey county is ~150k parcels; a single township is 5-30k) while bounding
-# what one admin upload can cost: the parse is streamed, so memory is one
-# insert batch, and the insert is ~200 batches inside one transaction.
-MAX_UPLOAD_BYTES = 100 * 1024 * 1024
-MAX_FEATURES = 200_000
-# Each chunk is one request and must clear the 13 MB body ceiling (Caddyfile
-# `request_body` and app.core.body_limit) with room to spare.
+# 500 MB / 500,000 features covers a county-sized parcel layer with its
+# attribute table (a large New Jersey county is ~150k parcels and a statewide
+# export of one county can run to several hundred MB of GeoJSON; a single
+# township is 5-30k) while bounding what one admin upload can cost: the parse
+# is streamed, so memory is one insert batch whatever the file size, and the
+# insert is batched inside one transaction. Features outside the township are
+# dropped before the feature cap is applied (see Clip), so a county file whose
+# in-town part fits is accepted.
+MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+MAX_FEATURES = 500_000
+# Features read from one file or one ArcGIS layer, before the township clip.
+# Only a sanity ceiling: the byte limit bounds a file first, and an ArcGIS
+# download is already limited to the township's envelope.
+MAX_SCAN_FEATURES = 2_000_000
+# Point layers are stored INLINE (map_layers.geojson) and shipped whole to
+# every resident's map, so they have their own, much smaller cap. 50,000
+# points is a whole town's street trees, hydrants or streetlights; at a typical
+# 200-500 bytes per point with a few attributes that is 10-25 MB, which is
+# already the most a phone on a cellular connection should be asked to load
+# for one overlay. Past either limit the answer is to split the layer, or to
+# use a polygon (table-backed) layer, whose features are served per viewport.
+MAX_INLINE_FEATURES = 50_000
+MAX_INLINE_BYTES = 25 * 1024 * 1024
+# The upload staging directory must have this many times the declared size
+# free (minus what unfinished uploads have already claimed) before an upload
+# starts: the file itself, plus room for the database to grow as it imports.
+DISK_HEADROOM_FACTOR = 2
+# Features within this distance of the township boundary are kept, so parcels
+# and roads on the border are not lost to a boundary drawn a few metres off.
+CLIP_BUFFER_M = 100
+# A polygon is the town's when at least this share of its area is inside the
+# boundary itself (not the buffer), or when this much of it is: a parcel that
+# merely shares the town line, or sits in the 100 m margin, belongs to the
+# neighbour; a county flood or zoning area that covers part of the town is
+# kept, trimmed to the town and its margin.
+CLIP_MIN_SHARE = 0.5
+CLIP_MIN_INSIDE_M2 = 20_000
 UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 UPLOAD_TTL_SECONDS = 6 * 3600
+# An upload nobody has added to for this long is abandoned. An active one
+# writes a part every few seconds; at 500 MB an abandoned file is worth
+# removing well before the TTL.
+UPLOAD_IDLE_SECONDS = 3600
 INSERT_BATCH = 1000
 MAX_AVAILABLE_PROPERTIES = 300
 # A point on a shared parcel line is covered by both parcels, and layers can
@@ -83,6 +118,10 @@ class LayerUploadError(ValueError):
     """An upload the admin can fix. The message is shown to them as-is."""
 
 
+class UploadNoSpace(LayerUploadError):
+    """The server has no room for the upload right now (HTTP 507)."""
+
+
 # ---------------------------------------------------------------------------
 # Chunked upload staging
 # ---------------------------------------------------------------------------
@@ -103,31 +142,83 @@ def _paths(upload_id: str) -> Tuple[Path, Path]:
     return root / f"{upload_id}.geojson", root / f"{upload_id}.json"
 
 
+def _staged_uploads(root: Path) -> Dict[str, List[Path]]:
+    """{upload_id: [its files]} for everything in the staging directory."""
+    groups: Dict[str, List[Path]] = {}
+    for path in root.iterdir():
+        groups.setdefault(path.stem, []).append(path)
+    return groups
+
+
 def prune_stale_uploads(now: Optional[float] = None) -> int:
-    """Delete staged uploads nobody finished. Never raises."""
+    """Delete staged uploads nobody finished. Never raises.
+
+    An upload is abandoned once neither of its files has been written for
+    UPLOAD_IDLE_SECONDS (an active upload writes a part every few seconds),
+    and both files go together, so a half-pair never lingers. Returns the
+    number of files removed.
+    """
     now = now or time.time()
     removed = 0
     try:
-        for path in _upload_root().iterdir():
+        for paths in _staged_uploads(_upload_root()).values():
             try:
-                if now - path.stat().st_mtime > UPLOAD_TTL_SECONDS:
+                newest = max(p.stat().st_mtime for p in paths)
+            except (OSError, ValueError):
+                continue
+            if now - newest <= min(UPLOAD_IDLE_SECONDS, UPLOAD_TTL_SECONDS):
+                continue
+            for path in paths:
+                try:
                     path.unlink()
                     removed += 1
-            except OSError:
-                continue
+                except OSError:
+                    continue
     except OSError:
         pass
     return removed
 
 
+def _reserved_bytes(root: Path) -> int:
+    """Bytes unfinished uploads have declared but not yet written."""
+    reserved = 0
+    for path in root.glob("*.json"):
+        try:
+            meta = json.loads(path.read_text())
+            reserved += max(0, int(meta.get("size", 0)) - int(meta.get("received", 0)))
+        except (OSError, ValueError, TypeError):
+            continue
+    return reserved
+
+
+def _free_bytes(root: Path) -> int:
+    return shutil.disk_usage(root).free
+
+
+def check_disk_space(size_bytes: int) -> None:
+    """Refuse an upload the staging disk cannot hold twice over (UploadNoSpace)."""
+    root = _upload_root()
+    try:
+        available = _free_bytes(root) - _reserved_bytes(root)
+    except OSError:
+        return  # cannot tell; the write itself will fail loudly if it must
+    needed = size_bytes * DISK_HEADROOM_FACTOR
+    if available < needed:
+        raise UploadNoSpace(
+            f"The server does not have room for a {size_bytes / 1048576:.0f} MB file right now "
+            f"(it needs {needed / 1048576:.0f} MB free and has {max(available, 0) / 1048576:.0f} MB). "
+            "Try again later, or ask whoever runs the server to free some disk space.")
+
+
 def start_upload(size_bytes: int, user_id: Optional[int]) -> Dict[str, Any]:
-    if not isinstance(size_bytes, int) or size_bytes <= 0:
+    if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes <= 0:
         raise LayerUploadError("The file is empty.")
     if size_bytes > MAX_UPLOAD_BYTES:
         raise LayerUploadError(
             f"The file is {size_bytes / 1048576:.0f} MB; the limit is {MAX_UPLOAD_BYTES // 1048576} MB. "
             "Split the layer, or drop columns you do not need before exporting.")
     prune_stale_uploads()
+    check_disk_space(size_bytes)
     upload_id = secrets.token_hex(16)
     data, meta = _paths(upload_id)
     data.write_bytes(b"")
@@ -502,6 +593,162 @@ def portal_visibility_problems(layer) -> Tuple[List[str], List[str]]:
 
 
 # ---------------------------------------------------------------------------
+# The township clip
+# ---------------------------------------------------------------------------
+#
+# A town that uploads the county's parcel file wants the town's parcels.
+# Points keep those within CLIP_BUFFER_M of the township boundary
+# (SystemSettings.township_boundary, the outline the maps draw). Polygons are
+# judged against the boundary itself: kept when mostly inside it (or with a
+# large piece inside), then trimmed to the buffered outline. Intersecting the
+# buffer was the rule for polygons too, and it kept the whole ring of
+# neighbouring parcels along the town line, and county-wide zones at full
+# size, far outside the town. The buffered outline is built once per import,
+# in PostGIS (geography buffer, so the margin is metres everywhere), and kept
+# as EWKB: each later statement decodes it as a constant, which lets PostGIS
+# prepare it once per statement. A cheap bounding-box test in Python drops
+# most out-of-town features before they reach the database at all.
+
+_CLIP_GEOM = "ST_GeomFromEWKB(decode(CAST(:clip AS text), 'hex'))"
+_INNER_GEOM = "ST_GeomFromEWKB(decode(CAST(:inner AS text), 'hex'))"
+_CLIP_BUILD_SQL = (
+    "SELECT encode(ST_AsEWKB(g), 'hex') AS clip, encode(ST_AsEWKB(i), 'hex') AS inner, "
+    "ST_XMin(g) AS w, ST_YMin(g) AS s, ST_XMax(g) AS e, ST_YMax(g) AS n "
+    "FROM (SELECT i, ST_Buffer(CAST(i AS geography), CAST(:m AS float8))::geometry AS g "
+    "FROM (SELECT ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(:b), 4326)), 3) AS i) b) q"
+)
+
+
+@dataclass
+class Clip:
+    """The township outline an import is clipped to, or why there is none.
+
+    `reason` when not applied: "no_boundary" (none set in Setup),
+    "unreadable" (set, but PostGIS could not make an outline of it), or
+    "no_postgis" (a development database without spatial support).
+    """
+    applied: bool
+    reason: Optional[str] = None
+    area_name: Optional[str] = None
+    ewkb_hex: Optional[str] = None
+    bbox: Optional[Tuple[float, float, float, float]] = None
+    # The boundary itself, unbuffered: what a polygon's share is measured against.
+    inner_hex: Optional[str] = None
+
+    @property
+    def area(self) -> str:
+        return self.area_name or "your township boundary"
+
+    def message(self, kept: int, total: int) -> str:
+        if self.applied:
+            where = f"inside {self.area_name}" if self.area_name else "within your township boundary"
+            return f"Kept {kept:,} of {total:,} features {where}."
+        if self.reason == "no_boundary":
+            return (f"No township boundary is set, so all {total:,} features were imported. "
+                    "Set one in Setup to limit layers to the township.")
+        return f"The township boundary could not be used, so all {total:,} features were imported."
+
+    def summary(self, kept: int, total: int) -> Dict[str, Any]:
+        return {"applied": self.applied, "reason": self.reason, "area": self.area_name,
+                "kept": kept, "total": total, "outside": total - kept if self.applied else 0}
+
+
+def _boundary_multipolygon(boundary: Any) -> Optional[Dict[str, Any]]:
+    """Every polygon of the stored boundary as one MultiPolygon, or None."""
+    from app.services.boundary_geo import extract_boundary_geometry
+
+    geom = extract_boundary_geometry(boundary) if isinstance(boundary, dict) else None
+    polygons: List[Any] = []
+
+    def collect(g: Any) -> None:
+        if not isinstance(g, dict):
+            return
+        if g.get("type") == "Polygon" and g.get("coordinates"):
+            polygons.append(g["coordinates"])
+        elif g.get("type") == "MultiPolygon":
+            polygons.extend(p for p in (g.get("coordinates") or []) if p)
+        elif g.get("type") == "GeometryCollection":
+            for part in g.get("geometries") or []:
+                collect(part)
+
+    collect(geom)
+    return {"type": "MultiPolygon", "coordinates": polygons} if polygons else None
+
+
+def _area_name(row) -> Optional[str]:
+    name = (getattr(row, "township_name", None) or "").strip()
+    # The column's default is a placeholder, not a place.
+    return name if name and name.lower() != "your township" else None
+
+
+async def load_clip(db) -> Clip:
+    """The township outline to clip imports to. Never raises."""
+    from sqlalchemy import select, text
+    from app.models import SystemSettings
+
+    try:
+        row = (await db.execute(
+            select(SystemSettings).order_by(SystemSettings.id).limit(1))).scalar_one_or_none()
+    except Exception:
+        logger.warning("[GIS] could not read the township boundary", exc_info=True)
+        return Clip(applied=False, reason="unreadable")
+    shape = _boundary_multipolygon(getattr(row, "township_boundary", None) if row else None)
+    name = _area_name(row) if row else None
+    if shape is None:
+        return Clip(applied=False, reason="no_boundary", area_name=name)
+    if not is_postgres(db):
+        return Clip(applied=False, reason="no_postgis", area_name=name)
+    try:
+        async with db.begin_nested():
+            r = (await db.execute(text(_CLIP_BUILD_SQL), {
+                "b": json.dumps(shape), "m": float(CLIP_BUFFER_M)})).mappings().one()
+    except Exception:
+        logger.warning("[GIS] the township boundary could not be buffered", exc_info=True)
+        return Clip(applied=False, reason="unreadable", area_name=name)
+    if not r["clip"] or r["w"] is None:
+        return Clip(applied=False, reason="unreadable", area_name=name)
+    return Clip(applied=True, area_name=name, ewkb_hex=r["clip"], inner_hex=r["inner"],
+                bbox=(float(r["w"]), float(r["s"]), float(r["e"]), float(r["n"])))
+
+
+def geometry_bbox(coords: Any) -> Optional[Tuple[float, float, float, float]]:
+    """(minx, miny, maxx, maxy) of a GeoJSON coordinates array, iteratively."""
+    minx = miny = math.inf
+    maxx = maxy = -math.inf
+    stack = [coords]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, list) or not node:
+            continue
+        if isinstance(node[0], (int, float)) and not isinstance(node[0], bool):
+            if len(node) >= 2 and isinstance(node[1], (int, float)):
+                x, y = node[0], node[1]
+                minx, maxx = min(minx, x), max(maxx, x)
+                miny, maxy = min(miny, y), max(maxy, y)
+            continue
+        stack.extend(node)
+    if minx is math.inf:
+        return None
+    return minx, miny, maxx, maxy
+
+
+def _overlaps(a: Optional[Tuple[float, float, float, float]], b: Tuple[float, float, float, float]) -> bool:
+    if a is None:
+        return True  # let the exact test decide
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+async def _aiter(features: Any):
+    """Iterate a plain or an async iterable alike."""
+    if hasattr(features, "__aiter__"):
+        async for f in features:
+            yield f
+    else:
+        for f in features:
+            yield f
+
+
+# ---------------------------------------------------------------------------
 # Import
 # ---------------------------------------------------------------------------
 
@@ -519,6 +766,24 @@ _KEY_SQL = (
     "NULLIF(left(btrim(properties ->> CAST(:prop AS text)), 200), ''), "
     "'g:' || left(md5(ST_AsBinary(geom)), 16)) WHERE layer_id = :layer_id"
 )
+_EMPTY_SQL = "DELETE FROM map_layer_features WHERE layer_id = :l AND ST_IsEmpty(geom)"
+_OUTSIDE_SQL = f"DELETE FROM map_layer_features WHERE layer_id = :l AND NOT ST_Intersects(geom, {_CLIP_GEOM})"
+# Polygons not wholly inside the boundary: measured, and dropped unless enough
+# of them is in town. ST_CoveredBy first, so the town's own parcels (nearly
+# all of them) never pay for an intersection.
+_NOT_TOWNS_SQL = (
+    f"WITH c AS (SELECT {_INNER_GEOM} AS g), "
+    "x AS (SELECT f.id, ST_Area(CAST(f.geom AS geography)) AS a, "
+    "ST_Area(CAST(ST_Intersection(f.geom, c.g) AS geography)) AS ai "
+    "FROM map_layer_features f, c WHERE f.layer_id = :l AND NOT ST_CoveredBy(f.geom, c.g)) "
+    "DELETE FROM map_layer_features WHERE id IN ("
+    "SELECT id FROM x WHERE ai < CAST(:share AS float8) * a AND ai < CAST(:min_m2 AS float8))"
+)
+# What is kept but reaches past the town's margin is trimmed to it.
+_TRIM_SQL = (
+    f"UPDATE map_layer_features SET geom = ST_Multi(ST_CollectionExtract(ST_Intersection(geom, {_CLIP_GEOM}), 3)) "
+    f"WHERE layer_id = :l AND NOT ST_CoveredBy(geom, {_CLIP_GEOM})"
+)
 
 
 async def assign_feature_keys(db, layer) -> None:
@@ -526,46 +791,106 @@ async def assign_feature_keys(db, layer) -> None:
     await db.execute(text(_KEY_SQL), {"prop": layer.feature_id_property, "layer_id": layer.id})
 
 
-async def import_features(db, layer, features: Iterable[Any]) -> Dict[str, Any]:
+async def _prune_rows(db, layer, clip: Optional[Clip]) -> Tuple[int, int]:
+    """(empty, outside) rows deleted from the layer: repaired-to-nothing, then out of town."""
+    from sqlalchemy import text
+
+    empty = (await db.execute(text(_EMPTY_SQL), {"l": layer.id})).rowcount or 0
+    outside = 0
+    if clip is not None and clip.applied:
+        outside = (await db.execute(text(_OUTSIDE_SQL), {"l": layer.id, "clip": clip.ewkb_hex})).rowcount or 0
+        if clip.inner_hex:
+            outside += (await db.execute(text(_NOT_TOWNS_SQL), {
+                "l": layer.id, "inner": clip.inner_hex,
+                "share": CLIP_MIN_SHARE, "min_m2": CLIP_MIN_INSIDE_M2})).rowcount or 0
+            await db.execute(text(_TRIM_SQL), {"l": layer.id, "clip": clip.ewkb_hex})
+            outside += (await db.execute(text(_EMPTY_SQL), {"l": layer.id})).rowcount or 0
+    return empty, outside
+
+
+def _too_many(limit: int, clip: Optional[Clip]) -> LayerUploadError:
+    where = f" inside {clip.area}" if clip is not None and clip.applied else ""
+    return LayerUploadError(
+        f"The layer has more than {limit:,} features{where}, the limit for one layer. "
+        "Split it into several layers.")
+
+
+async def import_features(db, layer, features: Any, *, clip: Optional[Clip] = None,
+                          progress=None) -> Dict[str, Any]:
     """Replace a layer's features with `features`. The caller commits.
 
     One transaction: the old features are deleted and the new ones inserted
     under it, so a failed or rejected upload leaves the layer exactly as it
     was, and reports filed during the import match the old parcels.
+
+    `features` may be a plain or an async iterable (an ArcGIS download). With
+    an applied `clip`, features outside the buffered township are dropped --
+    most by a bounding-box test before they are inserted, the rest by one
+    DELETE against the exact outline -- and MAX_FEATURES counts what is kept.
+    `progress(read)` is called after each insert batch.
     """
     from sqlalchemy import text
 
+    clipping = clip is not None and clip.applied
     await db.execute(text("DELETE FROM map_layer_features WHERE layer_id = :l"), {"l": layer.id})
     fields: Dict[str, None] = {}
     batch: List[Dict[str, Any]] = []
-    count = 0
-    for feature in features:
-        count += 1
-        if count > MAX_FEATURES:
+    total = inserted = outside_box = 0
+    removed_empty = removed_outside = 0
+
+    async def flush() -> None:
+        nonlocal batch, removed_empty, removed_outside
+        if batch:
+            await db.execute(text(_INSERT_SQL), batch)
+            batch = []
+        if progress is not None:
+            progress(total)
+        if clipping and inserted - removed_empty - removed_outside > MAX_FEATURES:
+            # Over the cap counting everything in the envelope: apply the
+            # exact outline now, and only refuse if it is still over.
+            empty, outside = await _prune_rows(db, layer, clip)
+            removed_empty += empty
+            removed_outside += outside
+            if inserted - removed_empty - removed_outside > MAX_FEATURES:
+                raise _too_many(MAX_FEATURES, clip)
+
+    async for feature in _aiter(features):
+        total += 1
+        if total > MAX_SCAN_FEATURES:
             raise LayerUploadError(
-                f"The file has more than {MAX_FEATURES:,} features, the limit for one layer. "
-                "Split it into several layers.")
-        geometry, props = feature_parts(feature, count)
+                f"The layer has more than {MAX_SCAN_FEATURES:,} features. Split it into several layers.")
+        geometry, props = feature_parts(feature, total)
+        if clipping and not _overlaps(geometry_bbox(feature["geometry"]["coordinates"]), clip.bbox):
+            outside_box += 1
+            continue
+        inserted += 1
+        if not clipping and inserted > MAX_FEATURES:
+            raise _too_many(MAX_FEATURES, clip)
         if len(fields) < MAX_AVAILABLE_PROPERTIES:
             for key in props:
                 if key not in fields and len(fields) < MAX_AVAILABLE_PROPERTIES:
                     fields[key] = None
         batch.append({"layer_id": layer.id, "props": json.dumps(props), "g": geometry})
         if len(batch) >= INSERT_BATCH:
-            await db.execute(text(_INSERT_SQL), batch)
-            batch = []
-    if batch:
-        await db.execute(text(_INSERT_SQL), batch)
-    if count == 0:
+            await flush()
+    await flush()
+    if total == 0:
         raise LayerUploadError("The file has no features.")
 
     # A self-intersecting sliver can repair to nothing at all. Kept out rather
     # than refusing a 30,000-parcel file over one, and reported back.
-    skipped = (await db.execute(
-        text("DELETE FROM map_layer_features WHERE layer_id = :l AND ST_IsEmpty(geom)"),
-        {"l": layer.id})).rowcount or 0
-    kept = count - skipped
+    empty, outside = await _prune_rows(db, layer, clip)
+    removed_empty += empty
+    removed_outside += outside
+    skipped = removed_empty
+    kept = inserted - removed_empty - removed_outside
+    if kept > MAX_FEATURES:
+        raise _too_many(MAX_FEATURES, clip)
     if kept <= 0:
+        if clipping and (outside_box or removed_outside):
+            raise LayerUploadError(
+                f"None of the {total:,} features is inside {clip.area}. Check that this is the right "
+                "layer, and that the township boundary in Setup is right.")
         raise LayerUploadError("None of the features has any area once repaired.")
 
     available = list(fields)
@@ -573,6 +898,7 @@ async def import_features(db, layer, features: Iterable[Any]) -> Dict[str, Any]:
         layer.feature_id_property = guess_id_property(available)
     await assign_feature_keys(db, layer)
 
+    clip = clip or Clip(applied=False, reason="no_boundary")
     layer.available_properties = available
     layer.staff_properties = [p for p in (layer.staff_properties or []) if p in available]
     if layer.label_property and layer.label_property not in available:
@@ -582,8 +908,134 @@ async def import_features(db, layer, features: Iterable[Any]) -> Dict[str, Any]:
     layer.feature_storage = TABLE
     layer.layer_type = "polygon"
     layer.geojson = dict(EMPTY_FEATURE_COLLECTION)
+    considered = total - skipped
     return {"feature_count": kept, "skipped": skipped, "properties": available,
-            "feature_id_property": layer.feature_id_property}
+            "feature_id_property": layer.feature_id_property, "total": total,
+            "outside": outside_box + removed_outside,
+            "clip": clip.summary(kept, considered), "clip_message": clip.message(kept, considered)}
+
+
+# ---------------------------------------------------------------------------
+# Inline point layers
+# ---------------------------------------------------------------------------
+
+POINT_BATCH = 2000
+_POINTS_INSIDE_SQL = (
+    "SELECT t.i FROM unnest(CAST(:gs AS text[])) WITH ORDINALITY AS t(g, i) "
+    f"WHERE ST_Intersects(ST_SetSRID(ST_GeomFromGeoJSON(t.g), 4326), {_CLIP_GEOM})"
+)
+
+
+def point_parts(feature: Any, n: int) -> Dict[str, Any]:
+    """One point feature, checked and cleaned, or LayerUploadError."""
+    if not isinstance(feature, dict) or feature.get("type") != "Feature":
+        raise LayerUploadError(f"Item {n} in `features` is not a GeoJSON Feature.")
+    geom = feature.get("geometry")
+    if not isinstance(geom, dict):
+        raise LayerUploadError(f"Feature {n} has no geometry.")
+    kind = geom.get("type")
+    if kind not in ("Point", "MultiPoint"):
+        raise LayerUploadError(
+            f"Feature {n} is a {kind!s:.30}. Point layers take Point and MultiPoint features only; "
+            "add areas as a polygon layer.")
+    coords = geom.get("coordinates")
+    _check_positions(coords, 0 if kind == "Point" else 1, n)
+    props = feature.get("properties")
+    if props is None:
+        props = {}
+    if not isinstance(props, dict):
+        raise LayerUploadError(f"Feature {n} has properties that are not an object.")
+    return {"type": "Feature", "geometry": {"type": kind, "coordinates": coords}, "properties": _clean(props)}
+
+
+def _too_many_points(clip: Optional[Clip], *, by_size: bool = False) -> LayerUploadError:
+    where = f" inside {clip.area}" if clip is not None and clip.applied else ""
+    what = (f"more than {MAX_INLINE_BYTES // 1048576} MB of points" if by_size
+            else f"more than {MAX_INLINE_FEATURES:,} points")
+    return LayerUploadError(
+        f"The layer has {what}{where}. A point layer is sent whole to every resident's map, so it "
+        f"is limited to {MAX_INLINE_FEATURES:,} points and {MAX_INLINE_BYTES // 1048576} MB. Split it "
+        "into several layers (by area or by type), or add it as a polygon layer if the features are areas.")
+
+
+def check_inline_size(geojson: Any) -> None:
+    """The inline cap for a layer saved whole (a point or hand-drawn layer)."""
+    if not isinstance(geojson, dict):
+        return
+    features = geojson.get("features") if geojson.get("type") == "FeatureCollection" else None
+    if isinstance(features, list) and len(features) > MAX_INLINE_FEATURES:
+        raise _too_many_points(None)
+    if len(json.dumps(geojson, separators=(",", ":"))) > MAX_INLINE_BYTES:
+        raise _too_many_points(None, by_size=True)
+
+
+async def build_inline_points(db, features: Any, *, clip: Optional[Clip] = None,
+                              progress=None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    """(FeatureCollection, summary) for an inline point layer.
+
+    Clipped to the township first -- a bounding-box test, then one PostGIS
+    query per batch against the buffered outline -- and capped after, by
+    MAX_INLINE_FEATURES and MAX_INLINE_BYTES, so a county file whose in-town
+    part fits is accepted.
+    """
+    from sqlalchemy import text
+
+    clipping = clip is not None and clip.applied
+    kept: List[Dict[str, Any]] = []
+    size = 0
+    total = outside = 0
+    fields: Dict[str, None] = {}
+    pending: List[Dict[str, Any]] = []
+
+    async def settle() -> None:
+        nonlocal pending, size, outside
+        chosen = pending
+        if clipping and pending:
+            rows = (await db.execute(text(_POINTS_INSIDE_SQL), {
+                "gs": [json.dumps(f["geometry"]) for f in pending], "clip": clip.ewkb_hex,
+            })).scalars().all()
+            inside = {int(i) for i in rows}
+            chosen = [f for i, f in enumerate(pending, start=1) if i in inside]
+            outside += len(pending) - len(chosen)
+        pending = []
+        for f in chosen:
+            size += len(json.dumps(f, separators=(",", ":"))) + 1
+            kept.append(f)
+            if len(fields) < MAX_AVAILABLE_PROPERTIES:
+                for key in f["properties"]:
+                    if len(fields) < MAX_AVAILABLE_PROPERTIES:
+                        fields.setdefault(key, None)
+        if len(kept) > MAX_INLINE_FEATURES:
+            raise _too_many_points(clip)
+        if size > MAX_INLINE_BYTES:
+            raise _too_many_points(clip, by_size=True)
+        if progress is not None:
+            progress(total)
+
+    async for feature in _aiter(features):
+        total += 1
+        if total > MAX_SCAN_FEATURES:
+            raise LayerUploadError(
+                f"The layer has more than {MAX_SCAN_FEATURES:,} features. Split it into several layers.")
+        f = point_parts(feature, total)
+        if clipping and not _overlaps(geometry_bbox(f["geometry"]["coordinates"]), clip.bbox):
+            outside += 1
+            continue
+        pending.append(f)
+        if len(pending) >= POINT_BATCH:
+            await settle()
+    await settle()
+    if total == 0:
+        raise LayerUploadError("The file has no features.")
+    if not kept:
+        raise LayerUploadError(
+            f"None of the {total:,} points is inside {clip.area}. Check that this is the right "
+            "layer, and that the township boundary in Setup is right.")
+    clip = clip or Clip(applied=False, reason="no_boundary")
+    geojson = {"type": "FeatureCollection", "features": kept}
+    return geojson, {"feature_count": len(kept), "skipped": 0, "properties": list(fields),
+                     "feature_id_property": None, "total": total, "outside": outside,
+                     "clip": clip.summary(len(kept), total), "clip_message": clip.message(len(kept), total)}
 
 
 # ---------------------------------------------------------------------------

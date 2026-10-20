@@ -59,7 +59,7 @@ const B = ({ children }: { children: React.ReactNode }) => (
  *  loses everything typed into the boxes below. */
 const L = ({ href, children }: { href: string; children: React.ReactNode }) => (
     <a href={href} target="_blank" rel="noopener noreferrer"
-        className="text-primary-300 underline underline-offset-2">{children}</a>
+        className="inline-link text-primary-300 underline underline-offset-2 break-words">{children}</a>
 );
 
 /**
@@ -100,16 +100,15 @@ const TemplateSourceNote = ({ from }: { from: TemplateBase }) => (
  */
 const WHY_A_TEMPLATE_IS_SAFE = (
     <>
-        It runs in <em>your</em> account, and the form you see is drawn by your cloud from a file you
-        can read first. Nothing in it reaches us at deploy time — no script, no callback, no
-        telemetry — and it emits no key or password as an output, because deployment history is
-        readable by more people than the person deploying. Every permission it grants is scoped to
-        the resources it just created.
+        It runs in <em>your</em> account, and your cloud builds the form from a file you can read
+        first. Nothing is sent to Pinpoint 311 while it runs. It never lists a key or password in
+        its outputs, because more people can see those than the person deploying. Every permission
+        it grants covers only the resources it creates.
     </>
 );
 
 const C = ({ children }: { children: React.ReactNode }) => (
-    <code className="bg-black/30 px-1 rounded text-[11px] text-primary-200">{children}</code>
+    <code className="bg-black/30 px-1 rounded text-[11px] text-primary-200 break-all">{children}</code>
 );
 
 // ===========================================================================
@@ -1033,17 +1032,18 @@ defineSteps('sms', 'http', () => [
     {
         body: (
             <>
-                For a gateway not listed here — a regional carrier, a state contract, an existing
-                notification system. Pinpoint POSTs JSON with the number and the message, and treats
-                any 2xx as delivered.
+                For a gateway not listed here, such as a regional carrier, a state contract or an
+                existing notification system. Pinpoint sends each text to the gateway's web address
+                (an HTTP POST with the number and message as JSON) and counts any success response
+                (2xx) as delivered.
             </>
         ),
     },
     {
         body: (
             <>
-                Enter the endpoint URL your provider gave you, and the key they issued. The key is sent
-                as a bearer token. Add a sender number only if your gateway requires one.
+                Enter the web address your provider gave you, and the key they issued. Pinpoint sends
+                the key as a bearer token. Add a sender number only if your gateway requires one.
             </>
         ),
         fields: ['SMS_HTTP_API_URL', 'SMS_HTTP_API_KEY', 'SMS_FROM_NUMBER'],

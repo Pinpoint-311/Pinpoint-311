@@ -202,7 +202,7 @@ export default function SetupWizard(props: SetupWizardProps) {
     };
 
     return (
-        <div className="grid lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,15rem)_minmax(0,1fr)] gap-5">
             {/* ── The list ── */}
             <nav aria-label="Setup tasks" className="lg:sticky lg:top-4 self-start">
                 <p className="text-[11px] uppercase tracking-wider text-white/40 font-semibold mb-2.5 px-1">

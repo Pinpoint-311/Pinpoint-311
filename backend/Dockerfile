@@ -42,7 +42,12 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt requirements-onnx.txt ./
-RUN pip install --no-cache-dir -r requirements.txt \
+# setuptools 80.10.2 replaces the base image's 79.x, whose vendored
+# jaraco.context 5.3.0 and wheel 0.45.1 carry HIGH advisories; 80.10.2 is the
+# first release vendoring the fixed versions (6.1.0, 0.46.3). Nothing here
+# builds from sdists at runtime, but the scanners read the vendored copies.
+RUN pip install --no-cache-dir setuptools==80.10.2 \
+ && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir --no-deps -r requirements-onnx.txt
 
 COPY . .
@@ -85,4 +90,6 @@ EXPOSE 8000
 # app/db/migrate.py for why that is better than starting and 500ing later.
 RUN chmod +x /app/scripts/entrypoint.sh
 ENTRYPOINT ["/app/scripts/entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-server-header: uvicorn otherwise names itself on every response. Caddy
+# strips it, but not every deployment puts Caddy in front.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

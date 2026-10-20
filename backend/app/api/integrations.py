@@ -620,8 +620,9 @@ async def trigger_sync(
     # in the one case where something has.
     ran = ", ".join(sorted(k for k, ok in started.items() if ok))
     return {
-        "message": f"Sync partly started ({ran}). The rest could not be queued — "
-                   f"check that the worker and Redis are running, then try again.",
+        "message": f"Sync partly started ({ran}). The rest could not start because "
+                   f"the background job service (worker and Redis) may not be running. "
+                   f"Check it, then try again.",
         "platform": integration.platform,
         "started": started,
     }
@@ -653,9 +654,9 @@ async def trigger_asset_sync(
     if "assets" not in connector.capabilities:
         raise HTTPException(
             status_code=400,
-            detail=("This connection has no asset endpoint configured, so there is "
+            detail=("This connection has no asset inventory address set, so there is "
                     "nothing to sync. Add the asset inventory path from your "
-                    "vendor's API docs and try again."),
+                    "vendor's API documentation and try again."),
         )
     # Deliberately does not touch config. Pressing this button used to set
     # config["sync_assets"] = True, which enrolled the integration in the nightly

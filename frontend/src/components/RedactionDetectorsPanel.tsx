@@ -70,7 +70,7 @@ export default function RedactionDetectorsPanel() {
                 <ScanLine className="w-3.5 h-3.5 text-primary-300/80" aria-hidden="true" />
                 On-server detectors
             </h4>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="space-y-1.5">
                     <div className="flex items-center justify-between gap-2">
                         <label htmlFor="plate-detector" className="text-white/80 text-xs font-medium">License plate detector</label>

@@ -16,8 +16,10 @@ Cache hits never reach here -- they cost nothing, so they count for nothing.
 
 Where the numbers live
 ----------------------
-* Budgets: the existing settings-in-secrets mechanism (TRANSLATION_BUDGET_*),
-  the same place TRANSLATION_PROVIDER is chosen. No migration.
+* Budgets: fixed, built in. There is no setting: spend limits a town wants to
+  tune belong in its provider's console (Google Cloud quotas and budget
+  alerts, Azure's pricing tier), where its billing is. This is the safety net
+  under that, sized so ordinary use never meets it.
 * Counters: Redis, `INCRBY` with an expiry, keyed by the UTC day and month.
   Redis is shared by the API and the Celery worker, so a worker translating a
   notification and a resident loading a page draw from the same budget.
@@ -47,9 +49,6 @@ from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-DAILY_KEY = "TRANSLATION_BUDGET_DAILY_CHARS"
-MONTHLY_KEY = "TRANSLATION_BUDGET_MONTHLY_CHARS"
-
 # Sized for a small town, and deliberately generous on the day relative to the
 # month so a town adding a language is not stopped halfway through its first
 # page load.
@@ -64,16 +63,13 @@ MONTHLY_KEY = "TRANSLATION_BUDGET_MONTHLY_CHARS"
 #   tripping the cap.
 # * 5M/month is ~$90 at Google's list price ($20 per million after the 500k
 #   free tier) and ~$30 on Azure's S1 -- a number a town finance office would
-#   rather be asked about than surprised by. Above that, an admin raises it on
-#   the translation card.
+#   rather be asked about than surprised by. A town that needs more sets its
+#   own limits with its provider, and this one never comes into it.
 #
 # The demo's 17 August 2026 incident (674,448 characters in a day of text the
 # town never held) would have been stopped a little after lunch.
 DEFAULT_DAILY_CHARS = 500_000
 DEFAULT_MONTHLY_CHARS = 5_000_000
-
-# Anything larger is a typo, not a budget. 1e9 characters is ~$20,000.
-MAX_BUDGET_CHARS = 1_000_000_000
 
 WARN_PCT = 80
 CRIT_PCT = 100
@@ -82,11 +78,6 @@ _PREFIX = "translation:spend:"
 # Long enough to outlive the period it counts, short enough to clean itself up.
 _DAY_TTL = int(timedelta(days=3).total_seconds())
 _MONTH_TTL = int(timedelta(days=40).total_seconds())
-
-# Budgets are read on every uncached translation; a settings read per call is
-# a database round-trip per resident page. Short enough that a change on the
-# admin card reaches the worker within a minute.
-_LIMITS_TTL_SECONDS = 30.0
 
 
 @dataclass(frozen=True)
@@ -130,51 +121,9 @@ def _resets(now: Optional[datetime] = None) -> Tuple[datetime, datetime]:
 # Limits
 # --------------------------------------------------------------------------- #
 
-_limits_cache: Optional[Tuple[float, int, int]] = None
-
-
-def forget_cached_limits() -> None:
-    """Drop this process's copy of the budgets (call after saving new ones)."""
-    global _limits_cache
-    _limits_cache = None
-
-
-def parse_budget(raw: Any, default: int) -> int:
-    """A stored budget, or the default when it is missing or unreadable.
-
-    Unreadable falls back to the default rather than to "unlimited" or to zero:
-    a typo in a setting must neither remove the ceiling nor switch translation
-    off for every resident.
-    """
-    if raw is None or (isinstance(raw, str) and not raw.strip()):
-        return default
-    try:
-        value = int(str(raw).strip().replace(",", "").replace("_", ""))
-    except (TypeError, ValueError):
-        return default
-    if value < 0 or value > MAX_BUDGET_CHARS:
-        return default
-    return value
-
-
 async def get_limits() -> Tuple[int, int]:
-    """(daily, monthly) character budgets, cached briefly per process."""
-    global _limits_cache
-    now = time.monotonic()
-    if _limits_cache and now - _limits_cache[0] < _LIMITS_TTL_SECONDS:
-        return _limits_cache[1], _limits_cache[2]
-    daily_raw = monthly_raw = None
-    try:
-        from app.services.secret_manager import get_secret
-
-        daily_raw = await get_secret(DAILY_KEY)
-        monthly_raw = await get_secret(MONTHLY_KEY)
-    except Exception:
-        logger.debug("translation budget: could not read stored budgets", exc_info=True)
-    daily = parse_budget(daily_raw, DEFAULT_DAILY_CHARS)
-    monthly = parse_budget(monthly_raw, DEFAULT_MONTHLY_CHARS)
-    _limits_cache = (now, daily, monthly)
-    return daily, monthly
+    """(daily, monthly) character budgets. Async so tests can stand in for it."""
+    return DEFAULT_DAILY_CHARS, DEFAULT_MONTHLY_CHARS
 
 
 # --------------------------------------------------------------------------- #
@@ -428,8 +377,6 @@ async def usage(now: Optional[datetime] = None) -> Dict[str, Any]:
         "month": month,
         "status": worst,
         "counter_store": source,
-        "defaults": {"daily": DEFAULT_DAILY_CHARS, "monthly": DEFAULT_MONTHLY_CHARS},
-        "max_budget": MAX_BUDGET_CHARS,
     }
 
 
@@ -438,4 +385,3 @@ def _reset_for_tests() -> None:
     _memory = _MemoryStore()
     _clients.clear()
     _redis_failed_at = 0.0
-    forget_cached_limits()

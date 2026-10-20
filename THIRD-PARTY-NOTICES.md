@@ -51,8 +51,13 @@ addition, path data is written inline in:
 
 Copyright (c) The Inter Project Authors — https://rsms.me/inter/
 
-Loaded at runtime from Google Fonts; no font files are bundled in this
-repository.
+Bundled from the `@fontsource/inter` npm package: the frontend build copies
+the font files (`inter-*.woff2` / `.woff`) into its assets, so they ship
+inside the frontend image. The OFL permits that provided the license travels
+with the fonts. It does: `@fontsource/inter` is a production dependency, so
+`frontend/scripts/generate-licenses.mjs` copies its LICENSE into the
+`/third-party-licenses.txt` served next to them. The font files are not sold on
+their own and the font is not renamed or modified.
 
 ---
 

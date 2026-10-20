@@ -67,9 +67,8 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "integration_mode": "public_api",
         "docs_url": "https://developers.arcgis.com/rest/services-reference/apply-edits-feature-service-.htm",
         "description": (
-            "Writes each new report into an ArcGIS feature layer with applyEdits — geometry, "
-            "attributes, and resident photos as attachments — and polls the layer's edit date "
-            "for status changes made in ArcGIS. Because Survey123, Field Maps, and Experience "
+            "Adds each new report to an ArcGIS feature layer, with its location, details and "
+            "resident photos, and checks the layer for status changes made in ArcGIS. Because Survey123, Field Maps, and Experience "
             "Builder all read and write the same feature layer, a crew editing a report in the "
             "field updates Pinpoint too. Works with ArcGIS Online and ArcGIS Enterprise."
         ),
@@ -94,8 +93,8 @@ PLATFORM_CATALOG: Dict[str, Dict[str, Any]] = {
         "setup_notes": (
             "Point this at one feature LAYER url (it ends in /FeatureServer/0), not the service "
             "root. The layer needs Create enabled for new reports and Update for status write-back; "
-            "turn on attachments if you want resident photos. Editor tracking (which adds the "
-            "EditDate field) is what makes status polling incremental. If your layer's column names "
+            "turn on attachments if you want resident photos. Turn on editor tracking so "
+            "Pinpoint checks only the records that changed. If your layer's column names "
             "differ from Esri's citizen-request template (reqid, reqcategory, details, status), add "
             "a field_map. Connection check reports the layer name and exactly which of these are on."
         ),

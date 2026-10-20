@@ -1,11 +1,15 @@
 import express from 'express';
 import cors from 'cors';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import crypto from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import cron from 'node-cron';
+import {
+    sanitizeForLog, validateId, sanitizeTownName, TOWN_NAME_MAX,
+    composeInvocation, caddyReloadInvocation, generateDemoSubdomains,
+} from './lib.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -18,15 +22,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 // ====== Security Helpers ======
-function sanitizeForLog(str) {
-    if (typeof str !== 'string') return String(str);
-    return str.replace(/[\r\n\t]/g, ' ').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 200);
-}
-
-function validateId(id) {
-    return typeof id === 'string' && /^[a-z0-9]{4,8}$/.test(id);
-}
-
 function validateConfigValue(value, name) {
     if (typeof value === 'string' && /[;&|`$(){}\n\r]/.test(value)) {
         throw new Error(`Invalid characters in config value: ${name}`);
@@ -85,29 +80,13 @@ function findAvailablePort(registry) {
 }
 
 // ====== Docker Compose Helpers ======
-function projectName(id) { return `p311demo_${id}`; }
-
-function composeCmd(id, port, action) {
-    const backendPort = CONFIG.BACKEND_BASE + (port - CONFIG.BASE_PORT);
-    const frontendPort = CONFIG.FRONTEND_BASE + (port - CONFIG.BASE_PORT);
-    const env = [
-        `DEMO_PORT=${port}`,
-        `DEMO_BACKEND_PORT=${backendPort}`,
-        `DEMO_FRONTEND_PORT=${frontendPort}`,
-        `GOOGLE_CLOUD_PROJECT=${CONFIG.GOOGLE_CLOUD_PROJECT}`,
-        `GOOGLE_VERTEX_PROJECT=${CONFIG.GOOGLE_VERTEX_PROJECT}`,
-        `GOOGLE_VERTEX_LOCATION=${CONFIG.GOOGLE_VERTEX_LOCATION}`,
-    ].join(' ');
-    return `${env} docker compose -p ${projectName(id)} -f ${CONFIG.COMPOSE_FILE} ${action}`;
-}
+// execFile with argv arrays (see lib.js): no shell parses any of these values.
 
 async function spinUp(id, port) {
-    if (!validateId(id)) throw new Error('Invalid instance ID');
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid port');
+    const { file, args, env } = composeInvocation(CONFIG, id, port, ['up', '-d', '--pull', 'missing']);
     return new Promise((resolve, reject) => {
-        const cmd = composeCmd(id, port, 'up -d --pull missing');
         console.log('[%s] Spinning up on port %d...', sanitizeForLog(id), port);
-        exec(cmd, { timeout: 180000 }, (err, stdout, stderr) => {
+        execFile(file, args, { env, timeout: 180000 }, (err, stdout, stderr) => {
             if (err) {
                 console.error('[%s] Failed to start: %s', sanitizeForLog(id), sanitizeForLog(stderr));
                 reject(new Error('Failed to start instance'));
@@ -120,12 +99,10 @@ async function spinUp(id, port) {
 }
 
 async function tearDown(id, port) {
-    if (!validateId(id)) throw new Error('Invalid instance ID');
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid port');
+    const { file, args, env } = composeInvocation(CONFIG, id, port, ['down', '-v', '--remove-orphans']);
     return new Promise((resolve) => {
-        const cmd = composeCmd(id, port, 'down -v --remove-orphans');
         console.log('[%s] Tearing down...', sanitizeForLog(id));
-        exec(cmd, { timeout: 60000 }, (err) => {
+        execFile(file, args, { env, timeout: 60000 }, (err) => {
             if (err) console.error('[%s] Teardown warning: %s', sanitizeForLog(id), sanitizeForLog(err.message));
             else console.log('[%s] Torn down successfully', sanitizeForLog(id));
             resolve();
@@ -210,26 +187,10 @@ async function seedDemoData(port, townName) {
 const CADDY_MARKER_START = '# === DEMO SUBDOMAINS START ===';
 const CADDY_MARKER_END = '# === DEMO SUBDOMAINS END ===';
 
-function generateDemoSubdomains(registry) {
-    const blocks = [];
-    for (const [id, inst] of Object.entries(registry)) {
-        if (inst.status === 'ready' || inst.status === 'booting') {
-            const port = inst.port;
-            const subdomain = `demo-${id}.${CONFIG.BASE_DOMAIN}`;
-            blocks.push(`# Demo: ${id} (${inst.townName})`);
-            blocks.push(`${subdomain} {`);
-            blocks.push(`    reverse_proxy host.docker.internal:${port}`);
-            blocks.push(`}`);
-            blocks.push('');
-        }
-    }
-    return blocks.join('\n');
-}
-
 function updateCaddyfile(registry) {
     try {
         let content = readFileSync(CONFIG.CADDYFILE_PATH, 'utf8');
-        const subdomains = generateDemoSubdomains(registry);
+        const subdomains = generateDemoSubdomains(registry, CONFIG.BASE_DOMAIN);
         const demoBlock = `\n${CADDY_MARKER_START}\n${subdomains}\n${CADDY_MARKER_END}`;
 
         if (content.includes(CADDY_MARKER_START)) {
@@ -245,7 +206,8 @@ function updateCaddyfile(registry) {
         console.log(`[caddy] Updated Caddyfile with ${count} demo subdomain(s)`);
 
         // Reload Caddy
-        exec(`docker exec ${CONFIG.CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile`, { timeout: 15000 }, (err) => {
+        const reload = caddyReloadInvocation(CONFIG);
+        execFile(reload.file, reload.args, { timeout: 15000 }, (err) => {
             if (err) console.error('[caddy] Reload warning:', err.message);
             else console.log('[caddy] Reloaded successfully');
         });
@@ -322,9 +284,9 @@ cron.schedule('*/15 * * * *', () => {
 
 app.post('/api/demo/create', async (req, res) => {
     try {
-        const { townName } = req.body;
-        if (!townName || typeof townName !== 'string' || townName.trim().length < 2) {
-            return res.status(400).json({ error: 'townName is required (min 2 characters)' });
+        const townName = sanitizeTownName(req.body?.townName);
+        if (townName.length < 2) {
+            return res.status(400).json({ error: `townName is required (2-${TOWN_NAME_MAX} letters, digits, spaces or .,'&-)` });
         }
 
         const registry = loadRegistry();
@@ -344,7 +306,7 @@ app.post('/api/demo/create', async (req, res) => {
         registry[id] = {
             created: Date.now(),
             port,
-            townName: townName.trim(),
+            townName,
             status: 'starting',
         };
         saveRegistry(registry);
@@ -363,7 +325,7 @@ app.post('/api/demo/create', async (req, res) => {
 
             const healthy = await waitForHealthy(port);
             if (healthy) {
-                await seedDemoData(port, townName.trim());
+                await seedDemoData(port, townName);
                 registry[id].status = 'ready';
                 // URL goes through the main Caddy proxy — no firewall issues!
                 registry[id].url = `https://demo-${id}.${CONFIG.BASE_DOMAIN}`;

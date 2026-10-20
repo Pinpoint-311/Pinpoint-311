@@ -150,7 +150,6 @@ async def test_a_failed_provider_call_is_refunded(wired):
 async def test_shared_counter_is_seen_by_every_process(store):
     """API and worker draw from the same budget: two callers, one store."""
     assert await tb.reserve(70) is not None          # "api"
-    tb.forget_cached_limits()
     assert await tb.reserve(40) is None              # "worker" sees the 70
     assert await tb.reserve(30) is not None
 
@@ -248,14 +247,11 @@ async def test_each_threshold_is_logged_once_per_period(store, caplog):
     assert sum("exhausted" in m for m in msgs) == 1, msgs
 
 
-def test_unreadable_budget_falls_back_to_default_not_unlimited():
-    assert tb.parse_budget(None, 5) == 5
-    assert tb.parse_budget("", 5) == 5
-    assert tb.parse_budget("lots", 5) == 5
-    assert tb.parse_budget("-1", 5) == 5
-    assert tb.parse_budget("250,000", 5) == 250_000
-    assert tb.parse_budget("0", 5) == 0
-    assert tb.DEFAULT_DAILY_CHARS <= tb.DEFAULT_MONTHLY_CHARS
+async def test_the_limits_are_fixed_and_not_a_setting():
+    tb._reset_for_tests()
+    assert await tb.get_limits() == (tb.DEFAULT_DAILY_CHARS, tb.DEFAULT_MONTHLY_CHARS)
+    import inspect
+    assert "get_secret" not in inspect.getsource(tb)
 
 
 async def test_redis_failure_falls_back_to_memory(monkeypatch):
@@ -421,24 +417,11 @@ def test_every_language_the_frontend_names_is_in_the_catalog():
 
 
 # --------------------------------------------------------------------------- #
-# Admin budget endpoint
+# No admin knob
 # --------------------------------------------------------------------------- #
 
-async def test_budget_update_validates_before_writing():
+def test_there_is_no_budget_endpoint():
+    """Spend limits a town tunes live with its provider; this is only the net."""
     system = pytest.importorskip("app.api.system")
-    from fastapi import HTTPException
-    admin = types.SimpleNamespace(role="admin", username="a", id=1)
-    for daily, monthly in ((-1, 10), (10, tb.MAX_BUDGET_CHARS + 1), (200, 100)):
-        body = system.TranslationBudgetUpdate(daily_chars=daily, monthly_chars=monthly)
-        with pytest.raises(HTTPException) as exc:
-            # db=None: a validation failure must not touch the database.
-            await system.update_translation_budget(body, db=None, admin=admin)
-        assert exc.value.status_code == 400
-
-
-def test_budget_routes_are_admin_only_and_audited():
-    import inspect
-    system = pytest.importorskip("app.api.system")
-    for fn in (system.get_translation_budget, system.update_translation_budget):
-        assert "get_current_admin" in str(inspect.signature(fn)), fn.__name__
-    assert "record_admin_action" in inspect.getsource(system.update_translation_budget)
+    paths = {getattr(r, "path", "") for r in system.router.routes}
+    assert not any(p.endswith("/translate/budget") for p in paths)

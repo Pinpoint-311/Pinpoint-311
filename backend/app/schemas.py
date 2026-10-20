@@ -70,6 +70,9 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     department_ids: Optional[List[int]] = []
+    # Email the new account an invitation to sign in. On by default: an account
+    # nobody is told about is an account nobody uses.
+    send_invite: bool = True
 
 
 class UserUpdate(BaseModel):
@@ -98,9 +101,24 @@ class UserResponse(UserBase):
     departments: List[DepartmentBrief] = []
     notification_preferences: Optional[Dict[str, bool]] = None
     phone: Optional[str] = None
+    invited_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
+
+
+# What happened to the invite email when an account was created or an invite
+# resent. "queue_failed" means the account is saved but the message could not
+# be handed to the worker (broker down); the admin can resend.
+InviteOutcome = Literal["queued", "skipped_email_off", "not_requested", "queue_failed"]
+
+
+class UserCreateResponse(UserResponse):
+    invite: InviteOutcome = "not_requested"
+
+
+class InviteResponse(BaseModel):
+    invite: InviteOutcome
 
 
 class NotificationPreferencesUpdate(BaseModel):
@@ -984,6 +1002,101 @@ class MapLayerFeatureReupload(BaseModel):
     upload_id: str = Field(..., min_length=32, max_length=32)
 
 
+class MapLayerPointCreate(BaseModel):
+    """An inline point layer, built from a chunked upload."""
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    upload_id: str = Field(..., min_length=32, max_length=32)
+    fill_color: str = "#3b82f6"
+    stroke_color: str = "#1d4ed8"
+    fill_opacity: float = 0.3
+    stroke_width: int = 2
+    show_on_resident_portal: bool = True
+    visible_on_map: bool = True
+    routing_mode: Optional[str] = "log"
+    service_codes: Optional[List[str]] = None
+    routing_config: Optional[Dict[str, Any]] = None
+
+    @field_validator("routing_mode")
+    @classmethod
+    def points_do_not_record_context(cls, v):
+        if v not in (None, "none", "log", "block"):
+            raise ValueError("Point layers take routing_mode none, log or block.")
+        return v
+
+
+ARCGIS_SYNC_CHOICES = ("off", "daily", "weekly")
+
+
+class ArcGisInspectRequest(BaseModel):
+    url: str = Field(..., min_length=8, max_length=2048)
+    # Used for this request only; never stored or logged.
+    token: Optional[str] = Field(None, max_length=4096)
+
+
+class ArcGisImportRequest(BaseModel):
+    """A layer imported from an ArcGIS layer URL, with the same settings the
+    upload paths take. `as` is "points" (inline) or "polygons" (table-backed)."""
+    model_config = {"populate_by_name": True}
+
+    url: str = Field(..., min_length=8, max_length=2048)
+    token: Optional[str] = Field(None, max_length=4096)
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    as_: str = Field(..., alias="as")
+    fill_color: Optional[str] = None
+    stroke_color: Optional[str] = None
+    fill_opacity: Optional[float] = None
+    stroke_width: Optional[int] = None
+    show_on_resident_portal: bool = True
+    visible_on_map: bool = True
+    routing_mode: Optional[str] = None
+    service_codes: Optional[List[str]] = None
+    resident_service_codes: Optional[List[str]] = None
+    routing_config: Optional[Dict[str, Any]] = None
+    feature_id_property: Optional[str] = Field(None, max_length=100)
+    source_sync: Optional[str] = None
+
+    @field_validator("as_")
+    @classmethod
+    def known_kind(cls, v):
+        if v not in ("points", "polygons"):
+            raise ValueError("`as` must be points or polygons")
+        return v
+
+    @field_validator("routing_mode")
+    @classmethod
+    def known_routing_mode(cls, v):
+        if v is not None and v not in MAP_LAYER_ROUTING_MODES:
+            raise ValueError(f"routing_mode must be one of {', '.join(MAP_LAYER_ROUTING_MODES)}")
+        return v
+
+    @field_validator("source_sync")
+    @classmethod
+    def known_sync(cls, v):
+        if v is not None and v not in ARCGIS_SYNC_CHOICES:
+            raise ValueError("source_sync must be off, daily or weekly")
+        return v
+
+
+class ArcGisRefreshRequest(BaseModel):
+    token: Optional[str] = Field(None, max_length=4096)
+    # "Apply anyway": a manual refresh never runs the auto-sync guardrails;
+    # this flag only records that the admin overrode a held sync.
+    apply_anyway: bool = False
+
+
+class ArcGisSyncSettings(BaseModel):
+    source_sync: str
+
+    @field_validator("source_sync")
+    @classmethod
+    def known_sync(cls, v):
+        if v not in ARCGIS_SYNC_CHOICES:
+            raise ValueError("source_sync must be off, daily or weekly")
+        return v
+
+
 class MapLayerResponse(MapLayerBase):
     """A layer as the PUBLIC sees it. No context-layer settings, no field
     names; a table-backed layer's geojson is an empty FeatureCollection."""
@@ -1011,6 +1124,13 @@ class MapLayerAdminResponse(MapLayerResponse):
     available_properties: Optional[List[str]] = None
     feature_count: Optional[int] = None
     features_imported_at: Optional[datetime] = None
+    # ArcGIS-sourced layers: where they came from and their sync state.
+    source_url: Optional[str] = None
+    source_synced_at: Optional[datetime] = None
+    source_sync: Optional[str] = None
+    source_checked_at: Optional[datetime] = None
+    source_sync_status: Optional[str] = None
+    source_sync_error: Optional[str] = None
     # {field: "owner" | "maybe"} for fields that look personal.
     field_flags: Dict[str, str] = {}
     warnings: List[str] = []

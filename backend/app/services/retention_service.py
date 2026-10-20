@@ -176,6 +176,79 @@ async def scrub_comments(db: AsyncSession, record_id: int) -> int:
     return len(rows)
 
 
+async def comment_texts(db: AsyncSession, record_id: int) -> List[str]:
+    """The comment text on a request, read before it is cleared (for the translation cache)."""
+    from app.models import RequestComment
+
+    rows = (await db.execute(
+        select(RequestComment.content).where(RequestComment.service_request_id == record_id)
+    )).all()
+    return [r[0] for r in rows if r[0]]
+
+
+ARCHIVED_COPY = "[Content archived per retention policy]"
+
+
+async def scrub_description_copies(db: AsyncSession, service_request_id: str) -> int:
+    """Clear this request's description where other requests quote it.
+
+    The triage context of every later report nearby stores the first 100
+    characters of up to three "similar reports" -- this one's words, under this
+    one's id, in somebody else's row. Redacting the description here left those
+    copies in records that may be kept years longer.
+    """
+    from sqlalchemy import String, cast
+    from app.models import ServiceRequest
+
+    needle = f'"{service_request_id}"'
+    rows = (await db.execute(
+        select(ServiceRequest).where(cast(ServiceRequest.ai_analysis, String).contains(needle))
+    )).scalars().all()
+    changed = 0
+    for row in rows:
+        analysis = row.ai_analysis
+        if not isinstance(analysis, dict):
+            continue
+        analysis = dict(analysis)
+        touched = False
+        for holder in (analysis, analysis.get("context") if isinstance(analysis.get("context"), dict) else None):
+            if holder is None or not isinstance(holder.get("similar_reports"), list):
+                continue
+            entries = []
+            for entry in holder["similar_reports"]:
+                if isinstance(entry, dict) and entry.get("id") == service_request_id and entry.get("description") != ARCHIVED_COPY:
+                    entry = {**entry, "description": ARCHIVED_COPY}
+                    entry.pop("justification", None)   # model prose about the same text
+                    touched = True
+                entries.append(entry)
+            if holder is analysis:
+                analysis["similar_reports"] = entries
+            else:
+                analysis["context"] = {**holder, "similar_reports": entries}
+        if touched:
+            row.ai_analysis = analysis
+            changed += 1
+    return changed
+
+
+async def purge_cached_translations(db: AsyncSession, texts: List[str]) -> int:
+    """Drop cached translations of text that retention just cleared.
+
+    Status messages and closing notes are translated into a resident's language
+    and cached, and the portal's page translation passes report text through the
+    same cache. Without this the words survive retention in `translations`,
+    in two languages.
+    """
+    from sqlalchemy import delete
+    from app.models import Translation
+
+    texts = [t for t in {t for t in texts if t and t.strip()}]
+    if not texts:
+        return 0
+    result = await db.execute(delete(Translation).where(Translation.source_text.in_(texts)))
+    return result.rowcount or 0
+
+
 async def archive_record(
     db: AsyncSession,
     record_id: int,
@@ -219,12 +292,23 @@ async def archive_record(
     # Read the photo filenames BEFORE apply_scrub clears the columns that name
     # them -- afterwards there is nothing left to say which files to delete.
     photo_files = upload_filenames(record) if "media" in set(chosen) else []
+    # Likewise the text about to be cleared, so its cached translations can go.
+    old_texts: List[str] = []
+    if "description" in set(chosen):
+        old_texts.append(record.description or "")
+    if "closing_message" in set(chosen):
+        old_texts.append(getattr(record, "completion_message", None) or "")
+    if "comments" in set(chosen):
+        old_texts.extend(await comment_texts(db, record.id))
     cleared = apply_scrub(record, chosen)
     if photo_files:
         delete_upload_files(photo_files)
     if "comments" in set(chosen):
         await scrub_comments(db, record.id)
         cleared.append("comments")
+    if "description" in set(chosen):
+        await scrub_description_copies(db, record.service_request_id)
+    await purge_cached_translations(db, old_texts)
     record.archived_at = datetime.now(timezone.utc)
 
     await db.flush()

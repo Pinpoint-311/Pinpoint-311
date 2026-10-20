@@ -161,7 +161,7 @@ describe('muting a proactive health check', () => {
         await act(async () => { muteButton()!.click(); });
 
         expect(row()!.getAttribute('data-muted')).toBe('true');
-        expect(host.textContent).toContain('nobody is being emailed about this');
+        expect(host.textContent).toContain('Alert emails are paused');
         expect(muteButton()?.textContent).toContain('Unmute');
     });
 

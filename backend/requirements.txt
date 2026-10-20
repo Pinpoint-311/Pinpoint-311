@@ -1,32 +1,29 @@
-# fastapi / starlette are HELD at this version deliberately. Read this before
-# bumping them for a CVE report.
+# fastapi 0.136.3 + starlette 1.3.1: the newest FastAPI that still flattens
+# included routers, with the lowest Starlette that carries every published fix.
 #
-# The Starlette advisories (CVE-2026-54283, -48818, -48710, -48817, -54282,
-# -62727, CVE-2025-54121, CVE-2024-47874) all want a newer Starlette, and the
-# upgrade is not safe yet. Measured on 2026-10-19 against the full suite:
+# The Starlette advisories against 0.35.1 (CVE-2024-47874, CVE-2025-54121,
+# CVE-2026-48710, -48817, -48818, -54282, -54283, -62727) are fixed across
+# 0.40.0 .. 1.3.1, and the last of them only in 1.x -- no 0.x release clears
+# them, so the major bump is not optional. 1.3.1 is the floor.
 #
-#   starlette 0.49.3 + fastapi 0.148   9 failed, 3519 passed
-#   starlette 1.9.0  + fastapi 0.149   9 failed, 3519 passed
-#   ...and slowapi 0.1.10 (the newest) does not change either result.
+# Why not the newest FastAPI. From 0.137 FastAPI keeps an included router as a
+# single _IncludedRouter entry in app.routes instead of copying its routes up.
+# Two things here walk that list and silently see nothing behind it:
+#   * slowapi's SlowAPIMiddleware (_find_route_handler) finds no handler,
+#     treats the request as exempt, and the global default limit stops
+#     applying to every undecorated route: six calls under 3/minute, six 200s
+#     (tests/test_rate_limits_actually_apply.py).
+#   * the public-surface tests (test_route_access.py,
+#     test_secure_upgrades_phase3.py), which read the route table to prove
+#     exactly what is reachable.
+# 0.136.3 has no upper bound on Starlette (>=0.46.0) and still flattens, so all
+# of the above pass unchanged. Going past 0.136 means replacing slowapi's route
+# lookup first; test_rate_limits_actually_apply.py is the tripwire.
 #
-# The same nine fail each time, and two of them matter more than the advisories
-# do: tests/test_rate_limits_actually_apply.py shows the global SlowAPIMiddleware
-# silently stops applying -- six calls under a 3/minute default all return 200
-# instead of the fourth returning 429. Every undecorated route would lose its
-# throttle, which is a live abuse surface traded for mostly-DoS and
-# Windows-specific advisories. The other seven are route-introspection
-# assertions in test_route_access.py and test_secure_upgrades_phase3.py, which
-# read the app's route table to prove the public surface is exactly the reviewed
-# list; the newer stack changes that table's shape.
-#
-# So this needs its own piece of work -- understanding the nine, likely
-# replacing slowapi -- not a line edit inside a dependency sweep.
-#
-# protobuf is stuck for a different reason: google-cloud-secret-manager 2.18.0
-# and google-cloud-iam 2.14.0 both pin protobuf<5.0.0, so CVE-2026-0994 cannot
-# be resolved until those are bumped. A pin here is overridden by their
-# resolver, not honoured.
-fastapi==0.109.0
+# Starlette has its own pin because FastAPI does not cap it: left to the
+# resolver it would float to whatever is newest.
+fastapi==0.136.3
+starlette==1.3.1
 uvicorn[standard]==0.27.0
 sqlalchemy[asyncio]==2.0.25
 asyncpg==0.29.0
@@ -42,18 +39,26 @@ python-multipart==0.0.32
 celery==5.3.6
 redis==5.0.1
 httpx==0.28.1
+osmium==4.3.2
 google-cloud-aiplatform==1.141.0
-google-cloud-kms==2.21.0
+google-cloud-kms==2.24.1
 aiohttp==3.14.5
 google-auth==2.47.0
-google-cloud-secret-manager==2.18.0
-google-cloud-iam==2.14.0
+# protobuf 5.29.6 (CVE-2026-0994, recursion-depth bypass in the pure-Python
+# parser). kms <2.24.1, secret-manager <2.20.1 and iam <2.15.1 all declare
+# protobuf<5, which is what held it at 4.25.9 -- a protobuf pin alone is
+# overridden by their resolver. These are the first release of each, inside
+# its current major line, that allows protobuf 5. 5.29.6 is the lowest fixed
+# version; nothing calls for 6.x.
+google-cloud-secret-manager==2.20.1
+google-cloud-iam==2.15.1
+protobuf==5.29.6
 alembic==1.13.1
 aiofiles==23.2.1
 cryptography==50.0.2
 slowapi==0.1.9
 boto3==1.34.25
-sentry-sdk[fastapi]==2.54.0
+sentry-sdk[fastapi]==2.72.0
 
 # Content moderation for public inputs (profanity/explicit text detection)
 better-profanity==0.7.0
@@ -83,3 +88,30 @@ opencv-python-headless==4.11.0.86
 # binary (installed in the Dockerfile); without it the plate text signal simply
 # turns off and face redaction is unaffected.
 pytesseract==0.3.13
+
+# Transitive dependencies, pinned here only because the version the resolver
+# picks on its own carries an advisory. Nothing in this app imports them
+# directly; they arrive via requests/botocore/sentry-sdk (urllib3), alembic
+# (Mako), and aiohttp/yarl (multidict). Pinning a transitive dependency is a
+# cost -- it has to be revisited by hand when the parent moves -- so each one
+# states what it is for, and each is the lowest version that carries the fix
+# rather than the newest on the index.
+#
+# urllib3 2.8.0: CVE-2026-97687 (HTTPS-proxy TLS settings ignored),
+#   CVE-2026-97689 (unbounded chunk-size line buffered from a chunked
+#   response), CVE-2026-97688 (infinite loop on chunked deflate). 1.26.0
+#   through 2.7.0 are affected. This is the one of the three that is reachable
+#   in anger: sentry-sdk and boto3 talk to hosts over the network.
+# Mako 1.4.3: CVE-2026-102991, TemplateLookup path traversal via a Windows
+#   drive letter. Not exploitable here -- alembic renders its own migration
+#   templates on Linux and no URI is resident-supplied -- but the pin is free
+#   and leaving a known-bad version in the tree costs a reader the same
+#   investigation every time the report runs.
+# multidict 6.9.1: CVE-2026-104874, a reference leak in the C extension's
+#   items-view union/subtraction that a remote caller can drive into unbounded
+#   memory growth. 6.7.0 through 6.9.0 are affected. 7.x also carries the fix
+#   but aiohttp 3.14.5 requires multidict<7.0, so 6.9.1 is the version that
+#   actually resolves.
+urllib3==2.8.0
+Mako==1.4.3
+multidict==6.9.1

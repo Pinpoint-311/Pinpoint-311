@@ -177,11 +177,50 @@ Disallow: /
 	import pinpoint_site backend:8000 frontend:80
 }
 
+# Plain HTTP, for every host on this server: redirect to HTTPS, and nothing
+# else. Caddy would add this redirect on its own, but its built-in one answers
+# with `Server: Caddy` because it never passes through a site's `header`
+# block. That made it the one response here naming the server software, and a
+# DAST scan reports it. This is that same redirect with the header removed.
+#
+# No Strict-Transport-Security here on purpose. Browsers ignore HSTS received
+# over plain HTTP (RFC 6797 section 8.1), so it would only satisfy a scanner;
+# the HTTPS responses this redirects to are where it is sent and honoured.
+#
+# ACME HTTP-01 challenges are still answered: Caddy serves them before any
+# site's routes run. A hostname-specific http:// block elsewhere takes
+# precedence over this catch-all.
+http:// {
+	header -Server
+	redir https://{host}{uri} 308
+}
+
 
 # Centralized Hosting Orchestrator Control Panel
 centraldemo.pinpoint311.org {
 	import noindex
     encode gzip
+
+    # The same hardening the town sites get from (pinpoint_site).
+    #
+    # This block does not import that snippet -- it proxies the panel, not an
+    # app instance -- and so it quietly had none of these. A DAST run caught
+    # it: centraldemo answered with `Server: uvicorn` while every town site
+    # stripped it. Of all the hosts here this is the one that matters, since
+    # the panel provisions towns and holds the platform's shared credentials.
+    #
+    # Deliberately no Content-Security-Policy: the one in (pinpoint_site) names
+    # four map vendors and a translation host that the panel never loads, and a
+    # policy copied from somewhere else is how a policy stops being read. The
+    # panel needs its own, which is a separate piece of work.
+    header {
+        -Server
+        -X-Powered-By
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    }
     # Same log, same file. The panel provisions towns and holds the host's
     # shared credentials, so it is the site where "who called this, and when"
     # matters most.

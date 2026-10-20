@@ -71,7 +71,7 @@ const RESOLUTION_TIPS: Record<string, { issue: string; steps: string[] }> = {
     frontend: { issue: 'Frontend not reachable', steps: ['Check FRONTEND_HOST — a wrong address looks the same as a stopped service', 'Restart on the host: docker compose restart frontend', 'Review build errors'] },
     db: { issue: 'Database connection failed', steps: ['Check PostgreSQL is running', 'Check free disk space', 'Review connection limits'] },
     redis: { issue: 'Redis cache unavailable', steps: ['Restart on the host: docker compose restart redis', 'Check Redis logs', 'Verify memory limits'] },
-    caddy: { issue: 'Reverse proxy not routing', steps: ['If you reached this page through the proxy, it is routing', 'Check the Caddyfile', 'Verify SSL certificates'] }
+    caddy: { issue: 'Reverse proxy not routing', steps: ['If you can see this page through your normal web address, the proxy is working', 'Check the Caddyfile', 'Verify SSL certificates'] }
 };
 
 /* Restarts are requests the host updater runs (docs/design/secure-upgrades.md,
@@ -135,7 +135,7 @@ function RestartRequests() {
                 <div className="flex-1 min-w-[12rem]">
                     <label htmlFor={reasonId} className="block text-xs text-gray-300 mb-1">Why restart the app containers?</label>
                     <input id={reasonId} value={reason} onChange={e => setReason(e.target.value)} maxLength={500}
-                        placeholder="e.g. worker stopped sending emails"
+                        placeholder="e.g. emails stopped going out"
                         className="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-1.5 text-white text-sm" />
                 </div>
                 <button type="button" className="btn-outline text-sm" onClick={request}
@@ -144,7 +144,7 @@ function RestartRequests() {
                     Request restart
                 </button>
             </div>
-            <p className="text-xs text-gray-400">Restarts backend, worker and frontend of this instance only. The database, Redis and the shared proxy are not touched.</p>
+            <p className="text-xs text-gray-400">Restarts this instance’s app services (backend, background jobs and website). The database, the cache and the shared proxy are not restarted.</p>
             {latest && (
                 <div className="flex flex-wrap items-center gap-2 text-xs text-gray-300" data-testid="restart-request-status">
                     <span>Restart #{latest.id} by {latest.requested_by}</span>
@@ -586,7 +586,7 @@ export default function OperationsPanel() {
                                                 {c.action && <p className="text-gray-400 text-xs mt-0.5">→ {c.action}</p>}
                                                 {isMuted && (
                                                     <p className="text-xs mt-1.5 text-amber-200/85">
-                                                        Muted — nobody is being emailed about this
+                                                        Muted. Alert emails are paused
                                                         {mutedUntilOf(c) ? ` until ${new Date(mutedUntilOf(c) as string).toLocaleDateString()}` : ''}.
                                                         {' '}It is still not passing.
                                                     </p>
@@ -646,7 +646,7 @@ export default function OperationsPanel() {
                                         </p>
                                         {isMuted && (
                                             <p className="text-xs mt-1.5 text-amber-200/85">
-                                                Muted — nobody is being emailed about this
+                                                Muted. Alert emails are paused
                                                 {` until ${new Date(until as string).toLocaleDateString()}`}.
                                                 {' '}It is still not working.
                                             </p>

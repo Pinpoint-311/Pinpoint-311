@@ -160,7 +160,7 @@ def test_a_collapse_is_a_warning_not_a_removal_list():
     )
     assert len(alerts) == 1
     assert alerts[0].severity == "warning"
-    assert "truncated" in alerts[0].body
+    assert "cut short" in alerts[0].body
     assert "previous data was kept" in alerts[0].body
 
 
