@@ -752,8 +752,10 @@ class ApiClient {
             legal_hold?: boolean;
             staff_notes?: string;
             priority?: number;
-            assigned_department_id?: number;
-            assigned_to?: string;
+            /** null clears it (back to triage). */
+            assigned_department_id?: number | null;
+            /** null unassigns. */
+            assigned_to?: string | null;
             closed_substatus?: string;
             completion_message?: string;
             completion_photo_url?: string;

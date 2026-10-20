@@ -10,6 +10,11 @@ Events:
     "new_requests"    — a request was submitted to the staffer's department
     "status_changes"  — a request's status changed
     "comments"        — a comment was added to a request
+    "assignments"     — a request was reassigned to the staffer, or to their
+                        department with nobody named. It has no toggle of its
+                        own: from the recipient's side a request handed to them
+                        is a request arriving, so it follows the new-request
+                        toggles (email_new_requests / sms_new_requests).
 
 Preference keys (on User.notification_preferences JSON):
     email_new_requests / email_status_changes / email_comments  (default True)
@@ -23,12 +28,14 @@ _EMAIL_KEY = {
     "new_requests": "email_new_requests",
     "status_changes": "email_status_changes",
     "comments": "email_comments",
+    "assignments": "email_new_requests",
 }
 
 # Comments have no SMS channel by design.
 _SMS_KEY = {
     "new_requests": "sms_new_requests",
     "status_changes": "sms_status_changes",
+    "assignments": "sms_new_requests",
 }
 
 
@@ -68,6 +75,16 @@ def pick_recipient_group(
     if department_staff:
         return list(department_staff)
     return list(admins)
+
+
+def pick_assignment_recipients(assignee, department_staff: Sequence) -> List:
+    """Who hears that a request was reassigned: the new assignee, else the new
+    department's staff. No admin tier, unlike pick_recipient_group: the person
+    reassigning is staff already looking at the request, so a department with
+    no members has nobody further to tell."""
+    if assignee is not None:
+        return [assignee]
+    return list(department_staff)
 
 
 def should_notify_staff(
