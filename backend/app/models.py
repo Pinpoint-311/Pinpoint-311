@@ -1100,6 +1100,8 @@ class CriticalFacilitiesStatus(Base):
     counts = Column(JSON, nullable=True)
     source = Column(String(300), nullable=True)
     last_error = Column(Text, nullable=True)
+    # When the current run of failures began; cleared on success.
+    failing_since = Column(DateTime(timezone=True), nullable=True)
 
 
 class ResearchAccessLog(Base):

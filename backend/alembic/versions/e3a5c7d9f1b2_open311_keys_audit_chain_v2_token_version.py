@@ -268,6 +268,7 @@ def upgrade() -> None:
         sa.Column("counts", sa.JSON(), nullable=True),
         sa.Column("source", sa.String(length=300), nullable=True),
         sa.Column("last_error", sa.Text(), nullable=True),
+        sa.Column("failing_since", sa.DateTime(timezone=True), nullable=True),
     )
 
 

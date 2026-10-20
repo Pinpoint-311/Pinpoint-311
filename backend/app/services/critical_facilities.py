@@ -85,6 +85,10 @@ STALE_AFTER = timedelta(days=30)
 # A second trigger (worker boot plus the daily beat) inside this window is a
 # duplicate, not a retry.
 ATTEMPT_COOLDOWN = timedelta(minutes=30)
+# An empty store is retried hourly (see the beat schedule); the health check
+# only calls it a problem once it has kept failing this long, so a public
+# Overpass instance having a bad hour does not email every admin.
+EMPTY_GRACE = timedelta(hours=24)
 
 
 # --------------------------------------------------------------------------- #
@@ -323,7 +327,13 @@ def parse_elements(elements: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # The fetch
 # --------------------------------------------------------------------------- #
 
-DEFAULT_OVERPASS_URLS = ("https://overpass-api.de/api/interpreter",)
+# The main public instance, then a long-running public mirror. Both are
+# volunteer-run and are busy at times (502/504); one weekly query per town is
+# what they ask of clients. A town that wants its own instance sets OVERPASS_URLS.
+DEFAULT_OVERPASS_URLS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
 SERVER_TIMEOUT_S = 90
 CLIENT_TIMEOUT_S = 120
 FETCH_ROUNDS = 2  # every mirror, twice
@@ -540,6 +550,7 @@ async def refresh(db, *, fetch=None) -> Dict[str, Any]:
         status.counts = counts
         status.source = source
         status.last_error = None
+        status.failing_since = None
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -555,6 +566,8 @@ async def _fail(db, reason: str) -> Dict[str, Any]:
     try:
         status = await _status_row(db)
         status.last_error = reason[:500]
+        if status.failing_since is None:
+            status.failing_since = datetime.now(timezone.utc)
         await db.commit()
     except Exception:
         await db.rollback()
@@ -599,6 +612,7 @@ async def store_status(db) -> Dict[str, Any]:
         "counts": counts,
         "total": sum(counts.values()),
         "last_error": getattr(status, "last_error", None),
+        "failing_since": getattr(status, "failing_since", None),
         "source": getattr(status, "source", None),
         "boundary_configured": bool(await _load_boundary(db)),
     }

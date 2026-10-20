@@ -142,6 +142,14 @@ celery_app.conf.update(
         # infrastructure" check. Checked daily, refreshes when a week old (or
         # empty), so a failed refresh is retried the next day. One Overpass
         # query for the whole town; reports never call out.
+        # While the store is still empty (a new install, or the public
+        # Overpass instance was down on the first try), retry every hour
+        # instead of waiting a day. A no-op once anything is loaded.
+        "hourly-critical-facilities-fill": {
+            "task": "app.tasks.critical_facilities.refresh_critical_facilities",
+            "schedule": crontab(minute=20),
+            "kwargs": {"only_if_empty": True},
+        },
         "daily-critical-facilities-check": {
             "task": "app.tasks.critical_facilities.refresh_critical_facilities",
             "schedule": crontab(hour=4, minute=45),

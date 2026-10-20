@@ -659,16 +659,26 @@ async def _critical_facilities_check(db) -> Dict[str, Any]:
             f"{n} {cf.KIND_LABELS.get(k, k).lower()}" for k, n in sorted(st["counts"].items())
         ) or "none"
         error = f" Last error: {st['last_error']}" if st.get("last_error") else ""
-        action = ("The refresh retries daily. If it keeps failing, check that the server can reach "
-                  "the Overpass API, or set OVERPASS_URLS to a mirror the town trusts.")
+        action = ("It keeps retrying on its own. If it keeps failing, check that the server can "
+                  "reach the public OpenStreetMap (Overpass) servers, or set OVERPASS_URLS to one "
+                  "the town trusts.")
         if not st["boundary_configured"]:
             check = _check("critical_facilities", "Critical facilities", "ok", "no boundary",
                            "No town boundary is set, so there is no area to load hospitals, "
                            "schools and fire stations for.")
         elif not st["total"]:
-            check = _check("critical_facilities", "Critical facilities", "warning", 0,
-                           "No hospitals, schools or fire stations are loaded, so reports show "
-                           "nothing near them." + error, action)
+            since = st.get("failing_since")
+            if since is None or datetime.now(timezone.utc) - since < cf.EMPTY_GRACE:
+                # Not loaded yet: a new install, or the public Overpass
+                # instance busy on the first tries. Retried hourly; not an
+                # alert until it has kept failing for a day.
+                check = _check("critical_facilities", "Critical facilities", "ok", 0,
+                               "Loading the town's hospitals, schools and fire stations. "
+                               "Retried every hour until it succeeds." + error)
+            else:
+                check = _check("critical_facilities", "Critical facilities", "warning", 0,
+                               "No hospitals, schools or fire stations have loaded for over a "
+                               "day, so reports show nothing near them." + error, action)
         else:
             refreshed = st.get("refreshed_at")
             age = datetime.now(timezone.utc) - refreshed if refreshed else None

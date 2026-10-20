@@ -514,7 +514,16 @@ async def test_health_warns_when_empty_or_stale_and_reports_counts(pgdb):
     from sqlalchemy import select
 
     check = await _critical_facilities_check(pgdb)
-    assert check["key"] == "critical_facilities" and check["status"] == "warning"
+    assert check["key"] == "critical_facilities" and check["status"] == "ok"   # still loading
+
+    async def down(*a, **k):
+        raise RuntimeError("HTTP 502")
+    await cf.refresh(pgdb, fetch=down)
+    st = (await pgdb.execute(select(CriticalFacilitiesStatus))).scalars().one()
+    assert st.failing_since is not None
+    st.failing_since = datetime.now(timezone.utc) - timedelta(hours=25)
+    await pgdb.commit()
+    assert (await _critical_facilities_check(pgdb))["status"] == "warning"
 
     await cf.refresh(pgdb, fetch=fetcher([node(1, east(100), P_LAT, amenity="school", name="Elm"),
                                            node(2, east(100), P_LAT, amenity="school", name="Oak")]))
@@ -523,6 +532,7 @@ async def test_health_warns_when_empty_or_stale_and_reports_counts(pgdb):
     assert check["detail"]["counts"] == {"school": 2} and check["detail"]["refreshed_at"]
 
     st = (await pgdb.execute(select(CriticalFacilitiesStatus))).scalars().one()
+    assert st.failing_since is None                                        # cleared by the success
     st.refreshed_at = datetime.now(timezone.utc) - timedelta(days=31)
     await pgdb.commit()
     assert (await _critical_facilities_check(pgdb))["status"] == "warning"
@@ -565,3 +575,44 @@ def test_the_migration_and_the_models_declare_the_same_tables():
     assert cols == {"id", "osm_type", "osm_id", "kind", "name", "geom", "fetched_at"}
     for col in cols:
         assert f'sa.Column("{col}"' in src
+
+
+# ---- a busy public Overpass instance is not an alert --------------------------
+
+def test_an_empty_store_is_retried_hourly_and_the_default_has_a_second_mirror():
+    from app.core.celery_app import celery_app
+    from app.services import critical_facilities as cf
+    beat = celery_app.conf.beat_schedule
+    hourly = [v for v in beat.values()
+              if v["task"].endswith("refresh_critical_facilities") and v.get("kwargs", {}).get("only_if_empty")]
+    assert hourly, "no hourly fill while the store is empty"
+    assert len(cf.DEFAULT_OVERPASS_URLS) >= 2
+    assert all(u.startswith("https://") for u in cf.DEFAULT_OVERPASS_URLS)
+
+
+async def test_empty_store_warns_only_after_a_day_of_failures(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from app.services import critical_facilities as cf
+    from app.services import proactive_health as ph
+
+    class _Nested:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class _Db:
+        def begin_nested(self): return _Nested()
+
+    def status(failing_since):
+        async def _s(db):
+            return {"refreshed_at": None, "attempted_at": None, "counts": {}, "total": 0,
+                    "last_error": "fetch failed: HTTP 502", "source": None,
+                    "boundary_configured": True, "failing_since": failing_since}
+        return _s
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(cf, "store_status", status(None))
+    assert (await ph._critical_facilities_check(_Db()))["status"] == "ok"
+    monkeypatch.setattr(cf, "store_status", status(now - timedelta(hours=2)))
+    assert (await ph._critical_facilities_check(_Db()))["status"] == "ok"
+    monkeypatch.setattr(cf, "store_status", status(now - timedelta(hours=25)))
+    assert (await ph._critical_facilities_check(_Db()))["status"] == "warning"
