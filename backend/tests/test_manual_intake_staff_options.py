@@ -326,7 +326,7 @@ def pipeline(monkeypatch):
     monkeypatch.setattr(open311, "resolve_is_public", resolve_is_public)
 
     async def resolve_assignment(db, service):
-        return 1, "router"
+        return 1, "router", "routing_rule_staff"
 
     monkeypatch.setattr(open311, "_resolve_assignment", resolve_assignment)
 
@@ -364,6 +364,8 @@ async def test_staff_choices_are_applied_and_audited_without_the_note(pipeline):
     options = call["audit_extra"]["intake_options"]
     assert set(options["fields"]) == {
         "assigned_department_id", "assigned_to", "manual_priority_score", "staff_notes"}
+    assert call["audit_extra"]["routing"] == {
+        "assigned_department_id": 2, "assigned_to": "jdoe", "rule": "intake_choice"}
     # Routing values are recorded; the note itself never is.
     assert options["assigned_to"] == "jdoe"
     assert "Caller is the property owner" not in repr(call["audit_extra"])
@@ -376,7 +378,9 @@ async def test_blank_choices_keep_the_category_routing(pipeline):
     assert (sr.assigned_department_id, sr.assigned_to) == (1, "router")
     assert sr.manual_priority_score is None
     call = pipeline["finalize"][0]
-    assert call["audit_extra"] is None
+    # Only the routing the category chose; no clerk options.
+    assert call["audit_extra"] == {"routing": {
+        "assigned_department_id": 1, "assigned_to": "router", "rule": "routing_rule_staff"}}
     # No real email, no confirmation -- the placeholder is never emailed.
     assert call["notify_resident"] is False
 

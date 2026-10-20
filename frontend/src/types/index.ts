@@ -129,7 +129,8 @@ export interface ServiceDefinition {
         // Custom questions (applies to all modes)
         custom_questions?: CustomQuestion[];
     };
-    assigned_department_id?: number;
+    /** null on an update clears the category's department. */
+    assigned_department_id?: number | null;
     assigned_department?: Department;
 }
 

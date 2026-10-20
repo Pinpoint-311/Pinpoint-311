@@ -64,6 +64,7 @@ import { useSettings } from '../context/SettingsContext';
 import { ResidentHistoryCard, ResidentSearch } from '../components/ResidentHistory';
 import { languageLabel } from '../utils/languages';
 import { sourceLabel } from '../utils/requestSource';
+import { assignmentPayload, draftAfterDepartmentChange, staffForDepartment } from '../utils/assignment';
 import { useAnnounce } from '../context/AccessibilityContext';
 import { api, MapLayer, IntegrationRequestLink } from '../services/api';
 import { ServiceRequest, ServiceRequestDetail, ServiceDefinition, Statistics, AdvancedStatistics, RequestComment, ClosedSubstatus, User as UserType, Department, AuditLogEntry, HeatmapData, PlatformFeedbackStatistics } from '../types';
@@ -2963,9 +2964,12 @@ export default function StaffDashboard() {
 
                                         {/* Row 3: Assignment Dropdowns - More compact on mobile */}
                                         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                                            {/* A draft's null means "none" and must not fall back to the
+                                                saved value, or choosing "Department..." snaps straight back.
+                                                Changing the department drops an assignee it doesn't have. */}
                                             <select
-                                                value={editAssignment?.departmentId ?? selectedRequest.assigned_department_id ?? ''}
-                                                onChange={(e) => { const val = e.target.value ? Number(e.target.value) : null; setEditAssignment(prev => ({ departmentId: val, assignedTo: prev?.assignedTo ?? selectedRequest.assigned_to ?? null })); }}
+                                                value={(editAssignment ? editAssignment.departmentId : selectedRequest.assigned_department_id) ?? ''}
+                                                onChange={(e) => { const val = e.target.value ? Number(e.target.value) : null; setEditAssignment(prev => draftAfterDepartmentChange(prev ?? { departmentId: selectedRequest.assigned_department_id ?? null, assignedTo: selectedRequest.assigned_to || null }, val, users)); }}
                                                 className="flex-1 min-w-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg bg-white/5 border border-white/10 text-white text-xs sm:text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
                                                 aria-label="Assign to department"
                                             >
@@ -2973,16 +2977,15 @@ export default function StaffDashboard() {
                                                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                                             </select>
                                             <select
-                                                value={editAssignment?.assignedTo ?? selectedRequest.assigned_to ?? ''}
-                                                onChange={(e) => { const val = e.target.value; setEditAssignment(prev => ({ departmentId: prev?.departmentId ?? selectedRequest.assigned_department_id ?? null, assignedTo: val })); }}
+                                                value={(editAssignment ? editAssignment.assignedTo : selectedRequest.assigned_to) ?? ''}
+                                                onChange={(e) => { const val = e.target.value || null; setEditAssignment(prev => ({ departmentId: prev ? prev.departmentId : selectedRequest.assigned_department_id ?? null, assignedTo: val })); }}
                                                 className="flex-1 min-w-0 py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg bg-white/5 border border-white/10 text-white text-xs sm:text-sm focus:border-primary-500/50 focus:ring-1 focus:ring-primary-500/25 transition-all [&>option]:bg-slate-800 [&>option]:text-white"
                                                 aria-label="Assign to staff member"
                                             >
                                                 <option value="">Assignee...</option>
                                                 {(() => {
-                                                    const deptId = editAssignment?.departmentId ?? selectedRequest.assigned_department_id;
-                                                    const filteredUsers = deptId ? users.filter(u => u.departments?.some(d => d.id === deptId)) : users;
-                                                    return filteredUsers.map(u => (
+                                                    const deptId = editAssignment ? editAssignment.departmentId : selectedRequest.assigned_department_id ?? null;
+                                                    return staffForDepartment(users, deptId).map(u => (
                                                         <option key={u.id} value={u.username}>
                                                             {u.full_name || u.username}
                                                         </option>
@@ -2993,10 +2996,7 @@ export default function StaffDashboard() {
                                                 <button onClick={async () => {
                                                     setIsSavingAssignment(true);
                                                     try {
-                                                        const updated = await api.updateRequest(selectedRequest.service_request_id, {
-                                                            assigned_department_id: editAssignment.departmentId ?? undefined,
-                                                            assigned_to: editAssignment.assignedTo === null ? '' : editAssignment.assignedTo
-                                                        });
+                                                        const updated = await api.updateRequest(selectedRequest.service_request_id, assignmentPayload(editAssignment));
                                                         setSelectedRequest(updated);
                                                         // Optimistic update: update the request in both lists
                                                         setAllRequests(prev => prev.map(r => r.id === updated.id ? updated : r));
@@ -3011,7 +3011,10 @@ export default function StaffDashboard() {
                                                             : 'Assignment saved.');
                                                     } catch (err) {
                                                         console.error(err);
-                                                        announce('Couldn\'t save the assignment. Try again.', 'assertive');
+                                                        // A 400 says why (someone outside the department,
+                                                        // a deactivated account); pass that on.
+                                                        const reason = (err as { status?: number })?.status === 400 && err instanceof Error && err.message ? ` ${err.message}` : ' Try again.';
+                                                        announce(`Couldn't save the assignment.${reason}`, 'assertive');
                                                     } finally {
                                                         setIsSavingAssignment(false);
                                                     }
@@ -3950,9 +3953,9 @@ export default function StaffDashboard() {
                                                                     text: statusText
                                                                 };
                                                             } else if (entry.action === 'department_assigned') {
-                                                                actionConfig = { color: 'bg-purple-500', text: `Assigned to ${entry.new_value}` };
+                                                                actionConfig = { color: 'bg-purple-500', text: entry.new_value ? `Assigned to ${entry.new_value}` : 'Removed from its department' };
                                                             } else if (entry.action === 'staff_assigned') {
-                                                                actionConfig = { color: 'bg-indigo-500', text: `Assigned to ${entry.new_value}` };
+                                                                actionConfig = { color: 'bg-indigo-500', text: entry.new_value ? `Assigned to ${entry.new_value}` : 'Unassigned' };
                                                             } else if (entry.action === 'comment_added') {
                                                                 actionConfig = { color: 'bg-teal-500', text: 'Comment added' };
                                                             } else if (entry.action === 'public_archive') {

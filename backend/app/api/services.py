@@ -291,8 +291,19 @@ async def update_service(
         service.routing_mode = service_data.routing_mode
     if service_data.routing_config is not None:
         service.routing_config = service_data.routing_config
-    if service_data.assigned_department_id is not None:
-        service.assigned_department_id = service_data.assigned_department_id
+    # An explicit null clears the category's department (new reports go to
+    # triage); leaving the field out leaves it alone. A null used to be read as
+    # "not sent", so a category could never be un-routed once routed.
+    if "assigned_department_id" in service_data.model_fields_set:
+        new_department_id = service_data.assigned_department_id
+        if new_department_id is not None and new_department_id != service.assigned_department_id:
+            dept = (await db.execute(
+                select(Department).where(Department.id == new_department_id)
+            )).scalar_one_or_none()
+            if dept is None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                    detail="That department doesn't exist. Choose another one.")
+        service.assigned_department_id = new_department_id
     if service_data.display_order is not None:
         service.display_order = service_data.display_order
     if service_data.sla_hours is not None:
@@ -359,11 +370,14 @@ async def update_service(
                      "hidden_from_public": bool(service.hidden_from_public)},
         )
     
+    # populate_existing: the session keeps objects across commit, and without
+    # it a changed or cleared department would come back still naming the old one.
     result = await db.execute(
         select(ServiceDefinition)
         .where(ServiceDefinition.id == service_id)
         .options(selectinload(ServiceDefinition.departments))
         .options(selectinload(ServiceDefinition.assigned_department))
+        .execution_options(populate_existing=True)
     )
     return result.scalar_one()
 

@@ -1508,7 +1508,9 @@ export default function AdminConsole() {
             await api.updateService(editingService.id, {
                 routing_mode: serviceRouting.routing_mode,
                 routing_config: config,
-                assigned_department_id: serviceRouting.assigned_department_id || undefined,
+                // null, not undefined: "no department" must reach the server
+                // to clear one that was set.
+                assigned_department_id: serviceRouting.assigned_department_id || null,
                 icon: serviceRouting.icon,
                 // 0 explicitly clears the SLA; a value sets it.
                 sla_hours: serviceRouting.sla_hours ? parseInt(serviceRouting.sla_hours) : 0,
@@ -4196,8 +4198,10 @@ export default function AdminConsole() {
                                                         </label>
                                                     ))}
                                             </div>
-                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
+                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 ? (
                                                 <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
+                                            ) : (
+                                                <p className="text-xs text-white/50">Each new report goes to one person: the first one you ticked who is still active (and in this category's department, if it has one). The others are backups, in the order you ticked them.</p>
                                             )}
                                         </div>
                                     )}
@@ -4407,8 +4411,10 @@ export default function AdminConsole() {
                                                         </label>
                                                     ))}
                                             </div>
-                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 && (
+                                            {(serviceRouting.routing_config.staff_ids || []).length === 0 ? (
                                                 <p className="text-xs text-amber-400">No staff selected. Reports go to all staff.</p>
+                                            ) : (
+                                                <p className="text-xs text-white/50">Each new report goes to one person: the first one you ticked who is still active (and in this category's department, if it has one). The others are backups, in the order you ticked them.</p>
                                             )}
                                         </div>
                                     )}

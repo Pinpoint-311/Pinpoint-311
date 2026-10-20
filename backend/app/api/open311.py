@@ -8,7 +8,7 @@ import uuid
 import logging
 
 from app.db.session import get_db
-from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog, Department
+from app.models import ServiceRequest, ServiceDefinition, User, RequestAuditLog, Department, user_departments
 from app.schemas import (
     ServiceRequestCreate, ServiceRequestResponse, ServiceRequestDetailResponse,
     ServiceRequestUpdate, ServiceRequestDelete, ManualIntakeCreate, RequestAuditLogResponse,
@@ -1284,7 +1284,9 @@ async def _intake_resident_report(
         )
 
     # Auto-assignment based on service routing config
-    assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+    assigned_department_id, assigned_to, routing_rule = await _resolve_assignment(db, service)
+    audit_extra = {**(audit_extra or {}),
+                   "routing": _routing_audit(assigned_department_id, assigned_to, routing_rule)}
 
     # Create request with auto-assignment
     service_request = ServiceRequest(
@@ -1328,24 +1330,81 @@ async def _intake_resident_report(
     return service_request
 
 
+# Who may be handed a request: the roles that can open the staff dashboard.
+ASSIGNABLE_ROLES = ("staff", "admin")
+
+
+async def _is_department_member(db: AsyncSession, user_id, department_id) -> bool:
+    row = (await db.execute(
+        select(user_departments.c.user_id)
+        .where(user_departments.c.user_id == user_id)
+        .where(user_departments.c.department_id == department_id)
+    )).scalar_one_or_none()
+    return row is not None
+
+
 async def _resolve_assignment(db: AsyncSession, service: ServiceDefinition):
-    """Resolve (assigned_department_id, assigned_to) from a service's routing
-    config. Shared by resident and manual intake so both route identically."""
+    """Resolve (assigned_department_id, assigned_to, rule) from a service's
+    routing config. Shared by resident and manual intake so both route
+    identically.
+
+    `rule` names what made the choice, for the "submitted" audit row:
+    "routing_rule_staff" when the category's specific-staff list supplied an
+    assignee, else "category_department" when only the category's department
+    did, else "none".
+
+    The category's department is used only while it is active; a retired one
+    leaves the request unrouted (triage) rather than filed somewhere nobody
+    watches. The specific-staff list is read in its saved order and the first
+    person who can actually work the request gets it: an active staff member or
+    administrator, and a member of the department when there is one. It used to
+    be `staff_ids[0]` unconditionally, so a deactivated first pick -- or a
+    researcher account -- silently swallowed every new report.
+    """
     assigned_department_id = service.assigned_department_id
+    if assigned_department_id is not None:
+        dept = (await db.execute(
+            select(Department).where(Department.id == assigned_department_id)
+        )).scalar_one_or_none()
+        if dept is None or dept.is_active is False:
+            assigned_department_id = None
+
     assigned_to = None
-    if service.routing_config:
-        config = service.routing_config
-        if config.get('route_to') == 'specific_staff' and config.get('staff_ids'):
-            from app.models import User
-            staff_ids = config.get('staff_ids', [])
-            if staff_ids:
-                staff_result = await db.execute(
-                    select(User).where(User.id == staff_ids[0])
-                )
-                staff = staff_result.scalar_one_or_none()
-                if staff:
-                    assigned_to = staff.username
-    return assigned_department_id, assigned_to
+    config = service.routing_config or {}
+    staff_ids = config.get('staff_ids') or []
+    if config.get('route_to') == 'specific_staff' and staff_ids:
+        users = (await db.execute(
+            select(User).where(User.id.in_(staff_ids))
+        )).scalars().all()
+        by_id = {u.id: u for u in users}
+        for staff_id in staff_ids:
+            staff = by_id.get(staff_id)
+            if staff is None or staff.is_active is False or staff.role not in ASSIGNABLE_ROLES:
+                continue
+            if assigned_department_id is not None and not await _is_department_member(
+                    db, staff.id, assigned_department_id):
+                continue
+            assigned_to = staff.username
+            break
+
+    if assigned_to:
+        rule = "routing_rule_staff"
+    elif assigned_department_id is not None:
+        rule = "category_department"
+    else:
+        rule = "none"
+    return assigned_department_id, assigned_to, rule
+
+
+def _routing_audit(assigned_department_id, assigned_to, rule) -> dict:
+    """The initial routing, for the "submitted" audit row's extra_data. Staff
+    side only: the public audit log allow-lists extra_data (see
+    _public_audit_extra), so none of this reaches a resident."""
+    return {
+        "assigned_department_id": assigned_department_id,
+        "assigned_to": assigned_to,
+        "rule": rule,
+    }
 
 
 async def _finalize_new_request(
@@ -1605,6 +1664,53 @@ async def update_request_status(
     # moderation flag.
     if "flagged" in update_dict and "legal_hold" not in update_dict:
         update_dict["legal_hold"] = update_dict.pop("flagged")
+
+    # Assignment. Checked before anything is written, so a bad choice is a 400
+    # the staffer can fix rather than a 500 or a request handed to nobody.
+    #
+    # An empty assignee is "unassigned" and is stored as NULL. The dashboard
+    # used to send '' for that, and '' sat in the column looking like a name.
+    if "assigned_to" in update_dict:
+        update_dict["assigned_to"] = (update_dict["assigned_to"] or "").strip() or None
+    old_assignee = old_assigned_to or None
+    new_department_id = update_dict.get("assigned_department_id", old_department_id)
+    new_assignee = update_dict.get("assigned_to", old_assignee)
+    department_changed = (
+        "assigned_department_id" in update_dict and new_department_id != old_department_id)
+    assignee_changed = "assigned_to" in update_dict and new_assignee != old_assignee
+
+    new_department = None
+    assignee_user = None
+    if department_changed and new_department_id is not None:
+        new_department = await _check_department(db, new_department_id)
+    if assignee_changed and new_assignee:
+        assignee_user = await _check_assignee(db, new_assignee)
+    # Decision: an assignee must belong to the request's department. When the
+    # department or the assignee changes and the resulting pair does not fit,
+    # the update is refused (400) rather than silently unassigning: dropping
+    # the person would be a second change the staffer never asked for, and the
+    # dashboard only ever offers members of the chosen department anyway. A
+    # request with no department may go to any active staff member. A pair
+    # that was already stored is left alone -- only a change is checked.
+    if (department_changed or assignee_changed) and new_department_id is not None and new_assignee:
+        if assignee_user is None:
+            assignee_user = (await db.execute(
+                select(User).where(User.username == new_assignee)
+            )).scalar_one_or_none()
+        if assignee_user is None or not await _is_department_member(
+                db, assignee_user.id, new_department_id):
+            if new_department is None:
+                new_department = (await db.execute(
+                    select(Department).where(Department.id == new_department_id)
+                )).scalar_one_or_none()
+            dept_label = new_department.name if new_department else "that department"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"{new_assignee} isn't a member of {dept_label}. Choose someone "
+                    "from that department, or leave the request unassigned."
+                ),
+            )
     
     for field, value in update_dict.items():
         # A null used to be skipped for EVERY field, so "Department..." (i.e.
@@ -1678,19 +1784,17 @@ async def update_request_status(
         )
         db.add(audit_entry)
     
-    # Staff assignment change - only log if new value is non-empty
-    if "assigned_to" in update_dict and update_dict["assigned_to"] != old_assigned_to:
-        # Only log if new staff is actually assigned (not cleared)
-        if update_dict["assigned_to"]:
-            audit_entry = RequestAuditLog(
-                service_request_id=request.id,
-                action="staff_assigned",
-                old_value=old_assigned_to,
-                new_value=update_dict["assigned_to"],
-                actor_type="staff",
-                actor_name=current_user.username
-            )
-            db.add(audit_entry)
+    # Staff assignment change, unassigning included (new_value None): who took
+    # a request off someone's plate matters as much as who put it there.
+    if assignee_changed:
+        db.add(RequestAuditLog(
+            service_request_id=request.id,
+            action="staff_assigned",
+            old_value=old_assignee,
+            new_value=new_assignee,
+            actor_type="staff",
+            actor_name=current_user.username
+        ))
     
     # Legal hold change
     if "legal_hold" in update_dict and bool(update_dict["legal_hold"]) != old_legal_hold:
@@ -1722,6 +1826,16 @@ async def update_request_status(
     if priority_changed:
         from app.tasks.integrations import push_priority_to_integrations
         enqueue(push_priority_to_integrations, request.id)
+
+    # Reassignment tells whoever now has the request: the new assignee, or the
+    # new department's staff when nobody in particular is named. The actor is
+    # skipped and each person's Notification Settings apply (the worker does
+    # both). Taking someone off a request notifies nobody, and residents are
+    # never told about internal reassignment.
+    if (assignee_changed and new_assignee) or (
+            department_changed and new_department_id is not None and not new_assignee):
+        from app.tasks.service_requests import notify_staff_of_assignment
+        enqueue(notify_staff_of_assignment, request.id, actor=current_user.username)
     
     # Send notification if status changed
     if "status" in update_dict and update_dict["status"] and update_dict["status"].value != old_status:
@@ -1751,6 +1865,10 @@ async def update_request_status(
     # Reload the relationship if department was set
     if request.assigned_department_id:
         await db.refresh(request, ['assigned_department'])
+    else:
+        # The session does not expire on commit, so a cleared department would
+        # otherwise come back in the response still naming the old one.
+        request.assigned_department = None
     await _decorate_detail(db, request)
     return request
 
@@ -1955,11 +2073,13 @@ async def create_manual_intake(
     # Same auto-assignment/routing as a resident submission, unless the clerk
     # chose otherwise. Each choice overrides only its own half: picking a
     # department leaves the category's staff routing alone, and vice versa.
-    assigned_department_id, assigned_to = await _resolve_assignment(db, service)
+    assigned_department_id, assigned_to, routing_rule = await _resolve_assignment(db, service)
     if chosen_department_id is not None:
         assigned_department_id = chosen_department_id
     if chosen_assignee:
         assigned_to = chosen_assignee
+    if chosen_department_id is not None or chosen_assignee:
+        routing_rule = "intake_choice"
 
     # A caller may not leave an email; keep a unique placeholder for the row but
     # remember whether a real one was given so we only email real addresses.
@@ -2010,7 +2130,7 @@ async def create_manual_intake(
             ("send_confirmation", not intake_data.send_confirmation),
         ) if chosen
     ]
-    audit_extra = None
+    audit_extra = {"routing": _routing_audit(assigned_department_id, assigned_to, routing_rule)}
     if chosen_fields:
         options = {"fields": chosen_fields}
         if chosen_department_id is not None:
@@ -2021,7 +2141,7 @@ async def create_manual_intake(
             options["manual_priority_score"] = intake_data.manual_priority_score
         if not intake_data.send_confirmation:
             options["send_confirmation"] = False
-        audit_extra = {"intake_options": options}
+        audit_extra["intake_options"] = options
 
     # Attribute the submission to the staff member who took it down. The row is
     # already persisted, so a hiccup in the best-effort background pipeline
@@ -2047,35 +2167,50 @@ async def create_manual_intake(
     return service_request
 
 
+async def _check_department(db: AsyncSession, department_id) -> Department:
+    """The department a staffer chose, or a 400 when it does not exist or was
+    retired. Without this a bad id reached the foreign key and came back as an
+    IntegrityError 500."""
+    dept = (await db.execute(
+        select(Department).where(Department.id == department_id)
+    )).scalar_one_or_none()
+    if dept is None or dept.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That department doesn't exist. Choose another one.",
+        )
+    return dept
+
+
+async def _check_assignee(db: AsyncSession, username: str) -> User:
+    """The staff member a request is being handed to, or a 400 when that is not
+    an active staff member or administrator -- a researcher account, a
+    deactivated user or a typo would otherwise receive a request nobody works."""
+    user = (await db.execute(
+        select(User).where(User.username == username)
+    )).scalar_one_or_none()
+    if user is None or user.role not in ASSIGNABLE_ROLES or user.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assign the request to an active staff member.",
+        )
+    return user
+
+
 async def _validate_intake_staff_options(db: AsyncSession, intake_data: ManualIntakeCreate):
     """Check the department and assignee a clerk chose at intake.
 
     Returns (department_id or None, username or None). Raises 400 for a
     department that does not exist (or was retired) and for an assignee who is
-    not an active staff member or administrator -- a researcher account, a
-    deactivated user or a typo would otherwise receive a request nobody works.
+    not an active staff member or administrator.
     """
     department_id = intake_data.assigned_department_id
     if department_id is not None:
-        dept = (await db.execute(
-            select(Department).where(Department.id == department_id)
-        )).scalar_one_or_none()
-        if dept is None or dept.is_active is False:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="That department doesn't exist. Choose another one.",
-            )
+        await _check_department(db, department_id)
 
     username = (intake_data.assigned_to or "").strip() or None
     if username:
-        user = (await db.execute(
-            select(User).where(User.username == username)
-        )).scalar_one_or_none()
-        if user is None or user.role not in ("staff", "admin") or user.is_active is False:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Assign the request to an active staff member.",
-            )
+        await _check_assignee(db, username)
     return department_id, username
 
 
