@@ -601,7 +601,7 @@ async def _retention_check(db) -> Dict[str, Any]:
 
 
 async def _translation_budget_check() -> Dict[str, Any]:
-    """Is translation close to, or at, the town's spend budget?
+    """Is translation close to, or at, the built-in spend ceiling?
 
     Warning at 80% of the day's or the month's character budget, critical at
     100%. At 100% residents are being served the source text instead of a
@@ -621,14 +621,16 @@ async def _translation_budget_check() -> Dict[str, Any]:
         resets = "at midnight UTC" if worst is day else "on the 1st (UTC)"
         message = (
             f"Translation has used {worst['used']:,} of {which} {worst['limit']:,}-character "
-            f"budget ({worst['percent']:g}%)."
+            f"safety limit ({worst['percent']:g}%)."
         )
         if status == "critical":
             message += f" Residents see untranslated text until it resets {resets}."
         return _check(
-            "translation_budget", "Translation budget", status, worst["percent"], message,
-            ("Raise the budget on Settings > Service Providers > Translation Provider if this use "
-             "is expected; if it is not, the traffic is worth investigating before it resets.")
+            "translation_budget", "Translation safety limit", status, worst["percent"], message,
+            ("This ceiling is far above normal use, so reaching it usually means someone is using "
+             "the public translation feature heavily; the traffic is worth investigating. Spending "
+             "limits for expected use are set with the translation provider (Google Cloud quotas, "
+             "Azure pricing tier).")
             if status != "ok" else "",
         )
     except Exception as e:

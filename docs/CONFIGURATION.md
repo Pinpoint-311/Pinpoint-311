@@ -92,16 +92,19 @@ has a **Save & Test** button where a live check exists.
 | Backups | Any S3-compatible object store (AWS S3, Backblaze B2, Oracle Object Storage, and others) |
 | Crash reporting | Sentry |
 
-## Translation budget
+## Translation spending
 
-Translation is the one optional service a resident can spend money on without
-signing in, so it has a hard ceiling. Every call that sends characters to the
-provider reserves them first against a daily and a monthly character budget
-(`TRANSLATION_BUDGET_DAILY_CHARS`, default 500,000; `TRANSLATION_BUDGET_MONTHLY_CHARS`,
-default 5,000,000), set on the translation card. Over the budget, residents and
-notifications get the original text instead of an error. Cached translations
-cost nothing and do not count. The health scan warns at 80% and raises a
-critical alert at 100%. Source: `backend/app/services/translation_budget.py`.
+Set spending limits for translation with the provider, where the bill is:
+quotas and budget alerts in Google Cloud, or the pricing tier in Azure.
+
+Translation is also the one optional service a resident can spend money on
+without signing in, so the app has a built-in safety limit under that: 500,000
+characters a day and 5,000,000 a month, far above normal use. It is not a
+setting. Past it, residents and notifications get the original text instead of
+an error until it resets. Cached translations cost nothing and do not count.
+The health scan warns at 80% and raises a critical alert at 100%, since
+reaching it usually means unusual traffic. Source:
+`backend/app/services/translation_budget.py`.
 
 ## Photo redaction
 

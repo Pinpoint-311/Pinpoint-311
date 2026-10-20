@@ -5085,8 +5085,8 @@ async def suggest_translation(
         # a worse outcome than a clear refusal.
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The translation budget for this period is used up. Raise it on the "
-                   "Translation Provider card, or wait for it to reset.",
+            detail="Translation has reached its built-in safety limit for today or this "
+                   "month, which usually means unusual traffic. Try again after it resets.",
         )
     if translated is None:
         raise HTTPException(
@@ -5250,56 +5250,6 @@ async def batch_translate(
     translations = [results.get(text, text) for text in texts]
 
     return {"translations": translations, "budget_exhausted": budget_exhausted}
-
-
-class TranslationBudgetUpdate(BaseModel):
-    daily_chars: int
-    monthly_chars: int
-
-
-@router.get("/translate/budget")
-async def get_translation_budget(_: User = Depends(get_current_admin)):
-    """Today's and this month's translation spend against the budget (admin)."""
-    from app.services import translation_budget
-    return await translation_budget.usage()
-
-
-@router.put("/translate/budget")
-async def update_translation_budget(
-    body: TranslationBudgetUpdate,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(get_current_admin),
-):
-    """Set the daily and monthly character budgets (admin only, audited).
-
-    Zero is allowed and means "serve only what is already cached".
-    """
-    from app.services import translation_budget as tb
-
-    for name, value in (("daily_chars", body.daily_chars), ("monthly_chars", body.monthly_chars)):
-        if value < 0 or value > tb.MAX_BUDGET_CHARS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"{name} must be between 0 and {tb.MAX_BUDGET_CHARS:,}.",
-            )
-    if body.daily_chars > body.monthly_chars:
-        raise HTTPException(
-            status_code=400,
-            detail="The daily budget cannot be larger than the monthly budget.",
-        )
-    old_daily, old_monthly = await tb.get_limits()
-    await _persist_secret(db, tb.DAILY_KEY, str(body.daily_chars))
-    await _persist_secret(db, tb.MONTHLY_KEY, str(body.monthly_chars))
-    tb.forget_cached_limits()
-    from app.services.admin_audit import record_admin_action
-    await record_admin_action(
-        db, event_type="translation_budget_updated", actor=admin,
-        details={
-            "daily_chars": {"from": old_daily, "to": body.daily_chars},
-            "monthly_chars": {"from": old_monthly, "to": body.monthly_chars},
-        },
-    )
-    return await tb.usage()
 
 
 # ============ On-server redaction detectors ============

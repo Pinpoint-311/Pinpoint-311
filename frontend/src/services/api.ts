@@ -2141,18 +2141,6 @@ class ApiClient {
         return this.request<Record<string, any>>('/system/api-usage/pricing');
     }
 
-    /** Translation spend against the daily/monthly character budget (admin). */
-    async getTranslationBudget(): Promise<TranslationBudgetUsage> {
-        return this.request<TranslationBudgetUsage>('/system/translate/budget');
-    }
-
-    async updateTranslationBudget(daily_chars: number, monthly_chars: number): Promise<TranslationBudgetUsage> {
-        return this.request<TranslationBudgetUsage>('/system/translate/budget', {
-            method: 'PUT',
-            body: JSON.stringify({ daily_chars, monthly_chars }),
-        });
-    }
-
     // On-server photo-redaction detectors (plate model, face fallback).
     async getRedactionDetectors(): Promise<RedactionDetectors> {
         return this.request<RedactionDetectors>('/system/redaction/detectors');
@@ -2832,16 +2820,6 @@ export interface DailyUsageResponse {
     }>;
 }
 
-export interface TranslationBudgetPeriod {
-    period: string;
-    used: number;
-    limit: number;
-    remaining: number;
-    percent: number;
-    exhausted: boolean;
-    resets_at: string;
-}
-
 export interface RedactionModelStatus {
     file: string;
     present: boolean;
@@ -2860,11 +2838,3 @@ export interface RedactionDetectors {
     models: { plate: RedactionModelStatus; face: RedactionModelStatus; models_dir: string };
 }
 
-export interface TranslationBudgetUsage {
-    day: TranslationBudgetPeriod;
-    month: TranslationBudgetPeriod;
-    status: 'ok' | 'warning' | 'critical';
-    counter_store: 'redis' | 'memory' | 'unavailable';
-    defaults: { daily: number; monthly: number };
-    max_budget: number;
-}

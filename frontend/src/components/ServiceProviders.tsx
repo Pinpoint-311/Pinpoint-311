@@ -4,7 +4,6 @@ import { stepsFor } from './setupSteps';
 import './setupStepsContent';
 import type { StepContext } from './setupSteps';
 import ProviderCredentialSteps from './ProviderCredentialSteps';
-import TranslationBudgetPanel from './TranslationBudgetPanel';
 import RedactionDetectorsPanel from './RedactionDetectorsPanel';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -992,7 +991,13 @@ function CapabilityCard({ cap, title, blurb, icon: Icon, delay, recheckToken, re
                     </div>
                 )}
 
-                {cap === 'translation' && <TranslationBudgetPanel />}
+                {cap === 'translation' && (
+                    <p className="text-white/55 text-xs leading-relaxed">
+                        Set a spending limit with your provider: quotas and budget alerts in Google
+                        Cloud, or the pricing tier in Azure. Pinpoint also has a built-in safety limit,
+                        far above normal use, for the public pages.
+                    </p>
+                )}
                 {cap === 'redaction' && <RedactionDetectorsPanel />}
 
                 {/* AI model dropdown — with live discovery */}
