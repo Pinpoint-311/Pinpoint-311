@@ -119,3 +119,23 @@ describe('CheckboxCard', () => {
         expect(box.checked).toBe(false);
     });
 });
+
+describe('the tick after unchecking', () => {
+    afterEach(cleanup);
+
+    it('is not hidden with opacity-0, which index.css reveals inside a focused group', () => {
+        // `.group:focus-within .opacity-0 { opacity: 1 !important }` exists so
+        // keyboard users can see hover-only buttons. A clicked checkbox keeps
+        // focus, so a tick hidden that way stayed visible, half-size, after
+        // the box was unchecked.
+        const { container } = render(
+            <>
+                <CheckboxCard title="Email" defaultChecked />
+                <Checkbox aria-label="mixed" indeterminate />
+            </>,
+        );
+        const marks = container.querySelectorAll('svg');
+        expect(marks.length).toBe(2);
+        marks.forEach(mark => expect(mark.classList.contains('opacity-0')).toBe(false));
+    });
+});

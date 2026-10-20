@@ -81,6 +81,10 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
         inputClassName,
     ].join(' ');
 
+    // Hidden with [opacity:0], not opacity-0: index.css reveals every
+    // .opacity-0 inside a focused .group (hover-only buttons, for keyboard
+    // users), and a clicked checkbox keeps focus, so an unchecked box in a
+    // CheckboxCard went on showing a half-size tick.
     const markBase = `pointer-events-none absolute inset-0 m-auto ${box.icon} text-white transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none`;
 
     return (
@@ -97,11 +101,11 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
                 {...rest}
             />
             {indeterminate ? (
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={`${markBase} opacity-0 scale-50 peer-indeterminate:opacity-100 peer-indeterminate:scale-100`}>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={`${markBase} [opacity:0] scale-50 peer-indeterminate:opacity-100 peer-indeterminate:scale-100`}>
                     <path d="M4 8h8" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" />
                 </svg>
             ) : (
-                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={`${markBase} opacity-0 scale-50 peer-checked:opacity-100 peer-checked:scale-100`}>
+                <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={`${markBase} [opacity:0] scale-50 peer-checked:opacity-100 peer-checked:scale-100`}>
                     <path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
             )}
