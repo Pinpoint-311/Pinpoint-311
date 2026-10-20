@@ -54,6 +54,7 @@ import {
     MapPinned,
     MapPinOff,
     UserSearch,
+    ChevronRight,
 } from 'lucide-react';
 import { Button, Modal, Input, Select, Badge, AccordionSection, Chip, RoleChip, StatusBadge, Checkbox } from '../components/ui';
 import { humanize } from '../utils/humanize';
@@ -86,6 +87,12 @@ import VersionSwitcher from '../components/VersionSwitcher';
 import RetentionPolicyEditor from '../components/RetentionPolicyEditor';
 import StayInformedHost from '../components/StayInformed';
 import BrandingSettings, { type BrandingForm } from '../components/BrandingSettings';
+
+// Options that belong to a feature module: an inset panel under the module's
+// title (past its 44px icon and 16px gap), with a coloured edge, so it reads as
+// part of that module and not as the next row.
+const NESTED_PANEL =
+    'mt-4 sm:ml-[60px] overflow-hidden rounded-xl border border-white/10 border-l-2 bg-black/20 shadow-[inset_0_1px_3px_rgba(0,0,0,0.25)]';
 
 // Human-friendly retention period from a day count (reflects any override):
 // 365 -> "1 year", 2190 -> "6 years", 2555 -> "7 years", 900 -> "2.5 years".
@@ -2308,8 +2315,8 @@ export default function AdminConsole() {
                                                         all -- there is no default address in the code, because
                                                         a wrong one is worse than no offer. */}
                                                     {mod.key === 'platform_feedback' && isOn && (
-                                                        <div className="mt-4 border-l-2 border-sky-500/20 pl-4 ml-1">
-                                                            <label className="block text-[11px] font-semibold text-white/40 uppercase tracking-wider mb-2" htmlFor="platform-feedback-email">
+                                                        <div className={`${NESTED_PANEL} border-l-sky-400/60 px-4 py-3.5`}>
+                                                            <label className="block text-xs font-medium text-white/80 mb-2" htmlFor="platform-feedback-email">
                                                                 Email for longer feedback
                                                             </label>
                                                             <input
@@ -2334,41 +2341,54 @@ export default function AdminConsole() {
                                                         COLUMN_DICTIONARY, so the disclosure cannot drift from
                                                         what the export actually ships; enforcement is
                                                         server-side at row build, this is just the switch. */}
-                                                    {mod.key === 'research_portal' && researchPacks.length > 0 && (
-                                                        <div className="mt-4 space-y-2 border-l-2 border-violet-500/20 pl-4 ml-1">
-                                                            <p className="text-[11px] font-semibold text-white/40 uppercase tracking-wider">Research field packs</p>
-                                                            {researchPacks.map((pack) => {
-                                                                const packOn = packSwitches[pack.id] ?? pack.enabled;
-                                                                return (
-                                                                    <div key={pack.id} className="flex items-start justify-between gap-3 py-1.5">
-                                                                        <div className="min-w-0">
-                                                                            <p className="text-xs font-medium text-white/80">{pack.label}</p>
-                                                                            <p className="text-[11px] text-white/40">
-                                                                                contains: {pack.contains.join(', ')}
-                                                                            </p>
-                                                                            {pack.why_default_off && (
-                                                                                <p className="text-[11px] text-amber-300/80 mt-0.5">
-                                                                                    Off by default: {pack.why_default_off}
-                                                                                </p>
-                                                                            )}
-                                                                        </div>
-                                                                        <button
-                                                                            onClick={() => setPackSwitches((p) => ({ ...p, [pack.id]: !packOn }))}
-                                                                            className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 mt-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${packOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
-                                                                            style={{ width: 36, height: 20, minHeight: 20, maxHeight: 20, padding: 0 }}
-                                                                            role="switch"
-                                                                            aria-checked={packOn}
-                                                                            aria-label={`Toggle ${pack.label}`}
-                                                                        >
-                                                                            <span
-                                                                                className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${packOn ? 'translate-x-5' : 'translate-x-1'}`}
-                                                                                style={{ width: 13, height: 13 }}
-                                                                                aria-hidden="true"
-                                                                            />
-                                                                        </button>
-                                                                    </div>
-                                                                );
-                                                            })}
+                                                    {mod.key === 'research_portal' && isOn && researchPacks.length > 0 && (
+                                                        <div className={`${NESTED_PANEL} border-l-violet-400/60`}>
+                                                            <div className="px-4 pt-3.5 pb-2">
+                                                                <p className="text-xs font-medium text-white/80">Research field packs</p>
+                                                                <p className="text-[11px] text-white/50 mt-0.5">The groups of fields researchers receive in each export.</p>
+                                                            </div>
+                                                            <ul className="divide-y divide-white/[0.07]">
+                                                                {researchPacks.map((pack) => {
+                                                                    const packOn = packSwitches[pack.id] ?? pack.enabled;
+                                                                    return (
+                                                                        <li key={pack.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                                                                            <div className="min-w-0">
+                                                                                <p className="text-xs font-medium text-white/90">{pack.label}</p>
+                                                                                {pack.why_default_off && (
+                                                                                    <p className="text-[11px] text-amber-300/85 mt-0.5 leading-relaxed">
+                                                                                        Off by default: {pack.why_default_off}
+                                                                                    </p>
+                                                                                )}
+                                                                                <details className="group/fields mt-1">
+                                                                                    <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded text-[11px] text-white/50 hover:text-white/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300 [&::-webkit-details-marker]:hidden">
+                                                                                        <ChevronRight className="h-3 w-3 transition-transform group-open/fields:rotate-90 motion-reduce:transition-none" aria-hidden="true" />
+                                                                                        {pack.contains.length} {pack.contains.length === 1 ? 'field' : 'fields'}
+                                                                                    </summary>
+                                                                                    <div className="mt-1.5 flex flex-wrap gap-1">
+                                                                                        {pack.contains.map((field) => (
+                                                                                            <code key={field} className="rounded bg-white/[0.06] px-1.5 py-0.5 font-mono text-[10px] text-white/60">{field}</code>
+                                                                                        ))}
+                                                                                    </div>
+                                                                                </details>
+                                                                            </div>
+                                                                            <button
+                                                                                onClick={() => setPackSwitches((p) => ({ ...p, [pack.id]: !packOn }))}
+                                                                                className={`relative inline-flex items-center rounded-full transition-colors duration-300 shrink-0 mt-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/50 ${packOn ? 'bg-primary-500 shadow-lg shadow-primary-500/30' : 'bg-slate-600'}`}
+                                                                                style={{ width: 36, height: 20, minHeight: 20, maxHeight: 20, padding: 0 }}
+                                                                                role="switch"
+                                                                                aria-checked={packOn}
+                                                                                aria-label={`Toggle ${pack.label}`}
+                                                                            >
+                                                                                <span
+                                                                                    className={`inline-block rounded-full bg-white shadow-md transition-transform duration-300 ${packOn ? 'translate-x-5' : 'translate-x-1'}`}
+                                                                                    style={{ width: 13, height: 13 }}
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                            </button>
+                                                                        </li>
+                                                                    );
+                                                                })}
+                                                            </ul>
                                                         </div>
                                                     )}
                                                 </motion.div>
