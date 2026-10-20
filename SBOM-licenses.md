@@ -49,7 +49,7 @@ Out of scope for this inventory (stated separately at the end): `demo-orchestrat
 
 > The 49 "NOT IN METADATA" entries are all `@esbuild/*`, `@rollup/rollup-*` and `fsevents` platform-specific optional binaries for **other** CPU/OS targets. They are not installed on this machine, so their `package.json` could not be read. Their installed same-version siblings (`@esbuild/linux-x64` 0.25.12, `@rollup/rollup-linux-x64-gnu` 4.59.0) and their parent packages (`esbuild` 0.25.12, `rollup` 4.59.0) all declare **MIT**. Treated as MIT-by-inference, not verified directly.
 
-### PyPI — backend dependencies (104)
+### PyPI — backend dependencies (105)
 
 | License | Count |
 |---|---|
@@ -58,7 +58,7 @@ Out of scope for this inventory (stated separately at the end): `demo-orchestrat
 | BSD-3-Clause | 12 |
 | BSD (unversioned) | 5 |
 | BSD (unversioned, from classifier) | 3 |
-| BSD-2-Clause | 2 |
+| BSD-2-Clause | 3 |
 | PSF-2.0 | 2 |
 | Apache-2.0 AND MIT | 1 |
 | Apache-2.0 OR BSD-2-Clause | 1 |
@@ -576,8 +576,9 @@ Nothing in this project is AGPL, GPL, SSPL, BUSL, Elastic License, CC-BY-NC, com
 - `starlette` 1.3.1
 - `uvicorn` 0.27.0 **[direct]**
 
-#### BSD-2-Clause (2)
+#### BSD-2-Clause (3)
 
+- `osmium` 4.3.2 **[direct]** (pyosmium; the wheel bundles libosmium (BSL-1.0), bzip2 (bzip2 license) and LZ4 (BSD-2-Clause))
 - `pyasn1` 0.6.4
 - `wrapt` 2.5.1
 

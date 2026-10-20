@@ -15,8 +15,9 @@ budget, and it failed in three ways at once:
     within range but whose middle was not was missed, and relations (campuses
     are often multipolygons) were never asked for at all.
 
-So the facilities are fetched once a week, for the whole town in one query,
-into `critical_facilities`, and the per-report check is a local PostGIS
+So the facilities are fetched once a week for the whole town -- from
+Geofabrik's daily OpenStreetMap extract of the state, falling back to one
+Overpass query -- into `critical_facilities`, and the per-report check is a local PostGIS
 distance to the facility's real outline. No report location leaves the server.
 
 Admin map layers still count -- a town's own "Fire Stations" layer is better
@@ -327,7 +328,8 @@ def parse_elements(elements: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # The fetch
 # --------------------------------------------------------------------------- #
 
-# The main public instance, then a long-running public mirror. Both are
+# The fallback when the Geofabrik extract (app/services/osm_extract.py) cannot
+# be had: the main public instance, then a long-running public mirror. Both are
 # volunteer-run and are busy at times (502/504); one weekly query per town is
 # what they ask of clients. A town that wants its own instance sets OVERPASS_URLS.
 DEFAULT_OVERPASS_URLS = (
@@ -405,6 +407,22 @@ async def fetch_facilities(bbox: Tuple[float, float, float, float], *, client=No
         if own:
             await client.aclose()
     raise FetchError("; ".join(errors[-4:]) or "no Overpass URL configured")
+
+
+async def fetch_best(bbox: Tuple[float, float, float, float]) -> Tuple[List[Dict[str, Any]], str]:
+    """The Geofabrik extract first (a plain download that does not fail under
+    load), then the Overpass mirrors. Raises FetchError naming both failures."""
+    from app.services import osm_extract
+
+    try:
+        return await osm_extract.fetch_facilities(bbox)
+    except Exception as exc:
+        extract_error = f"Geofabrik: {type(exc).__name__}: {exc}"[:300]
+        logger.warning("[critical facilities] extract unavailable, trying Overpass: %s", extract_error)
+    try:
+        return await fetch_facilities(bbox)
+    except FetchError as exc:
+        raise FetchError(f"{extract_error}; Overpass: {exc}") from exc
 
 
 # --------------------------------------------------------------------------- #
@@ -521,7 +539,7 @@ async def refresh(db, *, fetch=None) -> Dict[str, Any]:
     error mid-swap -- the previous rows stay, and the error is recorded where
     the health check reads it.
     """
-    fetch = fetch or fetch_facilities
+    fetch = fetch or fetch_best
     status = await _status_row(db)
     status.attempted_at = datetime.now(timezone.utc)
     await db.commit()

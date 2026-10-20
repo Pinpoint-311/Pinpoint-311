@@ -660,8 +660,8 @@ async def _critical_facilities_check(db) -> Dict[str, Any]:
         ) or "none"
         error = f" Last error: {st['last_error']}" if st.get("last_error") else ""
         action = ("It keeps retrying on its own. If it keeps failing, check that the server can "
-                  "reach the public OpenStreetMap (Overpass) servers, or set OVERPASS_URLS to one "
-                  "the town trusts.")
+                  "reach download.geofabrik.de (the OpenStreetMap download) or the public Overpass "
+                  "servers, or set OVERPASS_URLS to one the town trusts.")
         if not st["boundary_configured"]:
             check = _check("critical_facilities", "Critical facilities", "ok", "no boundary",
                            "No town boundary is set, so there is no area to load hospitals, "
